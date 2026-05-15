@@ -26,9 +26,10 @@ aerial setup codex
 aerial setup claude
 aerial setup all
 aerial doctor
+aerial probe
 ```
 
-Service installation, rollback automation, Gemini CLI support, dashboards, and analytics are intentionally out of this MVP.
+Service installation, rollback automation, Gemini CLI support, dashboards, and analytics are intentionally out of this MVP. WebSocket Responses is detected in model metadata but intentionally returns 501 until its handshake/event protocol is implemented.
 
 ## Requirements
 
@@ -125,6 +126,7 @@ This updates `~/.claude/settings.json` and creates a timestamped backup first. I
 
 ```bash
 aerial doctor
+aerial probe
 ```
 
 The doctor checks config, local API key presence, GitHub login state, Node version, and local bind address.
@@ -149,6 +151,26 @@ Aerial is for personal local use only.
 - Prompt caching is upstream-managed: Aerial does not store prompt bodies locally, and it preserves cache fields clients send.
 
 
+
+## Capability Probe
+
+Use `aerial probe` to inspect the live Copilot model matrix through the same local credentials Aerial uses for proxying:
+
+```bash
+aerial probe
+```
+
+This prints model IDs, Aerial routes, and unsupported notes such as `websocket_responses_not_implemented` or `embeddings_not_implemented`.
+
+Run low-cost live route checks when you want to verify end-to-end behavior:
+
+```bash
+aerial probe --live
+# machine-readable output
+aerial probe --live --json
+```
+
+`--live` sends one small request through the first available `responses`, `messages`, and `chat` model. It does not test every model by default, which keeps the command lightweight.
 ## Prompt Cache
 
 Aerial uses the upstream Copilot/OpenAI/Anthropic cache protocols instead of keeping a local prompt-content cache. That keeps the MVP lightweight and avoids storing prompts on disk.

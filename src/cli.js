@@ -4,6 +4,7 @@ import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { setupClaude, setupCodex } from "./setup.js";
 import { doctor } from "./doctor.js";
+import { runProbe, formatProbeReport } from "./probe.js";
 
 function printHelp() {
   console.log(`Aerial local Copilot proxy
@@ -17,13 +18,15 @@ Usage:
   aerial setup claude
   aerial setup all [--model <id>]
   aerial doctor
+  aerial probe [--live] [--json]
 
 MVP routes:
   GET  /health
   GET  /v1/models
   POST /v1/responses
   POST /v1/messages
-  POST /v1/messages/count_tokens`);
+  POST /v1/messages/count_tokens
+  POST /v1/chat/completions`);
 }
 
 function argValue(args, name) {
@@ -103,6 +106,14 @@ async function main() {
       console.log(`${check.ok ? "OK" : "FAIL"} ${check.name}: ${check.detail}`);
     }
     process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
+
+  if (command === "probe") {
+    const report = await runProbe({ live: args.includes("--live") });
+    if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
+    else console.log(formatProbeReport(report));
+    process.exitCode = report.ok ? 0 : 1;
     return;
   }
 

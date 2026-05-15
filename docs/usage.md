@@ -79,7 +79,26 @@ Each model returned by `/v1/models` includes an `aerial` field that tells you wh
 Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. Models marked with `embeddings_not_implemented`, `websocket_responses_not_implemented`, or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
 
 
-## 8. Use Prompt Cache
+
+## 8. Probe Capabilities
+
+```bash
+aerial probe
+```
+
+This prints the current model matrix returned by Copilot plus Aerial's route annotations. It is the fastest way to see which models currently expose `responses`, `messages`, or `chat` routes.
+
+For a low-cost end-to-end check:
+
+```bash
+aerial probe --live
+```
+
+`--live` sends one small request through the first available model for each supported route. Use `--json` when you want machine-readable output for CI or debugging.
+
+WebSocket Responses is not implemented yet. If a client attempts a WebSocket upgrade, Aerial returns `501 Not Implemented` instead of pretending to support the route.
+
+## 9. Use Prompt Cache
 
 Aerial does not implement a local prompt-content cache. It forwards cache protocol fields to Copilot and returns upstream usage fields unchanged. This is the intended design: prompts are not written to a local cache, and cache hits are controlled by the upstream service.
 
