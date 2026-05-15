@@ -28,6 +28,45 @@ function copyResponseHeaders(upstream) {
   return headers;
 }
 
+function aerialSupportForModel(model) {
+  const endpoints = Array.isArray(model.supported_endpoints) ? model.supported_endpoints : [];
+  const routes = [];
+  const notes = [];
+  if (endpoints.includes("/responses")) routes.push("responses");
+  if (endpoints.includes("/v1/messages")) routes.push("messages");
+  if (endpoints.includes("/chat/completions")) routes.push("chat");
+  if (endpoints.includes("ws:/responses")) notes.push("websocket_responses_not_implemented");
+  if (model.capabilities?.type === "embeddings") notes.push("embeddings_not_implemented");
+  if (routes.length === 0 && notes.length === 0) notes.push("no_supported_endpoint_advertised");
+  return {
+    supported: routes.length > 0,
+    routes,
+    notes
+  };
+}
+
+async function annotateModelsResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok || !contentType.includes("application/json")) return response;
+  const payload = await response.json();
+  if (!Array.isArray(payload.data)) return Response.json(payload, { status: response.status, headers: response.headers });
+  return Response.json({
+    ...payload,
+    data: payload.data.map((model) => ({ ...model, aerial: aerialSupportForModel(model) }))
+  }, { status: response.status });
+}
+
+async function requestWithJsonBody(request, transform) {
+  const payload = await request.json();
+  const nextPayload = transform(payload);
+  return new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: JSON.stringify(nextPayload),
+    duplex: "half"
+  });
+}
+
 async function proxyFetch(path, request, { extraHeaders = {} } = {}) {
   const token = await getCopilotToken();
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
@@ -44,7 +83,7 @@ async function proxyFetch(path, request, { extraHeaders = {} } = {}) {
 
 export async function proxyModels(request) {
   const upstreamRequest = new Request(request.url, { method: "GET", headers: request.headers });
-  return proxyFetch("/models", upstreamRequest);
+  return annotateModelsResponse(await proxyFetch("/models", upstreamRequest));
 }
 
 export async function proxyResponses(request) {
@@ -61,7 +100,14 @@ export async function proxyMessages(request) {
 }
 
 export async function proxyChatCompletions(request) {
-  return proxyFetch("/chat/completions", request);
+  const upstreamRequest = await requestWithJsonBody(request, (payload) => {
+    if (payload.max_tokens !== undefined && payload.max_completion_tokens === undefined) {
+      const { max_tokens, ...rest } = payload;
+      return { ...rest, max_completion_tokens: max_tokens };
+    }
+    return payload;
+  });
+  return proxyFetch("/chat/completions", upstreamRequest);
 }
 
 export async function localCountTokens(request) {

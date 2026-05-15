@@ -66,9 +66,22 @@ aerial doctor
 curl -H "Authorization: Bearer $AERIAL_API_KEY" http://127.0.0.1:18181/v1/models
 ```
 
+Each model returned by `/v1/models` includes an `aerial` field that tells you whether the MVP can route it:
+
+```json
+"aerial": {
+  "supported": true,
+  "routes": ["responses", "chat"],
+  "notes": ["websocket_responses_not_implemented"]
+}
+```
+
+Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. Models marked with `embeddings_not_implemented`, `websocket_responses_not_implemented`, or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
+
 ## Troubleshooting
 
 - `503 Missing GitHub token`: run `aerial login`.
 - `401 Invalid or missing Aerial API key`: export `AERIAL_API_KEY` and use it in the client.
 - Claude Code cannot read key: ensure `aerial` is on `PATH` and `AERIAL_API_KEY` is available to Claude Code's environment.
 - Upstream compatibility error: run `aerial doctor`, then retry with a model returned by `/v1/models`.
+- `Unsupported parameter: max_tokens`: Aerial normalizes Chat Completions `max_tokens` into `max_completion_tokens` before forwarding to newer OpenAI models.

@@ -9,7 +9,7 @@ The MVP runs on `127.0.0.1:18181`, requires a local Aerial API key for model rou
 Implemented routes:
 
 - `GET /health` without auth
-- `GET /v1/models` for model discovery
+- `GET /v1/models` for model discovery, with an `aerial` support annotation per model
 - `POST /v1/responses` for Codex CLI
 - `POST /v1/messages` for Claude Code's Anthropic gateway path
 - `POST /v1/messages/count_tokens` with a local estimate
@@ -145,3 +145,32 @@ Aerial is for personal local use only.
 - `/v1/messages/count_tokens` is a local estimate, not upstream tokenization.
 - Service install/uninstall and disable/rollback are not implemented yet.
 - Model choice is not automated; query `/v1/models` and select an available model explicitly.
+- Chat Completions requests normalize `max_tokens` to `max_completion_tokens` for newer OpenAI models that reject the older field.
+
+## Model Support
+
+`GET /v1/models` returns Copilot's raw model metadata and adds an Aerial-specific field:
+
+```json
+{
+  "id": "gpt-5.4-mini",
+  "supported_endpoints": ["/responses", "ws:/responses"],
+  "aerial": {
+    "supported": true,
+    "routes": ["responses"],
+    "notes": ["websocket_responses_not_implemented"]
+  }
+}
+```
+
+Route meanings:
+
+- `responses`: usable by Codex through `POST /v1/responses`.
+- `messages`: usable by Claude Code through `POST /v1/messages`.
+- `chat`: usable by generic OpenAI Chat clients through `POST /v1/chat/completions`.
+
+Known unsupported notes:
+
+- `embeddings_not_implemented`: Aerial does not expose `/v1/embeddings` yet.
+- `websocket_responses_not_implemented`: HTTP Responses is supported; WebSocket Responses is not.
+- `no_supported_endpoint_advertised`: the model did not declare a route Aerial can safely select.
