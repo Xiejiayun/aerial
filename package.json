@@ -3,6 +3,27 @@
   "version": "0.1.0",
   "description": "Local-only GitHub Copilot proxy for Codex CLI and Claude Code.",
   "type": "module",
+  "private": false,
+  "homepage": "https://github.com/Xiejiayun/aerial#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xiejiayun/aerial.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Xiejiayun/aerial/issues"
+  },
+  "keywords": [
+    "copilot",
+    "codex",
+    "claude-code",
+    "local-proxy"
+  ],
+  "files": [
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "aerial": "./src/cli.js"
   },
