@@ -1,1 +1,147 @@
-# aerial
+# Aerial
+
+Aerial is a lightweight local-only proxy that lets one user connect their own GitHub Copilot subscription to local coding CLIs.
+
+The MVP runs on `127.0.0.1:18181`, requires a local Aerial API key for model routes, stores credentials on the user's machine, and avoids public deployment, account sharing, quota bypass, dashboards, analytics, and image APIs.
+
+## MVP Support
+
+Implemented routes:
+
+- `GET /health` without auth
+- `GET /v1/models` for model discovery
+- `POST /v1/responses` for Codex CLI
+- `POST /v1/messages` for Claude Code's Anthropic gateway path
+- `POST /v1/messages/count_tokens` with a local estimate
+- `POST /v1/chat/completions` as a simple passthrough fallback
+
+Implemented CLI commands:
+
+```bash
+aerial login
+aerial key generate
+aerial key print
+aerial start
+aerial setup codex
+aerial setup claude
+aerial setup all
+aerial doctor
+```
+
+Service installation, rollback automation, Gemini CLI support, dashboards, and analytics are intentionally out of this MVP.
+
+## Requirements
+
+- Node.js 22+
+- A GitHub account with an active Copilot subscription
+- Codex CLI and/or Claude Code installed locally
+
+## Install From This Repository
+
+```bash
+npm install -g .
+```
+
+For local development without global install:
+
+```bash
+node src/cli.js --help
+```
+
+## First Run
+
+Generate a local Aerial API key:
+
+```bash
+aerial key generate
+```
+
+Save the printed value in your shell as `AERIAL_API_KEY`:
+
+```bash
+export AERIAL_API_KEY="aerial_..."
+```
+
+Log in to GitHub with device flow:
+
+```bash
+aerial login
+```
+
+Start the local server:
+
+```bash
+aerial start
+```
+
+Check health:
+
+```bash
+curl http://127.0.0.1:18181/health
+```
+
+## Codex CLI Setup
+
+Aerial configures Codex through the Responses wire API provider path:
+
+```bash
+aerial setup codex --model <available-copilot-model-id>
+```
+
+This updates `~/.codex/config.toml` and creates a timestamped backup first. If you only want to inspect the exact change, set `HOME`/`USERPROFILE` to a temporary directory before running setup. The inserted provider uses:
+
+```toml
+[model_providers.aerial]
+base_url = "http://127.0.0.1:18181/v1"
+wire_api = "responses"
+env_key = "AERIAL_API_KEY"
+```
+
+Then run Codex with `AERIAL_API_KEY` exported in the environment.
+
+## Claude Code Setup
+
+Aerial configures Claude Code through its Anthropic-compatible gateway settings:
+
+```bash
+aerial setup claude
+```
+
+This updates `~/.claude/settings.json` and creates a timestamped backup first. If you only want to inspect the exact change, set `HOME`/`USERPROFILE` to a temporary directory before running setup. It sets:
+
+```json
+{
+  "apiKeyHelper": "aerial key print",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:18181",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+  }
+}
+```
+
+`aerial key print` prints `AERIAL_API_KEY` from the environment. If the raw key is not in the environment, generate and export a key first.
+
+## Diagnostics
+
+```bash
+aerial doctor
+```
+
+The doctor checks config, local API key presence, GitHub login state, Node version, and local bind address.
+
+## Security Boundary
+
+Aerial is for personal local use only.
+
+- It binds to `127.0.0.1` by default.
+- Model routes require `Authorization: Bearer <AERIAL_API_KEY>` or `x-api-key: <AERIAL_API_KEY>`.
+- GitHub tokens are stored under the user config directory with private file permissions where supported.
+- Aerial does not log raw GitHub tokens, Copilot JWTs, API keys, or request bodies by default.
+- Do not expose this service publicly or use it for account sharing.
+
+## Current Limitations
+
+- Copilot inference routes are an observed compatibility target, not a public stable GitHub REST API.
+- `/v1/messages/count_tokens` is a local estimate, not upstream tokenization.
+- Service install/uninstall and disable/rollback are not implemented yet.
+- Model choice is not automated; query `/v1/models` and select an available model explicitly.
