@@ -146,7 +146,37 @@ Aerial is for personal local use only.
 - Service install/uninstall and disable/rollback are not implemented yet.
 - Model choice is not automated; query `/v1/models` and select an available model explicitly.
 - Chat Completions requests normalize `max_tokens` to `max_completion_tokens` for newer OpenAI models that reject the older field.
+- Prompt caching is upstream-managed: Aerial does not store prompt bodies locally, and it preserves cache fields clients send.
 
+
+## Prompt Cache
+
+Aerial uses the upstream Copilot/OpenAI/Anthropic cache protocols instead of keeping a local prompt-content cache. That keeps the MVP lightweight and avoids storing prompts on disk.
+
+Supported behavior:
+
+- Responses and Chat Completions preserve `prompt_cache_retention` and `prompt_cache_key` when the client sends them.
+- Responses and Chat Completions can apply a default `prompt_cache_retention` for requests that omit it.
+- Anthropic Messages preserves `cache_control` blocks, including `cache_control: { "type": "ephemeral" }` on `system`, message content blocks, and tool definitions.
+- Usage fields from upstream are returned unchanged, including `cached_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and Copilot `cache_read` / `cache_write` token details when present.
+
+Set a default retention policy for OpenAI-style routes:
+
+```bash
+aerial config set promptCacheRetention in_memory
+# or
+aerial config set promptCacheRetention 24h
+# disable the default injection again
+aerial config set promptCacheRetention off
+```
+
+You can also set it per process:
+
+```bash
+export AERIAL_PROMPT_CACHE_RETENTION=in_memory
+```
+
+Per-request fields win over the configured default. Use `24h` only with models whose upstream route accepts extended retention; otherwise leave the client request explicit or use `in_memory`.
 ## Model Support
 
 `GET /v1/models` returns Copilot's raw model metadata and adds an Aerial-specific field:

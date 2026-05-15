@@ -11,13 +11,16 @@ export function defaultConfig() {
     apiKeyHash: undefined,
     defaultModel: undefined,
     logLevel: "info",
+    promptCacheRetention: undefined,
     versions: DEFAULT_VERSIONS
   };
 }
 
 export function loadConfig() {
   const loaded = readJsonIfExists(configPath()) || {};
-  return { ...defaultConfig(), ...loaded, versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) } };
+  const envRetention = process.env.AERIAL_PROMPT_CACHE_RETENTION;
+  const promptCacheRetention = envRetention === undefined ? loaded.promptCacheRetention : envRetention;
+  return { ...defaultConfig(), ...loaded, promptCacheRetention, versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) } };
 }
 
 export function saveConfig(config) {

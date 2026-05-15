@@ -111,7 +111,8 @@ async function main() {
     if (subcommand === "set") {
       const [key, value] = rest;
       if (!key || value === undefined) throw new Error("Usage: aerial config set <key> <value>");
-      if (!["host", "port", "defaultModel", "logLevel"].includes(key)) throw new Error(`Unsupported config key: ${key}`);
+      if (!["host", "port", "defaultModel", "logLevel", "promptCacheRetention"].includes(key)) throw new Error(`Unsupported config key: ${key}`);
+      if (key === "promptCacheRetention" && !["in_memory", "24h", "off"].includes(value)) throw new Error("promptCacheRetention must be one of: in_memory, 24h, off");
       config[key] = key === "port" ? Number(value) : value;
       saveConfig(config);
       return;

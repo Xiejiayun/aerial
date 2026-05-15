@@ -56,6 +56,19 @@ async function annotateModelsResponse(response) {
   }, { status: response.status });
 }
 
+function configuredPromptCacheRetention() {
+  const value = loadConfig().promptCacheRetention;
+  if (!value || value === "off") return undefined;
+  if (!["in_memory", "24h"].includes(value)) return undefined;
+  return value;
+}
+
+function withDefaultPromptCacheRetention(payload) {
+  const retention = configuredPromptCacheRetention();
+  if (!retention || payload.prompt_cache_retention !== undefined) return payload;
+  return { ...payload, prompt_cache_retention: retention };
+}
+
 async function requestWithJsonBody(request, transform) {
   const payload = await request.json();
   const nextPayload = transform(payload);
@@ -87,7 +100,8 @@ export async function proxyModels(request) {
 }
 
 export async function proxyResponses(request) {
-  return proxyFetch("/responses", request);
+  const upstreamRequest = await requestWithJsonBody(request, withDefaultPromptCacheRetention);
+  return proxyFetch("/responses", upstreamRequest);
 }
 
 export async function proxyMessages(request) {
@@ -101,6 +115,7 @@ export async function proxyMessages(request) {
 
 export async function proxyChatCompletions(request) {
   const upstreamRequest = await requestWithJsonBody(request, (payload) => {
+    payload = withDefaultPromptCacheRetention(payload);
     if (payload.max_tokens !== undefined && payload.max_completion_tokens === undefined) {
       const { max_tokens, ...rest } = payload;
       return { ...rest, max_completion_tokens: max_tokens };
