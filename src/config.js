@@ -11,7 +11,8 @@ export function defaultConfig() {
     apiKeyHash: undefined,
     defaultModel: undefined,
     logLevel: "info",
-    promptCacheRetention: undefined,
+    promptCacheRetention: "in_memory",
+    promptCacheKey: "auto",
     versions: DEFAULT_VERSIONS
   };
 }
@@ -19,8 +20,11 @@ export function defaultConfig() {
 export function loadConfig() {
   const loaded = readJsonIfExists(configPath()) || {};
   const envRetention = process.env.AERIAL_PROMPT_CACHE_RETENTION;
-  const promptCacheRetention = envRetention === undefined ? loaded.promptCacheRetention : envRetention;
-  return { ...defaultConfig(), ...loaded, promptCacheRetention, versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) } };
+  const envCacheKey = process.env.AERIAL_PROMPT_CACHE_KEY;
+  const defaults = defaultConfig();
+  const promptCacheRetention = envRetention === undefined ? (loaded.promptCacheRetention ?? defaults.promptCacheRetention) : envRetention;
+  const promptCacheKey = envCacheKey === undefined ? (loaded.promptCacheKey ?? defaults.promptCacheKey) : envCacheKey;
+  return { ...defaults, ...loaded, promptCacheRetention, promptCacheKey, versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) } };
 }
 
 export function saveConfig(config) {

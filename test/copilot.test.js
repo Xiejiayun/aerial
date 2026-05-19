@@ -8,15 +8,29 @@ process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-co
 process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_GITHUB_TOKEN = "github-test-token";
 
-const { proxyModels, proxyResponses, proxyChatCompletions } = await import("../src/copilot.js");
+const { proxyModels, proxyResponses, proxyMessages, proxyChatCompletions } = await import("../src/copilot.js");
 const { ensureApiKey } = await import("../src/config.js");
 ensureApiKey();
 
 const originalFetch = globalThis.fetch;
+const originalError = console.error;
 
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
+  console.error = originalError;
 });
+
+function waitFor(predicate) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      if (predicate()) return resolve();
+      if (Date.now() - started > 500) return reject(new Error("timed out waiting for condition"));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
 
 test("proxyModels annotates Aerial route support", async () => {
   let calls = 0;
@@ -58,9 +72,11 @@ test("proxyChatCompletions maps max_tokens to max_completion_tokens", async () =
 
 test("proxyResponses preserves client cache fields", async () => {
   let forwarded;
+  const logs = [];
+  console.error = (line) => logs.push(JSON.parse(line));
   globalThis.fetch = async (_url, init) => {
     forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
-    return Response.json({ ok: true, usage: { input_tokens_details: { cached_tokens: 0 } } });
+    return Response.json({ ok: true, usage: { input_tokens: 12, output_tokens: 3, input_tokens_details: { cached_tokens: 7 } } });
   };
 
   const request = new Request("http://127.0.0.1/v1/responses", {
@@ -72,6 +88,144 @@ test("proxyResponses preserves client cache fields", async () => {
   assert.equal(response.status, 200);
   assert.equal(forwarded.prompt_cache_retention, "24h");
   assert.equal(forwarded.prompt_cache_key, "project-a");
+  await waitFor(() => logs.some((line) => line.event === "cache_observe"));
+  const observed = logs.find((line) => line.event === "cache_observe");
+  assert.equal(observed.request.promptCacheRetention, "24h");
+  assert.equal(observed.request.hasPromptCacheKey, true);
+  assert.equal(observed.usage.cached, 7);
+});
+
+test("proxyResponses observes cache usage from SSE responses", async () => {
+  const logs = [];
+  console.error = (line) => logs.push(JSON.parse(line));
+  globalThis.fetch = async () => {
+    return new Response([
+      "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":20,\"output_tokens\":2,\"input_tokens_details\":{\"cached_tokens\":11}}}}\n\n",
+      "data: [DONE]\n\n"
+    ].join(""), { headers: { "content-type": "text/event-stream" } });
+  };
+
+  const request = new Request("http://127.0.0.1/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json", accept: "text/event-stream" },
+    body: JSON.stringify({ model: "gpt-5.4", input: "hello", prompt_cache_retention: "in_memory" })
+  });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  await response.text();
+  await waitFor(() => logs.some((line) => line.event === "cache_observe"));
+  const observed = logs.find((line) => line.event === "cache_observe");
+  assert.equal(observed.usage.cached, 11);
+});
+
+
+test("proxyResponses injects default cache hints transparently", async () => {
+  const previousRetention = process.env.AERIAL_PROMPT_CACHE_RETENTION;
+  const previousKey = process.env.AERIAL_PROMPT_CACHE_KEY;
+  delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
+  delete process.env.AERIAL_PROMPT_CACHE_KEY;
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true });
+  };
+
+  try {
+    const request = new Request("http://127.0.0.1/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.4-mini", input: "hello", metadata: { session_id: "session-a" } })
+    });
+    const response = await proxyResponses(request);
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.prompt_cache_retention, "in_memory");
+    assert.match(forwarded.prompt_cache_key, /^aerial:[a-f0-9]{32}$/);
+  } finally {
+    if (previousRetention === undefined) delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
+    else process.env.AERIAL_PROMPT_CACHE_RETENTION = previousRetention;
+    if (previousKey === undefined) delete process.env.AERIAL_PROMPT_CACHE_KEY;
+    else process.env.AERIAL_PROMPT_CACHE_KEY = previousKey;
+  }
+});
+
+test("proxyResponses respects cache opt-out", async () => {
+  const previousRetention = process.env.AERIAL_PROMPT_CACHE_RETENTION;
+  const previousKey = process.env.AERIAL_PROMPT_CACHE_KEY;
+  process.env.AERIAL_PROMPT_CACHE_RETENTION = "off";
+  process.env.AERIAL_PROMPT_CACHE_KEY = "off";
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true });
+  };
+
+  try {
+    const request = new Request("http://127.0.0.1/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.4-mini", input: "hello" })
+    });
+    const response = await proxyResponses(request);
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.prompt_cache_retention, undefined);
+    assert.equal(forwarded.prompt_cache_key, undefined);
+  } finally {
+    if (previousRetention === undefined) delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
+    else process.env.AERIAL_PROMPT_CACHE_RETENTION = previousRetention;
+    if (previousKey === undefined) delete process.env.AERIAL_PROMPT_CACHE_KEY;
+    else process.env.AERIAL_PROMPT_CACHE_KEY = previousKey;
+  }
+});
+
+test("proxyMessages injects Anthropic cache_control on system content", async () => {
+  const previous = process.env.AERIAL_PROMPT_CACHE_RETENTION;
+  delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true, usage: { cache_creation_input_tokens: 13, cache_read_input_tokens: 0 } });
+  };
+
+  try {
+    const request = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4.6",
+        max_tokens: 32,
+        system: [{ type: "text", text: "Long stable project context" }],
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+    const response = await proxyMessages(request);
+    assert.equal(response.status, 200);
+    assert.deepEqual(forwarded.system[0].cache_control, { type: "ephemeral" });
+  } finally {
+    if (previous === undefined) delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
+    else process.env.AERIAL_PROMPT_CACHE_RETENTION = previous;
+  }
+});
+
+test("proxyMessages preserves client Anthropic cache_control", async () => {
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true });
+  };
+
+  const request = new Request("http://127.0.0.1/v1/messages", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4.6",
+      max_tokens: 32,
+      system: [{ type: "text", text: "Long stable project context", cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: "hello" }]
+    })
+  });
+  const response = await proxyMessages(request);
+  assert.equal(response.status, 200);
+  assert.deepEqual(forwarded.system, [{ type: "text", text: "Long stable project context", cache_control: { type: "ephemeral" } }]);
 });
 
 test("proxyResponses can apply configured default cache retention", async () => {

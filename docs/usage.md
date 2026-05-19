@@ -103,7 +103,7 @@ WebSocket Responses is not implemented yet. If a client attempts a WebSocket upg
 
 Aerial does not implement a local prompt-content cache. It forwards cache protocol fields to Copilot and returns upstream usage fields unchanged. This is the intended design: prompts are not written to a local cache, and cache hits are controlled by the upstream service.
 
-For Codex/OpenAI Responses clients, send cache fields directly:
+For Codex/OpenAI Responses clients, users normally do not need to send cache fields directly. A manual request can still override Aerial's defaults:
 
 ```bash
 curl -s http://127.0.0.1:18181/v1/responses \
@@ -117,7 +117,7 @@ curl -s http://127.0.0.1:18181/v1/responses \
   }'
 ```
 
-For Claude Code or Anthropic Messages clients, use Anthropic `cache_control` where the client supports it:
+For Claude Code or Anthropic Messages clients, Aerial automatically adds Anthropic `cache_control` to stable `system` content when the client omits cache hints. You can still send `cache_control` manually to choose the exact breakpoint:
 
 ```json
 {
@@ -134,12 +134,14 @@ For Claude Code or Anthropic Messages clients, use Anthropic `cache_control` whe
 }
 ```
 
-To apply a default retention policy for OpenAI-style `/v1/responses` and `/v1/chat/completions` requests that do not set one:
+Aerial automatically applies ephemeral prompt cache hints for OpenAI-style `/v1/responses`, `/v1/chat/completions`, and Anthropic-style `/v1/messages` requests that do not set them. Override this only when needed:
 
 ```bash
 aerial config set promptCacheRetention in_memory
 # or: aerial config set promptCacheRetention 24h
-# or per process: export AERIAL_PROMPT_CACHE_RETENTION=in_memory
+# disable automatic cache hints: aerial config set promptCacheRetention off && aerial config set promptCacheKey off
+# pin cache partition: aerial config set promptCacheKey my-project
+# per process: export AERIAL_PROMPT_CACHE_RETENTION=in_memory && export AERIAL_PROMPT_CACHE_KEY=my-project
 ```
 
 Look for these usage fields to confirm cache behavior:
@@ -147,6 +149,15 @@ Look for these usage fields to confirm cache behavior:
 - Responses/Chat: `usage.input_tokens_details.cached_tokens` or `usage.prompt_tokens_details.cached_tokens`.
 - Messages: `usage.cache_creation_input_tokens` and `usage.cache_read_input_tokens`.
 - Copilot details when present: `copilot_usage.token_details` entries with `cache_read` or `cache_write`.
+
+When `aerial start` is running in a terminal, Aerial also writes cache-only metadata logs to stderr:
+
+```json
+{"event":"cache_request","route":"/v1/messages","cacheControlBlocks":1}
+{"event":"cache_observe","route":"/v1/messages","usage":{"cacheRead":1920}}
+```
+
+These logs deliberately omit prompt text and request bodies. If `cached` stays zero, first check that the repeated prefix is identical and at least 1024 tokens. This matches OpenAI's prompt caching requirements; GitHub's public Copilot REST docs cover management and usage-metrics APIs, but do not document Copilot inference cache fields.
 
 Best practice: put stable system/project/tool context first, put changing user input last, and keep the prefix identical between requests. OpenAI-style prompt caching generally needs at least 1024 tokens before hits appear.
 ## Troubleshooting
@@ -156,4 +167,4 @@ Best practice: put stable system/project/tool context first, put changing user i
 - Claude Code cannot read key: ensure `aerial` is on `PATH`; it uses `aerial key print` as its helper.
 - Upstream compatibility error: run `aerial doctor`, then retry with a model returned by `/v1/models`.
 - `Unsupported parameter: max_tokens`: Aerial normalizes Chat Completions `max_tokens` into `max_completion_tokens` before forwarding to newer OpenAI models.
-- Cache hit stays zero: ensure the stable prefix is long enough, unchanged, and placed before variable content. For Responses/Chat, try a stable `prompt_cache_key`; for Messages, put `cache_control` on the stable `system` or content block.
+- Cache hit stays zero: ensure the stable prefix is long enough, unchanged, and placed before variable content. For Responses/Chat, try a stable `prompt_cache_key`; for Messages, keep stable content in `system` or put manual `cache_control` on the stable content block.

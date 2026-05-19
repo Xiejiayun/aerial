@@ -149,7 +149,7 @@ Aerial is for personal local use only.
 - Service install/uninstall and disable/rollback are not implemented yet.
 - Model choice is not automated; query `/v1/models` and select an available model explicitly.
 - Chat Completions requests normalize `max_tokens` to `max_completion_tokens` for newer OpenAI models that reject the older field.
-- Prompt caching is upstream-managed: Aerial does not store prompt bodies locally, and it preserves cache fields clients send.
+- Prompt caching is upstream-managed: Aerial does not store prompt bodies locally, and it preserves or injects cache protocol fields before forwarding.
 
 
 
@@ -179,27 +179,34 @@ Aerial uses the upstream Copilot/OpenAI/Anthropic cache protocols instead of kee
 Supported behavior:
 
 - Responses and Chat Completions preserve `prompt_cache_retention` and `prompt_cache_key` when the client sends them.
-- Responses and Chat Completions can apply a default `prompt_cache_retention` for requests that omit it.
-- Anthropic Messages preserves `cache_control` blocks, including `cache_control: { "type": "ephemeral" }` on `system`, message content blocks, and tool definitions.
+- Responses and Chat Completions automatically add `prompt_cache_retention: "in_memory"` and a stable hashed `prompt_cache_key` when the client omits them.
+- Anthropic Messages preserves client `cache_control` blocks. When none are present and caching is enabled, Aerial automatically adds `cache_control: { "type": "ephemeral" }` to stable `system` content, or to the final tool definition when there is no system content.
 - Usage fields from upstream are returned unchanged, including `cached_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and Copilot `cache_read` / `cache_write` token details when present.
+- Aerial logs cache metadata to stderr as `cache_request` and `cache_observe` events. These logs do not include prompt text or request bodies.
 
-Set a default retention policy for OpenAI-style routes:
+OpenAI's prompt caching documentation says cache hits require an exact prompt prefix match and are only possible once the prompt is at least 1024 tokens. Confirm cache behavior from returned usage fields such as `usage.prompt_tokens_details.cached_tokens` or `usage.input_tokens_details.cached_tokens`; for shorter prompts this value is expected to be zero.
+
+Aerial enables ephemeral prompt caching by default for OpenAI-style routes and Anthropic Messages. Override it only when needed:
 
 ```bash
 aerial config set promptCacheRetention in_memory
 # or
 aerial config set promptCacheRetention 24h
-# disable the default injection again
+# disable automatic cache hints
 aerial config set promptCacheRetention off
+aerial config set promptCacheKey off
+# pin all requests to an explicit cache partition
+aerial config set promptCacheKey my-project
 ```
 
 You can also set it per process:
 
 ```bash
 export AERIAL_PROMPT_CACHE_RETENTION=in_memory
+export AERIAL_PROMPT_CACHE_KEY=my-project
 ```
 
-Per-request fields win over the configured default. Use `24h` only with models whose upstream route accepts extended retention; otherwise leave the client request explicit or use `in_memory`.
+Per-request fields win over the configured default. Use `24h` only with models whose upstream route accepts extended retention; Anthropic Messages still uses Anthropic-style `cache_control: { "type": "ephemeral" }`. Set `promptCacheKey` to `auto` to use Aerial's hashed stable key, `off` to omit it, or a string to force a specific cache partition.
 ## Model Support
 
 `GET /v1/models` returns Copilot's raw model metadata and adds an Aerial-specific field:
