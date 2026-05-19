@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
 import { once } from "node:events";
 
-process.env.AERIAL_CONFIG_DIR = process.env.AERIAL_CONFIG_DIR || "aerial-server-test";
+process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-server-test-"));
 process.env.AERIAL_API_KEY = "aerial_test_key";
 
 const { createServer } = await import("../src/server.js");
