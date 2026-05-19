@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref so PR pushes don't pile up.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      # Don't let a Windows failure cancel Linux/macOS — we want full triplet
+      # signal on every PR.
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        run: node scripts/check-syntax.js
+
+      - name: Run tests
+        run: npm test
+
+      - name: CLI help smoke
+        run: node src/cli.js --help
+
+      - name: CLI version smoke
+        run: node src/cli.js --version
+
+  package:
+    # Runs in parallel with `test` (no `needs:`). pack + secret scan are fast
+    # release-gate checks; failing them must block merge independently of
+    # the multi-OS test matrix.
+    name: package & secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Scan tracked files and npm pack for secrets
+        run: node scripts/verify-secrets.mjs
+
+      - name: Verify npm pack contents
+        run: node scripts/verify-package.mjs
