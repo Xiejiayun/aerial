@@ -39,6 +39,21 @@ name: Release
 # verifies. Moving any publish step into a reusable workflow or a
 # different file would change `job_workflow_ref` and break OIDC.
 #
+# Runtime split between test matrix and publish job:
+#   - The `test` and `package-checks` jobs intentionally pin
+#     `actions/setup-node@v4` with `node-version: "22"` so we keep
+#     validating the Node 22 floor declared in package.json
+#     (`engines.node: ">=22"`).
+#   - The `publish` job uses `actions/setup-node@v6` with
+#     `node-version: 24` and `package-manager-cache: false` because
+#     npm trusted publishing requires npm CLI >= 11.5.1 and Node
+#     >= 22.14, and that is the runtime npm's docs document for
+#     trusted publishers (https://docs.npmjs.com/trusted-publishers/).
+#     A pre-`npm ci` guard step inside the publish job verifies both
+#     observed `node --version` and `npm --version` and hard-fails if
+#     either is below its floor (Node 22.14.0 / npm 11.5.1). See
+#     release-runbook §10 and §14.
+#
 # Anti-footgun: we always run the full multi-OS test matrix and the
 # package/secret gate BEFORE the publish job, for BOTH modes. Publish
 # is Ubuntu-only and depends on `test` and `package-checks` succeeding.
@@ -160,14 +175,80 @@ jobs:
       published_version: ${{ steps.outcome.outputs.published_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Setup Node.js 22 with npm registry
-        uses: actions/setup-node@v4
+      - name: Setup Node.js 24 with npm registry (trusted publishing runtime)
+        # npm trusted publishing requires npm CLI >= 11.5.1 and Node
+        # >= 22.14. Node 24 satisfies both with margin and matches the
+        # runtime npm's docs recommend for trusted publishers
+        # (https://docs.npmjs.com/trusted-publishers/). The `test` and
+        # `package-checks` jobs above stay on Node 22 to validate the
+        # Node 22 floor declared in package.json engines.
+        #
+        # `package-manager-cache: false` disables setup-node's automatic
+        # npm cache wiring per the trusted-publishers example; the
+        # one-shot publish job does not benefit enough from the cache to
+        # be worth the extra moving part.
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
-          cache: npm
+          package-manager-cache: false
+
+      - name: Verify Node and npm versions meet trusted publishing requirement
+        # Hard gate before `npm ci` and any publish work. Trusted
+        # publishing requires npm CLI >= 11.5.1 and Node >= 22.14;
+        # setup-node@v6 + node-version: 24 should ship satisfying
+        # versions of both, but a runner image regression or an
+        # accidental node-version downgrade must fail the job here.
+        # The guard prevents the old-runtime class of confusing
+        # publish-auth failures, where sigstore provenance signing can
+        # still complete before the registry PUT is rejected. See
+        # docs/release-runbook.md §10 and §14.
+        #
+        # Implementation note: the comparison runs in Node rather than
+        # shell so we get a real integer-tuple comparison instead of a
+        # lexical sort (otherwise "9.x.y" would sort above "11.5.1").
+        # Any non-digit suffix in a segment (e.g. an alpha tag) is
+        # truncated conservatively to its leading digits via the
+        # `num(s)` helper. Both Node and npm are checked; if either is
+        # below its floor the job fails with an `::error::` annotation
+        # for each, before exiting non-zero.
+        run: |
+          node --version
+          npm --version
+          node -e '
+            const cp = require("node:child_process");
+            const requiredNode = "22.14.0";
+            const requiredNpm = "11.5.1";
+            const npmV = cp.execSync("npm --version", { encoding: "utf8" }).trim();
+            const nodeV = process.versions.node;
+            console.log("observed node:", nodeV);
+            console.log("observed npm:", npmV);
+            const num = s => {
+              const m = String(s).match(/^\d+/);
+              return m ? parseInt(m[0], 10) : 0;
+            };
+            const cmp = (a, b) => {
+              const pa = a.split(".").map(num);
+              const pb = b.split(".").map(num);
+              for (let i = 0; i < 3; i++) {
+                if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+              }
+              return 0;
+            };
+            let failed = false;
+            if (cmp(nodeV, requiredNode) < 0) {
+              console.error(`::error::Node ${nodeV} is below the required ${requiredNode} for npm trusted publishing. See docs/release-runbook.md §10 and §14.`);
+              failed = true;
+            }
+            if (cmp(npmV, requiredNpm) < 0) {
+              console.error(`::error::npm ${npmV} is below the required ${requiredNpm} for npm trusted publishing. See docs/release-runbook.md §10 and §14.`);
+              failed = true;
+            }
+            if (failed) process.exit(1);
+            console.log(`Node ${nodeV} and npm ${npmV} meet the trusted publishing requirement (Node >= ${requiredNode}, npm >= ${requiredNpm}).`);
+          '
 
       - name: Install dependencies
         run: npm ci

@@ -383,6 +383,24 @@ post-publish smoke passes.
   only allows one trusted publisher binding per package, so
   `release.yml` is the only workflow that can publish under OIDC.
   OIDC tokens are short-lived and never logged; nothing needs to be masked.
+- **`npm publish` 404 immediately after sigstore provenance signing.**
+  One known cause is the publish job running on an npm CLI / Node
+  version below the trusted-publishing minimum: provenance signing
+  completes (sigstore is independent of the registry auth), then the
+  registry PUT is rejected because an older CLI can fail to perform
+  the new trusted-publishing exchange and instead fall back to a
+  token-style auth attempt with no real token. npm trusted publishing
+  requires **npm CLI >= 11.5.1 and Node >= 22.14**. `release.yml`'s
+  publish job pins `actions/setup-node@v6` + `node-version: 24` +
+  `package-manager-cache: false` and runs an explicit Node-side
+  Node/npm version guard before `npm ci` (both floors are checked).
+  If this 404 ever resurfaces, the first thing to check is the
+  publish job's `node --version` / `npm --version` log lines; if
+  either is below its floor, the runner image regressed and the
+  version guard must be tightened. If both versions clear the guard,
+  the cause is elsewhere (trusted publisher binding, OIDC claim
+  match, registry side); diagnose without assuming the runtime is at
+  fault.
 - **`setup-node` cache miss / lockfile drift.** `npm ci` is authoritative in
   CI; if it fails, the cause is almost always that a local dependency change
   was committed without committing the updated `package-lock.json`. Fix
@@ -491,6 +509,24 @@ use **Method Y**:
   publisher is configured (§2 Phase 2), every later release runs in
   CI under OIDC, and local `npm publish` is not part of the release
   workflow.
+- **Trusted publishing runtime requirement.** npm trusted publishing
+  requires **npm CLI >= 11.5.1 and Node >= 22.14**
+  (<https://docs.npmjs.com/trusted-publishers/>). `release.yml`'s
+  publish job intentionally uses `actions/setup-node@v6` with
+  `node-version: 24` (and `package-manager-cache: false`) to keep
+  comfortable headroom above both floors, and runs an explicit
+  Node-side Node/npm version guard before `npm ci` that hard-fails
+  when either the observed `node --version` is below `22.14.0` or
+  the observed `npm --version` is below `11.5.1`. The `test` and
+  `package-checks` jobs intentionally stay on `actions/setup-node@v4`
+  + `node-version: "22"` to validate the Node 22 floor declared in
+  `package.json` `engines.node` — that is what we ship to users, and
+  the publish-job runtime split exists solely so npm's trusted
+  publishing exchange has a satisfying CLI. See §10 for the failure
+  mode that can arise when the publish-job CLI is too old (a
+  confusing `404` from `npm publish` even though sigstore provenance
+  signing succeeded); §10 is a documented troubleshooting case, not
+  a claim that every publish 404 traces back to runtime.
 - No long-lived `NPM_TOKEN` secret is stored in the repo. An
   automation `NPM_TOKEN` may be issued temporarily by the package
   owner as an emergency human-mediated fallback if OIDC breaks after
