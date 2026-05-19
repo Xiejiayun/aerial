@@ -5,11 +5,13 @@ import { startServer } from "./server.js";
 import { setupClaude, setupCodex } from "./setup.js";
 import { doctor } from "./doctor.js";
 import { runProbe, formatProbeReport } from "./probe.js";
+import { printVersion } from "./version.js";
 
 function printHelp() {
   console.log(`Aerial local Copilot proxy
 
 Usage:
+  aerial --version
   aerial login
   aerial key generate
   aerial key print
@@ -38,6 +40,7 @@ async function main() {
   const args = process.argv.slice(2);
   const [command, subcommand, ...rest] = args;
   if (!command || command === "--help" || command === "-h") return printHelp();
+  if (command === "--version") return printVersion();
 
   if (command === "login") {
     const flow = await startDeviceFlow();
