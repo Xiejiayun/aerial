@@ -1,0 +1,180 @@
+name: Nightly
+
+# Nightly npm pre-release pipeline for @jiayunxie/aerial.
+#
+# β scope: workflow_dispatch ONLY. The cron schedule that auto-fires once per
+# day is intentionally not configured yet — we add it in commit γ after a
+# successful manual run by a human, per round 10 agreement.
+#
+# Authentication: OIDC trusted publisher (same as release.yml). No NPM_TOKEN.
+#
+# Skip logic: scripts/publish-nightly.mjs compares the local git HEAD against
+# `@nightly`'s `gitHead`. If they match, no new commits have landed since the
+# last nightly and we publish nothing. The post-publish smoke only runs when
+# something was actually published.
+
+on:
+  workflow_dispatch:
+  # NOTE(commit γ): a `schedule: [{ cron: "0 18 * * *" }]` trigger will be
+  # added here once the manual dispatch has been validated end-to-end by a
+  # human. Do not enable cron before commit γ.
+
+permissions:
+  contents: read
+
+# Never run two nightlies in parallel. Don't cancel an in-flight nightly even
+# if a new dispatch comes in; a half-finished publish must be allowed to
+# complete its E409 idempotency check.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        run: node scripts/check-syntax.js
+
+      - name: Run tests
+        run: npm test
+
+      - name: CLI help smoke
+        run: node src/cli.js --help
+
+      - name: CLI version smoke
+        run: node src/cli.js --version
+
+  package-checks:
+    # Same fast release-gate as the stable release flow. Runs in parallel with
+    # `test`; publish depends on both succeeding.
+    name: package & secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Scan tracked files and npm pack for secrets
+        run: node scripts/verify-secrets.mjs
+
+      - name: Verify npm pack contents
+        run: node scripts/verify-package.mjs
+
+  publish:
+    name: publish nightly to npm
+    needs:
+      - test
+      - package-checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      did_publish: ${{ steps.publish.outputs.did_publish }}
+      published_version: ${{ steps.publish.outputs.published_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # Full history not needed for the script, but gitHead in the npm
+        # manifest is `git rev-parse HEAD` which a shallow checkout already
+        # supplies. Default fetch-depth=1 is fine.
+
+      - name: Setup Node.js 22 with npm registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compute, publish nightly (or skip)
+        id: publish
+        # The script writes `did_publish` and `published_version` to
+        # $GITHUB_OUTPUT itself. It uses OIDC via the publish job's
+        # id-token:write permission.
+        run: node scripts/publish-nightly.mjs
+
+  smoke:
+    name: post-publish smoke
+    needs:
+      - publish
+    if: needs.publish.outputs.did_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install exact published version and smoke CLI (with retry)
+        # Retry up to 3 times with 5/10/20s backoff to absorb npm registry
+        # propagation delay right after a publish.
+        run: |
+          PKG_VERSION="${{ needs.publish.outputs.published_version }}"
+          if [ -z "${PKG_VERSION}" ]; then
+            echo "::error::publish job did not emit published_version." >&2
+            exit 1
+          fi
+          SPEC="@jiayunxie/aerial@${PKG_VERSION}"
+          SMOKE_DIR="$(mktemp -d)"
+          cd "${SMOKE_DIR}"
+          npm init -y >/dev/null
+          # Pin to the exact nightly version, never to the floating @nightly
+          # dist-tag, so a stale registry mirror cannot fake a green smoke.
+          DELAYS="5 10 20"
+          INSTALLED=0
+          ATTEMPT=0
+          for DELAY in ${DELAYS}; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Smoke install attempt ${ATTEMPT}: npm install ${SPEC}"
+            if npm install "${SPEC}"; then
+              INSTALLED=1
+              break
+            fi
+            echo "Smoke install attempt ${ATTEMPT} failed; sleeping ${DELAY}s before retry."
+            sleep "${DELAY}"
+          done
+          if [ "${INSTALLED}" != "1" ]; then
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Smoke install final attempt ${ATTEMPT}: npm install ${SPEC}"
+            npm install "${SPEC}"
+          fi
+          OUT="$(npx --no-install aerial --version)"
+          echo "aerial --version output: ${OUT}"
+          if [ "${OUT}" != "${PKG_VERSION}" ]; then
+            echo "::error::Installed aerial reports '${OUT}', expected '${PKG_VERSION}'." >&2
+            exit 1
+          fi
+          npx --no-install aerial --help >/dev/null
+          echo "Nightly smoke OK for ${SPEC}."

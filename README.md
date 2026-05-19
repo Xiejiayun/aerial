@@ -1,5 +1,9 @@
 # Aerial
 
+[![CI](https://github.com/Xiejiayun/aerial/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Xiejiayun/aerial/actions/workflows/ci.yml)
+[![Nightly](https://github.com/Xiejiayun/aerial/actions/workflows/nightly.yml/badge.svg)](https://github.com/Xiejiayun/aerial/actions/workflows/nightly.yml)
+[![npm version](https://img.shields.io/npm/v/@jiayunxie/aerial.svg)](https://www.npmjs.com/package/@jiayunxie/aerial)
+
 Aerial is a lightweight local-only proxy that lets one user connect their own GitHub Copilot subscription to local coding CLIs.
 
 The MVP runs on `127.0.0.1:18181`, requires a local Aerial API key for model routes, stores credentials on the user's machine, and avoids public deployment, account sharing, quota bypass, dashboards, analytics, and image APIs.
@@ -44,6 +48,16 @@ npm install -g @jiayunxie/aerial
 ```
 
 After install, the CLI is available as `aerial`.
+
+### Nightly builds (advanced, unstable)
+
+The nightly workflow publishes a `nightly` pre-release of Aerial when there are new commits on `main`. The default install command above is unaffected — nightlies are gated behind the `@nightly` dist-tag and will never be served as `latest`. To opt in:
+
+```bash
+npm install -g @jiayunxie/aerial@nightly
+```
+
+Nightly versions look like `0.1.1-nightly.YYYYMMDD.<sha7>`. They reflect the current `main` and may break; report regressions with `aerial --version` so the exact build can be reproduced. Switch back to stable any time with `npm install -g @jiayunxie/aerial`.
 
 ### From source (local development)
 

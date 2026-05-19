@@ -1,0 +1,308 @@
+name: Release
+
+# Stable npm release pipeline for @jiayunxie/aerial.
+#
+# Two triggers:
+#   1. push tags matching v* — primary release path (e.g. `git tag v0.1.1 &&
+#      git push --tags`). The tag MUST equal `v<package.json.version>` exactly;
+#      mismatched tags fail before publish.
+#   2. workflow_dispatch — backup manual path. Allowed only from `refs/heads/main`.
+#      Used when a tag-driven release fails midway and we need to re-run without
+#      re-tagging. Idempotency is universal across both triggers (see the
+#      "Idempotency precheck" step): if the current package.json version is
+#      already published from THIS commit, the publish step is skipped and we
+#      go straight to post-publish smoke. The common follow-up — pushing
+#      v<version> after a successful manual dispatch — re-fires this workflow
+#      and lands in that skip path safely.
+#
+# Authentication: OIDC trusted publisher (npm "trusted publishers"). No NPM_TOKEN
+# secret is configured in the repo; OIDC is the only path here.
+#
+# Anti-footgun: we always run the full multi-OS test matrix BEFORE the single
+# publish step. Publish is Ubuntu-only and depends on `test` succeeding.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Default token permissions are minimal. The publish job widens to id-token:write
+# locally for OIDC; no other job needs more than read.
+permissions:
+  contents: read
+
+# Concurrency: serialize ALL stable release runs into a single global queue.
+# We do NOT group by `${{ github.ref }}`, because the common "manual dispatch
+# from refs/heads/main, then push refs/tags/v<version>" sequence would
+# otherwise schedule two parallel publish jobs against the same version slot.
+# The universal idempotency precheck inside the publish job will already make
+# a re-run safe, but running them in parallel still races on `npm publish` and
+# is best avoided. We do NOT cancel-in-progress — half-killing a publish is
+# worse than queueing.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        run: node scripts/check-syntax.js
+
+      - name: Run tests
+        run: npm test
+
+      - name: CLI help smoke
+        run: node src/cli.js --help
+
+      - name: CLI version smoke
+        run: node src/cli.js --version
+
+  package-checks:
+    # Runs in parallel with `test`. Pack + secret scan are fast release-gate
+    # checks; failing them must block publish independently of the test matrix.
+    name: package & secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Scan tracked files and npm pack for secrets
+        run: node scripts/verify-secrets.mjs
+
+      - name: Verify npm pack contents
+        run: node scripts/verify-package.mjs
+
+  publish:
+    name: publish to npm (latest)
+    needs:
+      - test
+      - package-checks
+    runs-on: ubuntu-latest
+    # id-token:write is REQUIRED for OIDC trusted publisher; contents stays read.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 with npm registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read package version
+        id: pkg
+        # Single-line read to avoid shell parsing edge cases.
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Package version: ${PKG_VERSION}"
+
+      - name: Validate package version is clean stable semver
+        # Stable releases via release.yml MUST be a clean X.Y.Z; any
+        # prerelease suffix (e.g. -nightly.YYYYMMDD.<sha7>, -rc.1, +build.X)
+        # would otherwise be publishable to the `latest` dist-tag through
+        # either the tag-trigger path (if someone pushed a matching
+        # v<prerelease> tag) or the manual-dispatch path. Nightly versions
+        # are computed in-memory by scripts/publish-nightly.mjs and published
+        # via .github/workflows/nightly.yml under the @nightly dist-tag; they
+        # must never reach this stable-release path. See release-runbook §3
+        # ("stable version source") and §5/§6.
+        run: |
+          PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          if ! echo "${PKG_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::package.json version '${PKG_VERSION}' is not a clean stable semver (X.Y.Z). Stable releases via release.yml may not include prerelease or build-metadata suffixes; those belong to the @nightly path. See docs/release-runbook.md §3, §5, §6." >&2
+            exit 1
+          fi
+          echo "Stable version check OK: ${PKG_VERSION}"
+
+      - name: Validate dispatch context
+        if: github.event_name == 'workflow_dispatch'
+        # Manual dispatch MUST be from main. The "is this version already on
+        # the registry?" question is handled uniformly in the idempotency
+        # precheck step below, so all triggers get the same treatment.
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::workflow_dispatch is only allowed from refs/heads/main; got ${GITHUB_REF}" >&2
+            exit 1
+          fi
+          echo "Dispatch context OK: ref=${GITHUB_REF}."
+
+      - name: Validate tag matches package version
+        if: github.event_name == 'push'
+        # Tag must be exactly v<package.json.version>. Anything else is a typo
+        # or someone pushing the wrong tag; fail hard before publishing.
+        run: |
+          TAG_REF="${GITHUB_REF#refs/tags/}"
+          PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          EXPECTED="v${PKG_VERSION}"
+          if [ "${TAG_REF}" != "${EXPECTED}" ]; then
+            echo "::error::Tag '${TAG_REF}' does not match expected '${EXPECTED}' (package.json version=${PKG_VERSION})." >&2
+            exit 1
+          fi
+          echo "Tag check OK: ${TAG_REF} == ${EXPECTED}."
+
+      - name: Idempotency precheck
+        id: idempotency
+        # Tri-state check shared by tag-trigger AND manual-dispatch paths.
+        # The common case after a manual dispatch is the operator pushing
+        # v<version> to tag the commit, which re-triggers this workflow
+        # against an already-published version. Without idempotency that
+        # rerun would always E409 — see release-runbook §6 + §11.
+        #
+        # `npm view` is classified into three outcomes:
+        #   - succeeded with JSON                       → compare gitHead
+        #   - failed with stderr/stdout matching E404 /
+        #     "not found" / "No match"                  → version not on
+        #                                                 registry; publish
+        #   - any other failure (network, registry 5xx,
+        #     auth/config error, parse error, etc.)     → hard fail; we
+        #                                                 refuse to publish
+        #                                                 against an unknown
+        #                                                 registry state
+        #
+        # `should_publish` output:
+        #   - "true"  : version not yet on the registry; do publish.
+        #   - "false" : same gitHead is already published; skip publish but
+        #               still run the post-publish smoke as verification.
+        #   - script exits non-zero : a different commit owns this version
+        #     slot, gitHead is missing, or `npm view` failed for a reason
+        #     other than 404. Refuse to proceed.
+        #
+        # HEAD_SHA is taken from the local checkout (`git rev-parse HEAD`).
+        # We deliberately do not use $GITHUB_SHA: it usually matches HEAD on
+        # `push` and `workflow_dispatch`, but annotated-tag events and other
+        # edge cases can diverge subtly, and the comparison against npm's
+        # `gitHead` only makes sense against the same SHA the publish would
+        # actually stamp into the manifest — which is the checked-out HEAD.
+        run: |
+          PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          SPEC="@jiayunxie/aerial@${PKG_VERSION}"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          echo "Idempotency precheck: spec=${SPEC} HEAD=${HEAD_SHA}"
+          STDERR_FILE="${RUNNER_TEMP:-/tmp}/idempotency-view-stderr.txt"
+          set +e
+          VIEW_JSON="$(npm view "${SPEC}" --json 2>"${STDERR_FILE}")"
+          VIEW_STATUS=$?
+          VIEW_STDERR="$(cat "${STDERR_FILE}" 2>/dev/null || true)"
+          set -e
+          if [ "${VIEW_STATUS}" -ne 0 ]; then
+            COMBINED="${VIEW_JSON} ${VIEW_STDERR}"
+            if echo "${COMBINED}" | grep -Eqi 'E404|code E404|not found|No match'; then
+              echo "Idempotency precheck: ${SPEC} not yet published (E404); will publish."
+              echo "should_publish=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::npm view ${SPEC} failed with status ${VIEW_STATUS} (not E404). Refusing to publish against unknown registry state." >&2
+            echo "::error::npm view stdout: ${VIEW_JSON}" >&2
+            echo "::error::npm view stderr: ${VIEW_STDERR}" >&2
+            exit 1
+          fi
+          if [ -z "${VIEW_JSON}" ]; then
+            # Some npm versions print empty stdout for a 404 even with status 0.
+            echo "Idempotency precheck: ${SPEC} not yet published (empty view); will publish."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PUBLISHED_GIT_HEAD="$(node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((j&&typeof j.gitHead==="string")?j.gitHead:"")' <<< "${VIEW_JSON}")"
+          if [ -z "${PUBLISHED_GIT_HEAD}" ]; then
+            echo "::error::${SPEC} is already published but has no gitHead in its registry manifest; cannot verify idempotency. Bump package.json version." >&2
+            exit 1
+          fi
+          if [ "${PUBLISHED_GIT_HEAD}" = "${HEAD_SHA}" ]; then
+            echo "Idempotency precheck: ${SPEC} already published from this commit (${HEAD_SHA}); skipping npm publish and proceeding to smoke."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::${SPEC} is already published from a DIFFERENT commit (gitHead=${PUBLISHED_GIT_HEAD}, local HEAD=${HEAD_SHA}). Bump package.json version to publish anew." >&2
+          exit 1
+
+      - name: Publish to npm with provenance
+        if: steps.idempotency.outputs.should_publish == 'true'
+        # OIDC via setup-node's id-token:write permission supplies publish
+        # auth automatically. No NODE_AUTH_TOKEN env is set here: trusted
+        # publisher is the only authenticated path. If OIDC breaks, the
+        # package owner uses the emergency fallback procedure documented in
+        # docs/release-runbook.md §14 (out-of-band, human-mediated), not a
+        # repo-level secret.
+        run: npm publish --access public --tag latest --provenance
+
+      - name: Post-publish smoke (install exact version, with retry)
+        # Install the freshly published exact version into a clean temp dir
+        # and call the CLI. We MUST install by exact version, never by a
+        # floating dist-tag like @latest, so a stale CDN/dist-tag mirror
+        # cannot accidentally turn this into a no-op or test the wrong build.
+        #
+        # Retry the install up to 3 times with 5/10/20s backoff: just-published
+        # versions can take a few seconds to propagate to all registry edges,
+        # and we don't want a transient 404 to red the workflow.
+        run: |
+          PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          SPEC="@jiayunxie/aerial@${PKG_VERSION}"
+          SMOKE_DIR="$(mktemp -d)"
+          cd "${SMOKE_DIR}"
+          npm init -y >/dev/null
+          DELAYS="5 10 20"
+          INSTALLED=0
+          ATTEMPT=0
+          for DELAY in ${DELAYS}; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Smoke install attempt ${ATTEMPT}: npm install ${SPEC}"
+            if npm install "${SPEC}"; then
+              INSTALLED=1
+              break
+            fi
+            echo "Smoke install attempt ${ATTEMPT} failed; sleeping ${DELAY}s before retry."
+            sleep "${DELAY}"
+          done
+          if [ "${INSTALLED}" != "1" ]; then
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Smoke install final attempt ${ATTEMPT}: npm install ${SPEC}"
+            npm install "${SPEC}"
+          fi
+          OUT="$(npx --no-install aerial --version)"
+          echo "aerial --version output: ${OUT}"
+          if [ "${OUT}" != "${PKG_VERSION}" ]; then
+            echo "::error::Installed aerial reports '${OUT}', expected '${PKG_VERSION}'." >&2
+            exit 1
+          fi
+          npx --no-install aerial --help >/dev/null
+          echo "Smoke OK for ${SPEC}."
