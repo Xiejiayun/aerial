@@ -1,44 +1,77 @@
 name: Release
 
-# Stable npm release pipeline for @jiayunxie/aerial.
+# Unified npm release pipeline for @jiayunxie/aerial.
 #
-# Two triggers:
-#   1. push tags matching v* — primary release path (e.g. `git tag v0.1.1 &&
-#      git push --tags`). The tag MUST equal `v<package.json.version>` exactly;
-#      mismatched tags fail before publish.
-#   2. workflow_dispatch — backup manual path. Allowed only from `refs/heads/main`.
-#      Used when a tag-driven release fails midway and we need to re-run without
-#      re-tagging. Idempotency is universal across both triggers (see the
-#      "Idempotency precheck" step): if the current package.json version is
-#      already published from THIS commit, the publish step is skipped and we
-#      go straight to post-publish smoke. The common follow-up — pushing
-#      v<version> after a successful manual dispatch — re-fires this workflow
-#      and lands in that skip path safely.
+# Two publish channels, both routed through this single workflow because
+# npm only allows ONE trusted publisher (OIDC binding) per package. The
+# trusted publisher for @jiayunxie/aerial is bound to:
+#   repo: Xiejiayun/aerial
+#   file: .github/workflows/release.yml
+# Therefore every `npm publish` for this package — stable AND nightly —
+# must originate from this workflow file. There is no separate
+# `nightly.yml`; the nightly path lives below as `mode=nightly`. See
+# docs/release-runbook.md §2, §7, §8 for the operational story behind
+# this constraint.
 #
-# Authentication: OIDC trusted publisher (npm "trusted publishers"). No NPM_TOKEN
-# secret is configured in the repo; OIDC is the only path here.
+# Triggers and effective mode:
+#   1. push tag matching v* — primary stable release path
+#      (`git tag v0.1.1 && git push --tags`). The tag MUST equal
+#      `v<package.json.version>` exactly; mismatched tags fail before
+#      publish. Tag triggers are ALWAYS stable mode regardless of any
+#      input value.
+#   2. workflow_dispatch — manual path with a required `mode` choice
+#      input:
+#        - mode=stable (default): manual stable release escape hatch
+#          when the tag path fails partway. Stable safety steps apply
+#          (clean-stable-semver guard and idempotency precheck;
+#          tag/version check applies on tag-triggered runs). Allowed
+#          only from refs/heads/main.
+#        - mode=nightly: publish a nightly pre-release through
+#          scripts/publish-nightly.mjs. Allowed only from refs/heads/main.
+#   3. schedule (future, added by commit γ) — cron-driven runs are
+#      ALWAYS mode=nightly. The mode-detection step already routes
+#      schedule events to nightly so γ is a one-line `on.schedule.cron`
+#      addition with no logic change.
 #
-# Anti-footgun: we always run the full multi-OS test matrix BEFORE the single
-# publish step. Publish is Ubuntu-only and depends on `test` succeeding.
+# Authentication: OIDC trusted publisher (npm "trusted publishers")
+# only. No NPM_TOKEN secret is configured. OIDC's `job_workflow_ref`
+# claim binds to this exact workflow file path; that is what npm
+# verifies. Moving any publish step into a reusable workflow or a
+# different file would change `job_workflow_ref` and break OIDC.
+#
+# Anti-footgun: we always run the full multi-OS test matrix and the
+# package/secret gate BEFORE the publish job, for BOTH modes. Publish
+# is Ubuntu-only and depends on `test` and `package-checks` succeeding.
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Release channel: stable (default; escape-hatch) or nightly"
+        required: true
+        type: choice
+        default: stable
+        options:
+          - stable
+          - nightly
 
-# Default token permissions are minimal. The publish job widens to id-token:write
-# locally for OIDC; no other job needs more than read.
+# Default token permissions are minimal. The publish job widens to
+# id-token:write locally for OIDC; no other job needs more than read.
 permissions:
   contents: read
 
-# Concurrency: serialize ALL stable release runs into a single global queue.
-# We do NOT group by `${{ github.ref }}`, because the common "manual dispatch
-# from refs/heads/main, then push refs/tags/v<version>" sequence would
-# otherwise schedule two parallel publish jobs against the same version slot.
-# The universal idempotency precheck inside the publish job will already make
-# a re-run safe, but running them in parallel still races on `npm publish` and
-# is best avoided. We do NOT cancel-in-progress — half-killing a publish is
+# Concurrency: serialize ALL release runs into a single global queue —
+# stable AND nightly together — because both channels publish to the
+# same npm package and must not race. We do NOT group by `${{ github.ref }}`,
+# because the common "manual dispatch from refs/heads/main, then push
+# refs/tags/v<version>" sequence would otherwise schedule two parallel
+# publish jobs against the same version slot. The universal idempotency
+# precheck inside the publish job will already make a re-run safe, but
+# running them in parallel still races on `npm publish` and is best
+# avoided. We do NOT cancel-in-progress — half-killing a publish is
 # worse than queueing.
 concurrency:
   group: release
@@ -105,15 +138,26 @@ jobs:
         run: node scripts/verify-package.mjs
 
   publish:
-    name: publish to npm (latest)
+    name: publish to npm
     needs:
       - test
       - package-checks
     runs-on: ubuntu-latest
     # id-token:write is REQUIRED for OIDC trusted publisher; contents stays read.
+    # Both stable and nightly publish steps reuse this same id-token claim.
     permissions:
       contents: read
       id-token: write
+    # Job-level outputs are populated by the final `Emit publish outcome`
+    # step, which reads whichever path actually executed (stable or
+    # nightly) and writes unified values via bash. We deliberately do
+    # NOT compose these outputs with GHA `&& ||` expressions over per-path
+    # step outputs — empty strings and skipped-step outputs make those
+    # expressions easy to misread.
+    outputs:
+      mode: ${{ steps.outcome.outputs.mode }}
+      did_publish: ${{ steps.outcome.outputs.did_publish }}
+      published_version: ${{ steps.outcome.outputs.published_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,24 +172,90 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Read package version
+      - name: Determine effective release mode
+        id: mode
+        # Single source of truth for the rest of the job: every later
+        # step's `if:` reads `steps.mode.outputs.mode`. Normalization
+        # rules:
+        #   - push (tag)        → mode is ALWAYS "stable". Tag-driven
+        #                         releases are stable by definition.
+        #   - workflow_dispatch → mode comes from the required `mode`
+        #                         input. We do NOT silently coerce a
+        #                         missing input to "stable"; the input
+        #                         declaration is `required: true` with
+        #                         `default: stable`, so every dispatch
+        #                         carries an explicit value.
+        #   - schedule          → mode is ALWAYS "nightly". The schedule
+        #                         trigger itself is added by commit γ;
+        #                         routing it to nightly here means γ is
+        #                         a one-line addition (the cron entry)
+        #                         with no mode-logic change.
+        # Any other event type is unsupported and fails fast so an
+        # accidentally-wired future trigger surfaces immediately.
+        run: |
+          EVENT="${{ github.event_name }}"
+          case "${EVENT}" in
+            push)
+              MODE="stable"
+              ;;
+            workflow_dispatch)
+              MODE="${{ github.event.inputs.mode }}"
+              if [ -z "${MODE}" ]; then
+                echo "::error::workflow_dispatch did not supply a mode input. Re-dispatch with mode set explicitly." >&2
+                exit 1
+              fi
+              if [ "${MODE}" != "stable" ] && [ "${MODE}" != "nightly" ]; then
+                echo "::error::Unsupported mode '${MODE}' (expected 'stable' or 'nightly')." >&2
+                exit 1
+              fi
+              ;;
+            schedule)
+              MODE="nightly"
+              ;;
+            *)
+              echo "::error::Unsupported event '${EVENT}' for release workflow. Only 'push' (tag), 'workflow_dispatch', and 'schedule' are allowed." >&2
+              exit 1
+              ;;
+          esac
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "Effective release mode: ${MODE} (event=${EVENT})."
+
+      - name: Validate dispatch context (main only)
+        if: github.event_name == 'workflow_dispatch'
+        # Both stable and nightly manual dispatches must originate from
+        # refs/heads/main. The tag-trigger path does NOT go through this
+        # check because the tag ref (refs/tags/v*) is itself the gate
+        # for the stable path. Future schedule events also bypass this
+        # check because their ref is the default branch by GHA contract.
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::workflow_dispatch (mode=${{ steps.mode.outputs.mode }}) is only allowed from refs/heads/main; got ${GITHUB_REF}" >&2
+            exit 1
+          fi
+          echo "Dispatch context OK: ref=${GITHUB_REF}, mode=${{ steps.mode.outputs.mode }}."
+
+      # ---------------- stable path ----------------
+
+      - name: (stable) Read package version
         id: pkg
+        if: steps.mode.outputs.mode == 'stable'
         # Single-line read to avoid shell parsing edge cases.
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
           echo "version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Package version: ${PKG_VERSION}"
 
-      - name: Validate package version is clean stable semver
+      - name: (stable) Validate package version is clean stable semver
+        if: steps.mode.outputs.mode == 'stable'
         # Stable releases via release.yml MUST be a clean X.Y.Z; any
         # prerelease suffix (e.g. -nightly.YYYYMMDD.<sha7>, -rc.1, +build.X)
         # would otherwise be publishable to the `latest` dist-tag through
         # either the tag-trigger path (if someone pushed a matching
         # v<prerelease> tag) or the manual-dispatch path. Nightly versions
-        # are computed in-memory by scripts/publish-nightly.mjs and published
-        # via .github/workflows/nightly.yml under the @nightly dist-tag; they
-        # must never reach this stable-release path. See release-runbook §3
-        # ("stable version source") and §5/§6.
+        # are computed in-memory by scripts/publish-nightly.mjs and
+        # published under the @nightly dist-tag from the nightly path
+        # below; they must never reach this stable-release path. See
+        # release-runbook §3 ("stable version source") and §5/§6.
         run: |
           PKG_VERSION="${{ steps.pkg.outputs.version }}"
           if ! echo "${PKG_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -154,20 +264,8 @@ jobs:
           fi
           echo "Stable version check OK: ${PKG_VERSION}"
 
-      - name: Validate dispatch context
-        if: github.event_name == 'workflow_dispatch'
-        # Manual dispatch MUST be from main. The "is this version already on
-        # the registry?" question is handled uniformly in the idempotency
-        # precheck step below, so all triggers get the same treatment.
-        run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "::error::workflow_dispatch is only allowed from refs/heads/main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
-          echo "Dispatch context OK: ref=${GITHUB_REF}."
-
-      - name: Validate tag matches package version
-        if: github.event_name == 'push'
+      - name: (stable) Validate tag matches package version
+        if: steps.mode.outputs.mode == 'stable' && github.event_name == 'push'
         # Tag must be exactly v<package.json.version>. Anything else is a typo
         # or someone pushing the wrong tag; fail hard before publishing.
         run: |
@@ -180,13 +278,15 @@ jobs:
           fi
           echo "Tag check OK: ${TAG_REF} == ${EXPECTED}."
 
-      - name: Idempotency precheck
+      - name: (stable) Idempotency precheck
         id: idempotency
-        # Tri-state check shared by tag-trigger AND manual-dispatch paths.
-        # The common case after a manual dispatch is the operator pushing
-        # v<version> to tag the commit, which re-triggers this workflow
-        # against an already-published version. Without idempotency that
-        # rerun would always E409 — see release-runbook §6 + §11.
+        if: steps.mode.outputs.mode == 'stable'
+        # Tri-state check shared by tag-trigger AND manual-dispatch paths,
+        # stable mode only. The common case after a manual dispatch is
+        # the operator pushing v<version> to tag the commit, which
+        # re-triggers this workflow against an already-published version.
+        # Without idempotency that rerun would always E409 — see
+        # release-runbook §6 + §11.
         #
         # `npm view` is classified into three outcomes:
         #   - succeeded with JSON                       → compare gitHead
@@ -201,8 +301,8 @@ jobs:
         #
         # `should_publish` output:
         #   - "true"  : version not yet on the registry; do publish.
-        #   - "false" : same gitHead is already published; skip publish but
-        #               still run the post-publish smoke as verification.
+        #   - "false" : same gitHead is already published; skip publish
+        #               but still run the post-publish smoke as verification.
         #   - script exits non-zero : a different commit owns this version
         #     slot, gitHead is missing, or `npm view` failed for a reason
         #     other than 404. Refuse to proceed.
@@ -213,6 +313,10 @@ jobs:
         # edge cases can diverge subtly, and the comparison against npm's
         # `gitHead` only makes sense against the same SHA the publish would
         # actually stamp into the manifest — which is the checked-out HEAD.
+        #
+        # Nightly mode does NOT run this step; its own skip/conflict
+        # handling lives inside scripts/publish-nightly.mjs (strict
+        # watermark classification + E409 reconcile loop).
         run: |
           PKG_VERSION="${{ steps.pkg.outputs.version }}"
           SPEC="@jiayunxie/aerial@${PKG_VERSION}"
@@ -255,25 +359,123 @@ jobs:
           echo "::error::${SPEC} is already published from a DIFFERENT commit (gitHead=${PUBLISHED_GIT_HEAD}, local HEAD=${HEAD_SHA}). Bump package.json version to publish anew." >&2
           exit 1
 
-      - name: Publish to npm with provenance
-        if: steps.idempotency.outputs.should_publish == 'true'
+      - name: (stable) Publish to npm with provenance
+        if: steps.mode.outputs.mode == 'stable' && steps.idempotency.outputs.should_publish == 'true'
         # OIDC via setup-node's id-token:write permission supplies publish
         # auth automatically. No NODE_AUTH_TOKEN env is set here: trusted
         # publisher is the only authenticated path. If OIDC breaks, the
-        # package owner uses the emergency fallback procedure documented in
-        # docs/release-runbook.md §14 (out-of-band, human-mediated), not a
-        # repo-level secret.
+        # package owner uses the emergency fallback procedure documented
+        # in docs/release-runbook.md §14 (out-of-band, human-mediated),
+        # not a repo-level secret.
         run: npm publish --access public --tag latest --provenance
 
-      - name: Post-publish smoke (install exact version, with retry)
-        # Install the freshly published exact version into a clean temp dir
-        # and call the CLI. We MUST install by exact version, never by a
-        # floating dist-tag like @latest, so a stale CDN/dist-tag mirror
-        # cannot accidentally turn this into a no-op or test the wrong build.
+      # ---------------- nightly path ----------------
+
+      - name: (nightly) Compute, publish nightly (or skip)
+        id: publish-nightly
+        if: steps.mode.outputs.mode == 'nightly'
+        # scripts/publish-nightly.mjs:
+        #   - Reads `@latest` to compute base = bumpPatch(@latest.version);
+        #     fails fast if `@latest` is unpublished.
+        #   - Reads `@nightly` as the skip watermark with strict 5-state
+        #     classification — only an explicit E404 or a successful view
+        #     with a non-empty string `gitHead` are accepted; everything
+        #     else throws and refuses to publish. See release-runbook §7.
+        #   - When skip does not apply, writes the computed
+        #     `<base>-nightly.YYYYMMDD.<sha7>` into package.json in-memory
+        #     (NOT via `npm version`, so package-lock.json is untouched)
+        #     and runs `npm publish --tag nightly --access public
+        #     --provenance` via the publish job's OIDC token.
+        #   - Restores package.json in a `finally` block.
+        #   - Emits `did_publish` and `published_version` to $GITHUB_OUTPUT
+        #     so the smoke step below can gate on them.
+        #   - On any failure (unknown watermark state, E409 non-idempotent,
+        #     publish error) the script's top-level catch emits
+        #     `did_publish=false` and `process.exit(1)`, which fails this
+        #     workflow step. A clean "no new commits since last nightly"
+        #     skip also emits `did_publish=false` but exits 0; the smoke
+        #     gate (`did_publish == 'true'`) handles both correctly.
+        run: node scripts/publish-nightly.mjs
+
+      # ---------------- unified outcome (must run before smoke) ----------------
+
+      - name: Emit publish outcome
+        id: outcome
+        # Bash-driven normalization step. Reads whichever per-path step
+        # outputs actually got set and writes unified job-level outputs
+        # (`mode`, `did_publish`, `published_version`). We do this in
+        # bash rather than GHA `&& ||` expressions because the latter
+        # have subtle behavior around empty strings and skipped-step
+        # outputs (where `steps.X.outputs.Y` evaluates to "" rather
+        # than null), which can produce silent fallbacks. Bash with
+        # explicit `[ "${VAR}" = "..." ]` comparisons is unambiguous.
         #
-        # Retry the install up to 3 times with 5/10/20s backoff: just-published
-        # versions can take a few seconds to propagate to all registry edges,
-        # and we don't want a transient 404 to red the workflow.
+        # Semantics of `did_publish` (uniform across both modes):
+        #   - "true"  : this workflow run actually wrote a new tarball
+        #               to the registry. Stable mode: the idempotency
+        #               precheck said publish, and the `npm publish`
+        #               step ran. Nightly mode: the script's main path
+        #               (or its E409 reconcile loop) succeeded.
+        #   - "false" : this workflow run did NOT write to the registry.
+        #               Stable mode: idempotency precheck found the same
+        #               gitHead already published and skipped the publish
+        #               step. Nightly mode: the @nightly watermark equals
+        #               local HEAD so the script intentionally skipped.
+        #               Stable smoke still runs (mode==stable gate);
+        #               nightly smoke does not (did_publish==true gate).
+        #   - ""      : something failed earlier in the path; the job is
+        #               already red. Downstream consumers should ignore
+        #               outputs from a failed job.
+        run: |
+          MODE="${{ steps.mode.outputs.mode }}"
+          STABLE_PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          STABLE_SHOULD_PUBLISH="${{ steps.idempotency.outputs.should_publish }}"
+          NIGHTLY_DID_PUBLISH="${{ steps.publish-nightly.outputs.did_publish }}"
+          NIGHTLY_PUBLISHED_VERSION="${{ steps.publish-nightly.outputs.published_version }}"
+          DID_PUBLISH=""
+          PUBLISHED_VERSION=""
+          if [ "${MODE}" = "nightly" ]; then
+            DID_PUBLISH="${NIGHTLY_DID_PUBLISH}"
+            PUBLISHED_VERSION="${NIGHTLY_PUBLISHED_VERSION}"
+          elif [ "${MODE}" = "stable" ]; then
+            PUBLISHED_VERSION="${STABLE_PKG_VERSION}"
+            if [ "${STABLE_SHOULD_PUBLISH}" = "true" ]; then
+              DID_PUBLISH="true"
+            elif [ "${STABLE_SHOULD_PUBLISH}" = "false" ]; then
+              DID_PUBLISH="false"
+            else
+              DID_PUBLISH=""
+            fi
+          else
+            echo "::error::outcome step saw unexpected mode '${MODE}'; this should be unreachable because the determine-mode step fails on unknown modes." >&2
+            exit 1
+          fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "did_publish=${DID_PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "published_version=${PUBLISHED_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publish outcome: mode=${MODE} did_publish=${DID_PUBLISH} published_version=${PUBLISHED_VERSION}"
+
+      # ---------------- smoke ----------------
+
+      - name: (stable) Post-publish smoke (install exact version, with retry)
+        if: steps.mode.outputs.mode == 'stable'
+        # Install the freshly published exact version into a clean temp
+        # dir and call the CLI. We MUST install by exact version, never
+        # by a floating dist-tag like @latest, so a stale CDN/dist-tag
+        # mirror cannot accidentally turn this into a no-op or test the
+        # wrong build.
+        #
+        # Retry the install up to 3 times with 5/10/20s backoff: just-
+        # published versions can take a few seconds to propagate to all
+        # registry edges, and we don't want a transient 404 to red the
+        # workflow.
+        #
+        # Stable smoke is gated on `mode == 'stable'` only, NOT on
+        # `did_publish`. Idempotency skip (did_publish=false) still
+        # smokes the already-published version so a stale registry or
+        # broken artifact surfaces on every rerun. Nightly smoke is
+        # gated differently because a nightly skip means no new tarball
+        # exists to verify.
         run: |
           PKG_VERSION="${{ steps.pkg.outputs.version }}"
           SPEC="@jiayunxie/aerial@${PKG_VERSION}"
@@ -306,3 +508,51 @@ jobs:
           fi
           npx --no-install aerial --help >/dev/null
           echo "Smoke OK for ${SPEC}."
+
+      - name: (nightly) Post-publish smoke (install exact version, with retry)
+        if: steps.mode.outputs.mode == 'nightly' && steps.publish-nightly.outputs.did_publish == 'true'
+        # Skip when the nightly script reported `did_publish=false` —
+        # that means the @nightly skip watermark matched local HEAD and
+        # no new tarball was published, so there is nothing new to
+        # smoke. The previously-published @nightly was already smoked
+        # in its original run.
+        #
+        # When we do smoke, install the EXACT computed nightly version,
+        # never the floating @nightly dist-tag, so a stale registry
+        # mirror cannot fake a green smoke.
+        run: |
+          PKG_VERSION="${{ steps.publish-nightly.outputs.published_version }}"
+          if [ -z "${PKG_VERSION}" ]; then
+            echo "::error::nightly publish reported did_publish=true but did not emit published_version." >&2
+            exit 1
+          fi
+          SPEC="@jiayunxie/aerial@${PKG_VERSION}"
+          SMOKE_DIR="$(mktemp -d)"
+          cd "${SMOKE_DIR}"
+          npm init -y >/dev/null
+          DELAYS="5 10 20"
+          INSTALLED=0
+          ATTEMPT=0
+          for DELAY in ${DELAYS}; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Smoke install attempt ${ATTEMPT}: npm install ${SPEC}"
+            if npm install "${SPEC}"; then
+              INSTALLED=1
+              break
+            fi
+            echo "Smoke install attempt ${ATTEMPT} failed; sleeping ${DELAY}s before retry."
+            sleep "${DELAY}"
+          done
+          if [ "${INSTALLED}" != "1" ]; then
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Smoke install final attempt ${ATTEMPT}: npm install ${SPEC}"
+            npm install "${SPEC}"
+          fi
+          OUT="$(npx --no-install aerial --version)"
+          echo "aerial --version output: ${OUT}"
+          if [ "${OUT}" != "${PKG_VERSION}" ]; then
+            echo "::error::Installed aerial reports '${OUT}', expected '${PKG_VERSION}'." >&2
+            exit 1
+          fi
+          npx --no-install aerial --help >/dev/null
+          echo "Nightly smoke OK for ${SPEC}."

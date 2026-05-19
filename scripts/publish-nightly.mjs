@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 // Compute and publish a nightly pre-release of @jiayunxie/aerial.
 //
-// Called by .github/workflows/nightly.yml. Emits GitHub Actions outputs:
+// Called by .github/workflows/release.yml when dispatched with mode=nightly
+// (or by the later cron-enabling change that will add a schedule trigger on
+// the same workflow). npm only allows ONE trusted publisher per package, so
+// the nightly path must share release.yml's OIDC binding -- see release
+// runbook sections 2 and 7 for the background. Emits GitHub Actions outputs:
 //   did_publish=<true|false>
 //   published_version=<semver|empty>
 //

@@ -1,7 +1,6 @@
 # Aerial
 
 [![CI](https://github.com/Xiejiayun/aerial/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Xiejiayun/aerial/actions/workflows/ci.yml)
-[![Nightly](https://github.com/Xiejiayun/aerial/actions/workflows/nightly.yml/badge.svg)](https://github.com/Xiejiayun/aerial/actions/workflows/nightly.yml)
 [![npm version](https://img.shields.io/npm/v/@jiayunxie/aerial.svg)](https://www.npmjs.com/package/@jiayunxie/aerial)
 
 Aerial is a lightweight local-only proxy that lets one user connect their own GitHub Copilot subscription to local coding CLIs.
@@ -51,7 +50,7 @@ After install, the CLI is available as `aerial`.
 
 ### Nightly builds (advanced, unstable)
 
-The nightly workflow publishes a `nightly` pre-release of Aerial when there are new commits on `main`. The default install command above is unaffected — nightlies are gated behind the `@nightly` dist-tag and will never be served as `latest`. To opt in:
+Nightly pre-releases are published by the same `release.yml` workflow as stable releases, dispatched with `mode=nightly` (and, once scheduled publishing is enabled, by a daily cron on the same workflow). They are routed through a single workflow because npm only allows one trusted publisher per package. The default install command above is unaffected — nightlies are gated behind the `@nightly` dist-tag and will never be served as `latest`. To opt in:
 
 ```bash
 npm install -g @jiayunxie/aerial@nightly

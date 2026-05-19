@@ -53,16 +53,19 @@ through CI OIDC.
 
 - **npm trusted publisher (OIDC).** Now that the package exists,
   associate `@jiayunxie/aerial` with the GitHub repository
-  `Xiejiayun/aerial` and BOTH workflow files
-  `.github/workflows/release.yml` and `.github/workflows/nightly.yml`.
-  This can be done from the npmjs.com package page → "Trusted
-  publishing" UI, or from the CLI:
+  `Xiejiayun/aerial` and the single workflow file
+  `.github/workflows/release.yml`. **npm only allows one trusted
+  publisher binding per package**, so both the stable path and the
+  nightly path must originate from this one workflow file (see §7 and
+  §8 for how `release.yml` routes both modes). Do not attempt to
+  register a second binding for any other workflow file — npm will
+  return `409 Conflict` and the second workflow cannot publish under
+  OIDC. The binding can be configured from the npmjs.com package
+  page → "Trusted publishing" UI, or from the CLI:
 
   ```bash
   npm trust github @jiayunxie/aerial \
     --repo Xiejiayun/aerial --file release.yml
-  npm trust github @jiayunxie/aerial \
-    --repo Xiejiayun/aerial --file nightly.yml
   ```
 
   Do **not** configure an `NPM_TOKEN` secret in the repo; OIDC is the
@@ -173,31 +176,56 @@ post-publish smoke passes.
   owner-local bootstrap publish; `release.yml` (both the tag-trigger
   and manual-dispatch paths) is the standard path only after §2 Phase
   2 is in place.
+- **`mode` input.** `release.yml`'s `workflow_dispatch` trigger
+  declares a required `mode` choice input with values `stable`
+  (default) and `nightly`. The same workflow handles both channels
+  because npm only allows one trusted publisher binding per package
+  (§2 Phase 2, §14). Tag-triggered runs are always `mode=stable`
+  regardless of any input; future `schedule`-triggered runs are
+  always `mode=nightly` (γ).
 - `release.yml`'s `workflow_dispatch` trigger requires `github.ref ==
-  refs/heads/main` (the job fails fast otherwise).
-- The clean-stable-semver guard (§3, §5) also applies to manual dispatch:
-  the same "Validate package version is clean stable semver" step rejects
-  any `package.json.version` that carries a prerelease or build-metadata
-  suffix, before any publish work runs. This keeps the `@latest` channel
-  free of nightly-shaped versions even when the tag-trigger path is
-  bypassed.
+  refs/heads/main` for both modes (the job fails fast otherwise).
+- The clean-stable-semver guard (§3, §5) also applies to manual dispatch
+  in `mode=stable`: the same "Validate package version is clean stable
+  semver" step rejects any `package.json.version` that carries a
+  prerelease or build-metadata suffix, before any publish work runs.
+  This keeps the `@latest` channel free of nightly-shaped versions even
+  when the tag-trigger path is bypassed. `mode=nightly` does not run
+  the clean-semver guard because nightly versions are computed
+  in-memory by `scripts/publish-nightly.mjs` and are deliberately
+  prerelease-shaped.
 - The publish job runs the **idempotency precheck** described in §8 on
-  every trigger, including manual dispatch. So if you push the matching
-  `v<version>` tag immediately after a successful manual dispatch (which
-  is recommended — see below), the re-triggered workflow detects the
-  already-published version, confirms it was published from the same
-  commit, and continues straight to post-publish smoke without
-  re-publishing. No E409, no destructive overwrite.
-- After a successful manual dispatch, manually create and push the
-  matching git tag so the tag/registry pair stays consistent:
-  `git tag v<version> && git push origin v<version>`.
+  every `mode=stable` trigger, including manual dispatch. So if you
+  push the matching `v<version>` tag immediately after a successful
+  manual stable dispatch (which is recommended — see below), the
+  re-triggered workflow detects the already-published version,
+  confirms it was published from the same commit, and continues
+  straight to post-publish smoke without re-publishing. No E409, no
+  destructive overwrite. `mode=nightly` does its own
+  watermark/E409-reconcile inside `publish-nightly.mjs` (§7).
+- After a successful stable manual dispatch, manually create and push
+  the matching git tag so the tag/registry pair stays consistent:
+  `git tag v<version> && git push origin v<version>`. There is no tag
+  to push for a nightly dispatch — nightlies live only as a registry
+  artifact under the `@nightly` dist-tag.
 
 ## §7 Nightly Release (cron-scheduled)
 
-- `nightly.yml` will run on cron `0 18 * * *` (UTC, i.e. ~02:00 the next day
-  in Beijing time) once enabled in commit γ. Until γ, only the
-  `workflow_dispatch` trigger is wired; the schedule block is intentionally
-  absent.
+- Nightly pre-releases are published by `release.yml` in `mode=nightly`,
+  the same workflow file that handles stable releases. They share one
+  workflow because npm only allows one trusted publisher binding per
+  package (§2 Phase 2, §14). Two trigger surfaces produce
+  `mode=nightly`:
+    - `workflow_dispatch` with the `mode` input set to `nightly`
+      (allowed only from `refs/heads/main`, see §6). This is the
+      validation path during initial rollout and a manual escape hatch
+      afterwards.
+    - `schedule` on cron `0 18 * * *` (UTC, i.e. ~02:00 the next day
+      in Beijing time). The cron entry will be added to `release.yml`
+      in commit γ — at that point the `on.schedule` block is added
+      directly to `release.yml`. The mode-detection step already routes
+      `schedule` events to `nightly`, so γ is a one-line addition with
+      no logic change.
 - **Skip watermark.** `scripts/publish-nightly.mjs` calls
   `npm view @jiayunxie/aerial@nightly --json` and tolerates only two
   known watermark states; anything else is "unknown registry state" and
@@ -236,48 +264,78 @@ post-publish smoke passes.
   `published_version=<ver>` to `$GITHUB_OUTPUT`. Restore `package.json`
   from the on-disk copy captured at job start, in a `finally` block, so
   the working tree is always clean afterwards.
-- **Smoke.** The downstream `smoke` job runs **only** when
-  `needs.publish.outputs.did_publish == 'true'`. It installs the exact
-  computed version (not `@nightly`) and asserts `aerial --version` matches.
+- **Smoke.** The nightly post-publish smoke step in `release.yml`'s
+  `publish` job runs **only** when both `steps.mode.outputs.mode ==
+  'nightly'` and `steps.publish-nightly.outputs.did_publish == 'true'`.
+  It installs the exact computed version (not the `@nightly`
+  dist-tag) with the same 5/10/20 s retry backoff as the stable smoke.
 
 ## §8 CI / Workflow File Structure
 
 - `.github/workflows/ci.yml`: triggered by `pull_request` and `push` to
   `main`. Two jobs (`test`, `package & secret scan`) run in parallel with no
   `needs:` chain. No publish step.
-- `.github/workflows/release.yml`: triggered by `push tags: ['v*']` or
-  `workflow_dispatch`. Same `test` matrix and `package & secret scan`
-  gates as CI run as parallel prerequisites, then a single Ubuntu
-  `publish` job with `id-token: write` whose steps are, in order:
-  checkout + setup-node + `npm ci`, read package version, validate the
-  version is clean stable semver `^[0-9]+\.[0-9]+\.[0-9]+$` (rejects
-  prerelease / build-metadata suffixes — they belong to `@nightly`),
-  validate dispatch context (`refs/heads/main` only) or strict
-  tag/version match, idempotency precheck, conditional
-  `npm publish --tag latest --provenance`, post-publish smoke with
-  retry. Release concurrency is a single global queue (`group: release`,
-  no `${{ github.ref }}` suffix) so manual-dispatch + later tag-push
-  runs serialize instead of racing on the same version slot.
-  - **Idempotency precheck** (runs on every trigger before publish):
-    `npm view @jiayunxie/aerial@<package.version> --json`. `npm view` is
-    classified into three outcomes: success with JSON → compare `gitHead`;
-    failure whose stderr/stdout matches `E404` / `not found` / `No match`
-    → treat as not published and proceed to publish; any other failure
-    (network, registry 5xx, auth/config error) → hard fail and refuse
-    to publish against an unknown registry state. When the version is
-    already published, its `gitHead` is compared against the publish
-    job's locally-checked-out HEAD (`git rev-parse HEAD`, not
-    `$GITHUB_SHA`). If `gitHead` equals checked-out HEAD, skip the
-    publish step and still run post-publish smoke against the
-    already-published artifact. If `gitHead` differs or is missing,
-    fail loudly — a different commit already owns the version slot.
-    This lets manual dispatch + later `git push v<version>` and
-    rerun-after-smoke-failure both recover without E409.
-- `.github/workflows/nightly.yml`: triggered by `workflow_dispatch` only (γ
-  will add cron). Same gates, then a publish job invokes
-  `scripts/publish-nightly.mjs` and emits `did_publish` /
-  `published_version` outputs. A conditional `smoke` job consumes those
-  outputs.
+- `.github/workflows/release.yml`: the **sole** publish workflow for
+  `@jiayunxie/aerial`, handling both stable and nightly channels because
+  npm only allows one trusted publisher binding per package (§2 Phase 2,
+  §14). There is no separate `nightly.yml`. Triggered by:
+    - `push tags: ['v*']` → always `mode=stable`;
+    - `workflow_dispatch` with required `mode` choice input (`stable`
+      default, or `nightly`) — both modes require `refs/heads/main`;
+    - `schedule` (added in commit γ) → always `mode=nightly`.
+
+  The same `test` matrix and `package & secret scan` gates as CI run as
+  parallel prerequisites for both modes, then a single Ubuntu `publish`
+  job with `id-token: write` whose mode-aware steps are, in order:
+    - checkout + setup-node + `npm ci`,
+    - **Determine effective release mode** (`steps.mode.outputs.mode`)
+      from the trigger event,
+    - **Validate dispatch context** (`refs/heads/main` only; gated on
+      `workflow_dispatch`),
+    - **stable path** (gated on `mode == 'stable'`): read package
+      version, validate clean stable semver `^[0-9]+\.[0-9]+\.[0-9]+$`
+      (rejects prerelease / build-metadata suffixes), strict
+      tag/version match on push, idempotency precheck, conditional
+      `npm publish --access public --tag latest --provenance`,
+    - **nightly path** (gated on `mode == 'nightly'`):
+      `node scripts/publish-nightly.mjs` (skip-watermark + base lookup
+      + in-memory version rewrite + publish with `--tag nightly
+      --provenance` + emit `did_publish` / `published_version`),
+    - **Emit publish outcome**: a final bash-only step that normalizes
+      whichever per-path step actually ran into unified job outputs
+      (`mode`, `did_publish`, `published_version`). Bash conditionals
+      are used here instead of GHA `&& ||` expressions because the
+      latter have ambiguous behavior around empty strings and
+      skipped-step outputs.
+    - **stable smoke** (gated on `mode == 'stable'`, idempotent
+      re-runs still smoke): install the exact published version with
+      retry.
+    - **nightly smoke** (gated on `mode == 'nightly' &&
+      steps.publish-nightly.outputs.did_publish == 'true'`): install
+      the exact computed nightly version with retry.
+
+  Release concurrency is a single global queue (`group: release`, no
+  `${{ github.ref }}` suffix, no mode partition) so stable + nightly
+  + manual-dispatch + later tag-push runs all serialize instead of
+  racing on the same registry slot.
+  - **Idempotency precheck** (runs only in `mode=stable` before
+    publish): `npm view @jiayunxie/aerial@<package.version> --json`.
+    `npm view` is classified into three outcomes: success with JSON →
+    compare `gitHead`; failure whose stderr/stdout matches `E404` /
+    `not found` / `No match` → treat as not published and proceed to
+    publish; any other failure (network, registry 5xx, auth/config
+    error) → hard fail and refuse to publish against an unknown
+    registry state. When the version is already published, its
+    `gitHead` is compared against the publish job's locally-checked-out
+    HEAD (`git rev-parse HEAD`, not `$GITHUB_SHA`). If `gitHead` equals
+    checked-out HEAD, skip the publish step and still run post-publish
+    smoke against the already-published artifact. If `gitHead` differs
+    or is missing, fail loudly — a different commit already owns the
+    version slot. This lets manual dispatch + later `git push v<version>`
+    and rerun-after-smoke-failure both recover without E409. The
+    nightly mode does not use this precheck; it uses
+    `publish-nightly.mjs`'s own watermark + E409 reconcile loop (§7,
+    §9).
 
 ## §9 Scripts (`scripts/*`)
 
@@ -321,7 +379,9 @@ post-publish smoke passes.
   scheme; investigate before rerunning.
 - **`ENEEDAUTH` or OIDC failures.** Verify the npm trusted publisher
   configuration: the registered repository (`Xiejiayun/aerial`) and the
-  workflow file names (`release.yml`, `nightly.yml`) must match exactly.
+  single workflow file name (`release.yml`) must match exactly. npm
+  only allows one trusted publisher binding per package, so
+  `release.yml` is the only workflow that can publish under OIDC.
   OIDC tokens are short-lived and never logged; nothing needs to be masked.
 - **`setup-node` cache miss / lockfile drift.** `npm ci` is authoritative in
   CI; if it fails, the cause is almost always that a local dependency change
@@ -338,15 +398,17 @@ A "half-success" is `npm publish` returning success but a *later* step
 red. The package is already on the registry; only the verification or
 metadata bookkeeping failed.
 
-- **Nightly half-success.** Rerun the workflow. `publish-nightly.mjs`'s
-  E409 idempotency path compares the published `gitHead` to local HEAD and
-  treats a re-attempted publish of the same content from the same commit as
-  success. The smoke job then runs against the same exact version. Note
-  that the nightly skip-watermark step itself refuses to run against an
-  unknown registry state (non-E404 `npm view` failure, JSON parse error,
-  a successful view with a missing/non-string `gitHead`, or `npm view`
-  exit 0 with empty stdout) — those outcomes throw before any publish
-  work and `did_publish=false` is written to `$GITHUB_OUTPUT`; the next
+- **Nightly half-success.** Rerun `release.yml` in `mode=nightly` (the
+  same workflow, the same trigger surfaces as §7).
+  `publish-nightly.mjs`'s E409 idempotency path compares the published
+  `gitHead` to local HEAD and treats a re-attempted publish of the same
+  content from the same commit as success. The nightly smoke step then
+  runs against the same exact version. Note that the nightly
+  skip-watermark step itself refuses to run against an unknown registry
+  state (non-E404 `npm view` failure, JSON parse error, a successful
+  view with a missing/non-string `gitHead`, or `npm view` exit 0 with
+  empty stdout) — those outcomes throw before any publish work and
+  `did_publish=false` is written to `$GITHUB_OUTPUT`; the next
   scheduled or dispatched nightly retries against a presumably healthy
   registry. They are not "half-successes" because no publish happened.
 - **Stable half-success.** Rerun `release.yml`. The publish job's
@@ -411,14 +473,24 @@ use **Method Y**:
   `node_modules/` stay in `.gitignore`, and `verify-package.mjs`'s pack
   allowlist independently rejects them if anything slips.
 - The only standard authenticated npm publish path for automated
-  releases is OIDC trusted publishing. The single documented exception
-  is the **first stable bootstrap** described in §2 Phase 1: because
-  npm requires the package to exist on the registry before a trusted
-  publisher can be associated with it, the very first `0.1.0` publish
-  is performed locally by the package owner after `npm login`. Once
-  the package exists and trusted publisher is configured (§2 Phase 2),
-  every later release runs in CI under OIDC, and local `npm publish`
-  is not part of the release workflow.
+  releases is OIDC trusted publishing, and **npm only allows one
+  trusted publisher binding per package**. The binding for
+  `@jiayunxie/aerial` is `repo: Xiejiayun/aerial` +
+  `file: .github/workflows/release.yml`. That is why both the stable
+  and nightly publish paths live inside `release.yml`; no other
+  workflow file in this repo can publish to npm under OIDC, and
+  attempting to register a second binding returns `409 Conflict` on
+  the npm side. OIDC's `job_workflow_ref` claim binds to that exact
+  workflow file path, so moving any publish step into a reusable
+  workflow or a different file would break OIDC. The single documented
+  exception to "OIDC only" is the **first stable bootstrap** described
+  in §2 Phase 1: because npm requires the package to exist on the
+  registry before a trusted publisher can be associated with it, the
+  very first `0.1.0` publish is performed locally by the package
+  owner after `npm login`. Once the package exists and trusted
+  publisher is configured (§2 Phase 2), every later release runs in
+  CI under OIDC, and local `npm publish` is not part of the release
+  workflow.
 - No long-lived `NPM_TOKEN` secret is stored in the repo. An
   automation `NPM_TOKEN` may be issued temporarily by the package
   owner as an emergency human-mediated fallback if OIDC breaks after
@@ -470,11 +542,14 @@ see §2 Phase 1)
 on the registry)
 
 - [ ] npm trusted publisher configured for `@jiayunxie/aerial` against
-  `Xiejiayun/aerial` + `release.yml` + `nightly.yml` (npmjs.com UI or
-  `npm trust github @jiayunxie/aerial --repo Xiejiayun/aerial
-  --file release.yml` / `--file nightly.yml`).
-- [ ] README badges added (CI, nightly, npm version).
-- [ ] Cron time in `nightly.yml` confirmed (UTC 18:00 = Beijing 02:00
+  `Xiejiayun/aerial` + the single `release.yml` workflow file (npmjs.com
+  UI or `npm trust github @jiayunxie/aerial --repo Xiejiayun/aerial
+  --file release.yml`). npm only allows one trusted publisher binding
+  per package, which is why both the stable and nightly publish paths
+  must originate from `release.yml`; do not attempt to register a
+  second workflow file.
+- [ ] README badges added (CI, npm version).
+- [ ] Cron time in `release.yml` confirmed (UTC 18:00 = Beijing 02:00
   next day). Enabled only in commit γ.
 
 **Phase 3 — End-to-end verification** (recommended)
@@ -484,11 +559,11 @@ on the registry)
 - [ ] Tag and push: `git tag v0.1.1 && git push origin v0.1.1` →
   watch `release.yml` publish under OIDC with `--provenance`; smoke
   must be green.
-- [ ] Manually dispatch `nightly.yml` once (still no cron) to verify
-  the end-to-end nightly publish + smoke against the freshly
-  bootstrapped `@latest`.
+- [ ] Manually dispatch `release.yml` once with `mode=nightly` (still
+  no cron) to verify the end-to-end nightly publish + smoke against
+  the freshly bootstrapped `@latest`.
 - [ ] Only after that manual nightly is green, ship commit γ to
-  enable the cron schedule (`0 18 * * *`).
+  enable the cron schedule on `release.yml` (`0 18 * * *`).
 
 ### B. Implementation commit sequence (recap)
 
@@ -497,8 +572,10 @@ on the registry)
 | 0a | `test: isolate config dirs in server tests` | done |
 | 0b | `feat: add aerial --version command` | done |
 | α  | `ci: add multi-os CI and release verification scripts` | done |
-| β  | `ci: add npm release and nightly workflows` | this commit |
-| γ  | `ci: enable scheduled nightly releases` | optional, only after a manual nightly succeeds |
+| β  | `ci: add npm release and nightly workflows` | superseded by correction commit |
+| δ  | `docs: clarify first release trusted publisher bootstrap` | done |
+| correction | `ci: consolidate stable and nightly publish into release.yml` (delete `nightly.yml`, update runbook + README for npm's one-trusted-publisher-per-package constraint) | this commit |
+| γ  | `ci: enable scheduled nightly releases` (adds `on.schedule` cron to `release.yml` dispatching `mode=nightly`) | optional, only after a manual nightly succeeds |
 
 ### C. Key environment variables and file locations
 
@@ -506,8 +583,14 @@ on the registry)
   for isolation; not a production environment variable.
 - `scripts/publish-nightly.mjs` GitHub outputs: `did_publish` (`"true"` or
   `"false"`), `published_version` (semver string or empty).
+- `release.yml` `workflow_dispatch.inputs.mode`: required choice input
+  with values `stable` (default) and `nightly`. Tag-triggered runs are
+  always `stable` regardless of input; future `schedule`-triggered
+  runs are always `nightly`.
 - Workflow files: `.github/workflows/ci.yml`,
-  `.github/workflows/release.yml`, `.github/workflows/nightly.yml`.
+  `.github/workflows/release.yml`. There is no separate
+  `nightly.yml` — `release.yml` is the single publish workflow,
+  handling both `mode=stable` and `mode=nightly` (see §7, §8, §14).
 - Release verification scripts: `scripts/check-syntax.js`,
   `scripts/verify-package.mjs`, `scripts/verify-secrets.mjs`,
   `scripts/publish-nightly.mjs`.
