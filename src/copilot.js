@@ -109,8 +109,33 @@ function withDefaultPromptCache(payload) {
   return next;
 }
 
+function openAIEffortRoute(model, effort) {
+  if (effort === undefined) return undefined;
+  if (/^gpt-5-mini(?:-|$)/.test(model) && ["xhigh", "max"].includes(effort)) return "high";
+  if (effort === "max") return "xhigh";
+  return undefined;
+}
+
+function withSupportedOpenAIEffort(payload) {
+  const model = typeof payload?.model === "string" ? payload.model : "";
+  const reasoningEffort = payload?.reasoning && typeof payload.reasoning === "object" ? payload.reasoning.effort : undefined;
+  const nextReasoningEffort = openAIEffortRoute(model, reasoningEffort);
+  const nextFlatEffort = openAIEffortRoute(model, payload?.reasoning_effort);
+  if (!nextReasoningEffort && !nextFlatEffort) return payload;
+
+  const next = { ...payload };
+  if (nextReasoningEffort) next.reasoning = { ...payload.reasoning, effort: nextReasoningEffort };
+  if (nextFlatEffort) next.reasoning_effort = nextFlatEffort;
+  logEvent("openai_effort_route", {
+    model,
+    effort: reasoningEffort ?? payload?.reasoning_effort,
+    routedEffort: nextReasoningEffort ?? nextFlatEffort
+  });
+  return next;
+}
+
 function withOpenAIDefaults(payload) {
-  return withDefaultPromptCache(payload);
+  return withDefaultPromptCache(withSupportedOpenAIEffort(payload));
 }
 
 function addEphemeralCacheControl(value) {
@@ -142,8 +167,28 @@ function withDefaultAnthropicCache(payload) {
   return next;
 }
 
+function withSupportedAnthropicEffort(payload) {
+  const effort = payload?.output_config?.effort;
+  if (effort === undefined) return payload;
+  const model = typeof payload?.model === "string" ? payload.model : "";
+  if (!/^claude-opus-4[.-]7(?:-|$)/.test(model)) return payload;
+  const routes = {
+    low: "claude-opus-4.7-1m-internal",
+    medium: "claude-opus-4.7",
+    high: "claude-opus-4.7-high",
+    xhigh: "claude-opus-4.7-xhigh",
+    max: "claude-opus-4.7-xhigh"
+  };
+  const nextModel = routes[effort];
+  const nextEffort = effort === "max" ? "xhigh" : effort;
+  if (!nextModel) return payload;
+  if (model === nextModel && effort === nextEffort) return payload;
+  logEvent("anthropic_effort_route", { model, effort, routedModel: nextModel, routedEffort: nextEffort });
+  return { ...payload, model: nextModel, output_config: { ...payload.output_config, effort: nextEffort } };
+}
+
 function withAnthropicDefaults(payload) {
-  return withDefaultAnthropicCache(payload);
+  return withSupportedAnthropicEffort(withDefaultAnthropicCache(payload));
 }
 
 function parseJsonBody(body, contentType) {
