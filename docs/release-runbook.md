@@ -16,18 +16,74 @@ a release.
 
 ## §2 Prerequisites (one-time setup)
 
-- **npm trusted publisher (OIDC).** On npmjs.com, associate `@jiayunxie/aerial`
-  with the GitHub repository `Xiejiayun/aerial` and the workflow files
-  `.github/workflows/release.yml` and `.github/workflows/nightly.yml`. Enable
-  OIDC trusted publishing. Do **not** configure an `NPM_TOKEN` secret in the
-  repo; the OIDC path is the only authenticated publish route. An automation
-  `NPM_TOKEN` is reserved for emergency human-mediated fallback only (§14).
-- **GitHub repository settings.** Default Actions permissions are acceptable.
-  Each publish job in this repo explicitly declares
+Bootstrap happens in two phases because npm's trusted publisher (OIDC)
+configuration requires that the package already exist on the registry —
+you cannot register a trusted publisher for a name that has never been
+published. The very first stable release therefore has to be a local,
+authenticated publish by the package owner; every later release goes
+through CI OIDC.
+
+### Phase 1 — First stable bootstrap (only while `@jiayunxie/aerial` is unpublished)
+
+- **Package owner local publish.** On a developer machine, log in with
+  `npm login` against `https://registry.npmjs.org` as the npm account
+  `jiayunxie`, then publish `0.1.0` directly:
+
+  ```bash
+  npm whoami                    # must print: jiayunxie
+  npm test                      # 33/33 must pass
+  node scripts/verify-secrets.mjs
+  node scripts/verify-package.mjs
+  npm publish --access public --tag latest
+  ```
+
+  This is the only path that publishes from a developer machine; once
+  `@jiayunxie/aerial@0.1.0` is on the registry, subsequent releases use
+  CI OIDC and never publish from a local shell. Provenance is not
+  available on this bootstrap because trusted publisher is not yet
+  configured; that is expected — every later release will carry
+  provenance via `--provenance` in `release.yml`.
+- **Do not push `v0.1.0` as a git tag during bootstrap.** Tagging would
+  re-fire `release.yml`, which would try to publish via OIDC against an
+  unconfigured trusted publisher and fail. Tag only after Phase 2 is
+  complete (or skip the bootstrap tag entirely and let the next bumped
+  version `v0.1.1` be the first tag-driven release).
+
+### Phase 2 — After `@jiayunxie/aerial` exists on the registry
+
+- **npm trusted publisher (OIDC).** Now that the package exists,
+  associate `@jiayunxie/aerial` with the GitHub repository
+  `Xiejiayun/aerial` and BOTH workflow files
+  `.github/workflows/release.yml` and `.github/workflows/nightly.yml`.
+  This can be done from the npmjs.com package page → "Trusted
+  publishing" UI, or from the CLI:
+
+  ```bash
+  npm trust github @jiayunxie/aerial \
+    --repo Xiejiayun/aerial --file release.yml
+  npm trust github @jiayunxie/aerial \
+    --repo Xiejiayun/aerial --file nightly.yml
+  ```
+
+  Do **not** configure an `NPM_TOKEN` secret in the repo; OIDC is the
+  only standard authenticated publish route for automated releases.
+  An automation `NPM_TOKEN` is reserved for emergency human-mediated
+  fallback only (§14).
+- **GitHub repository settings.** Default Actions permissions are
+  acceptable. Each publish job in this repo explicitly declares
   `permissions: { contents: read, id-token: write }` — never wider.
-- **Local toolchain.** Node.js ≥ 22, `npm whoami` returns `jiayunxie`, and
-  `gh` CLI is logged in (used for creating stable release tags and pushing
-  them).
+- **Local toolchain for the SDE running tag pushes / manual dispatch.**
+  Node.js ≥ 22, `gh` CLI logged in (used for creating stable release
+  tags and pushing them). After Phase 1 the SDE does not need
+  `npm login` for the release path; everything authenticated runs in
+  CI under OIDC.
+
+After Phase 2 is configured, the **next** stable release (`0.1.1` or
+later) follows the standard tag-triggered flow in §5. The first
+post-bootstrap release is also a good moment to verify the OIDC path
+end-to-end: bump `0.1.0` → `0.1.1`, push the `v0.1.1` tag, watch
+`release.yml` publish under OIDC with provenance, and confirm the
+post-publish smoke passes.
 
 ## §3 Branching & Versioning Policy
 
@@ -107,9 +163,16 @@ a release.
 
 ## §6 Manual Dispatch Release (escape hatch)
 
-- Used only when the tag path fails partway, when a hotfix is needed
-  immediately, or for the very first release. The tag path is always the
+- Used only when the tag path fails partway or when a hotfix needs to
+  ship without going through tag → push. The tag path is always the
   recommended one.
+- **Manual dispatch is not the bootstrap path.** The very first
+  `0.1.0` publish — when `@jiayunxie/aerial` is not yet on the registry
+  — cannot use this workflow either, because OIDC trusted publishing
+  requires the package to already exist. See §2 Phase 1 for the
+  owner-local bootstrap publish; `release.yml` (both the tag-trigger
+  and manual-dispatch paths) is the standard path only after §2 Phase
+  2 is in place.
 - `release.yml`'s `workflow_dispatch` trigger requires `github.ref ==
   refs/heads/main` (the job fails fast otherwise).
 - The clean-stable-semver guard (§3, §5) also applies to manual dispatch:
@@ -347,11 +410,20 @@ use **Method Y**:
 - No tokens are ever committed to the repo. `.live-aerial/`, `*.tgz`, and
   `node_modules/` stay in `.gitignore`, and `verify-package.mjs`'s pack
   allowlist independently rejects them if anything slips.
-- The only authenticated npm publish path is OIDC trusted publishing. No
-  long-lived `NPM_TOKEN` secret is stored in the repo. An automation
-  `NPM_TOKEN` may be issued temporarily by the package owner as an emergency
-  human-mediated fallback if OIDC is broken, but it must be revoked after
-  use; the runbook does not document it as a standard path.
+- The only standard authenticated npm publish path for automated
+  releases is OIDC trusted publishing. The single documented exception
+  is the **first stable bootstrap** described in §2 Phase 1: because
+  npm requires the package to exist on the registry before a trusted
+  publisher can be associated with it, the very first `0.1.0` publish
+  is performed locally by the package owner after `npm login`. Once
+  the package exists and trusted publisher is configured (§2 Phase 2),
+  every later release runs in CI under OIDC, and local `npm publish`
+  is not part of the release workflow.
+- No long-lived `NPM_TOKEN` secret is stored in the repo. An
+  automation `NPM_TOKEN` may be issued temporarily by the package
+  owner as an emergency human-mediated fallback if OIDC breaks after
+  Phase 2 is in place, but it must be revoked after use; the runbook
+  does not document it as a standard path.
 - `verify-secrets.mjs` scans README, `docs/`, and every other tracked file
   in addition to the npm pack manifest. Example tokens in documentation
   must use placeholders like `<github-token>` or `<aerial-api-key>` — never
@@ -377,13 +449,46 @@ rotate. Current mapping is shown in parentheses.
 
 ### A. One-time setup checklist
 
+Two phases, in order. Phase 1 is only required while
+`@jiayunxie/aerial` does not yet exist on the registry; once Phase 1
+is done, never repeat it.
+
+**Phase 1 — First stable bootstrap** (only when registry slot is empty,
+see §2 Phase 1)
+
+- [ ] Package owner `npm login` on a developer machine (`npm whoami`
+  returns `jiayunxie`).
+- [ ] Local validation: `npm test` 33/33, `node scripts/verify-secrets.mjs`,
+  `node scripts/verify-package.mjs`.
+- [ ] Owner runs `npm publish --access public --tag latest` against
+  `@jiayunxie/aerial@0.1.0` from the developer machine. (No
+  `--provenance` here — trusted publisher is not yet configured.)
+- [ ] **Do NOT** push `v0.1.0` as a git tag yet. Tagging would re-fire
+  `release.yml` under an unconfigured trusted publisher and fail.
+
+**Phase 2 — Trusted publisher + workflow plumbing** (after Phase 1 lands
+on the registry)
+
 - [ ] npm trusted publisher configured for `@jiayunxie/aerial` against
-  `Xiejiayun/aerial` + `release.yml` + `nightly.yml`.
+  `Xiejiayun/aerial` + `release.yml` + `nightly.yml` (npmjs.com UI or
+  `npm trust github @jiayunxie/aerial --repo Xiejiayun/aerial
+  --file release.yml` / `--file nightly.yml`).
 - [ ] README badges added (CI, nightly, npm version).
-- [ ] Cron time in `nightly.yml` confirmed (UTC 18:00 = Beijing 02:00 next
-  day). Enabled only in commit γ.
-- [ ] First stable release (`v0.1.0` or successor) published manually if
-  the registry slot is empty.
+- [ ] Cron time in `nightly.yml` confirmed (UTC 18:00 = Beijing 02:00
+  next day). Enabled only in commit γ.
+
+**Phase 3 — End-to-end verification** (recommended)
+
+- [ ] Bump `package.json.version` to `0.1.1` on `main` (clean
+  `X.Y.Z`); commit + push.
+- [ ] Tag and push: `git tag v0.1.1 && git push origin v0.1.1` →
+  watch `release.yml` publish under OIDC with `--provenance`; smoke
+  must be green.
+- [ ] Manually dispatch `nightly.yml` once (still no cron) to verify
+  the end-to-end nightly publish + smoke against the freshly
+  bootstrapped `@latest`.
+- [ ] Only after that manual nightly is green, ship commit γ to
+  enable the cron schedule (`0 18 * * *`).
 
 ### B. Implementation commit sequence (recap)
 
