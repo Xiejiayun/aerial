@@ -52,7 +52,7 @@ function summarizeModels(models) {
     if (routes.includes("responses")) summary.responses += 1;
     if (routes.includes("messages")) summary.messages += 1;
     if (routes.includes("chat")) summary.chat += 1;
-    if (model.aerial?.notes?.includes("websocket_responses_not_implemented")) summary.websocketResponses += 1;
+    if (modelRoutes(model).includes("responses_websocket")) summary.websocketResponses += 1;
     if (model.aerial?.notes?.includes("embeddings_not_implemented")) summary.embeddings += 1;
     if (!model.aerial?.supported) summary.unsupported += 1;
   }
@@ -119,8 +119,8 @@ export function formatProbeReport(report) {
   const lines = [
     `Aerial probe (${report.live ? "live" : "models"}) at ${report.generatedAt}`,
     `Models: ${report.models.length}`,
-    `Routes: responses=${report.summary.responses}, messages=${report.summary.messages}, chat=${report.summary.chat}`,
-    `Unsupported: embeddings=${report.summary.embeddings}, websocketResponses=${report.summary.websocketResponses}, noRoute=${report.summary.unsupported}`
+    `Routes: responses=${report.summary.responses}, responsesWebSocket=${report.summary.websocketResponses}, messages=${report.summary.messages}, chat=${report.summary.chat}`,
+    `Unsupported: embeddings=${report.summary.embeddings}, noRoute=${report.summary.unsupported}`
   ];
 
   if (report.routes.length) {

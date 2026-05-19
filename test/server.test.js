@@ -32,5 +32,8 @@ test("server rejects websocket upgrade explicitly", async () => {
   server.close();
 
   assert.match(data, /501 Not Implemented/);
-  assert.match(data, /WebSocket Responses is not implemented/);
+  assert.match(data, /Aerial does not expose a client WebSocket/);
+  assert.match(data, /HTTP POST \/v1\/responses/);
+  assert.match(data, /internal opt-in transport/);
+  assert.doesNotMatch(data, /WebSocket Responses is not implemented/);
 });

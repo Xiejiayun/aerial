@@ -29,7 +29,7 @@ aerial doctor
 aerial probe
 ```
 
-Service installation, rollback automation, Gemini CLI support, dashboards, and analytics are intentionally out of this MVP. WebSocket Responses is detected in model metadata but intentionally returns 501 until its handshake/event protocol is implemented.
+Service installation, rollback automation, Gemini CLI support, dashboards, and analytics are intentionally out of this MVP. For Codex, local clients keep using HTTP POST /v1/responses. Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses and translate events back to SSE — this transport is opt-in (`AERIAL_RESPONSES_WEBSOCKET=on`) and HTTP is the default.
 
 ## Requirements
 
@@ -161,7 +161,7 @@ Use `aerial probe` to inspect the live Copilot model matrix through the same loc
 aerial probe
 ```
 
-This prints model IDs, Aerial routes, and unsupported notes such as `websocket_responses_not_implemented` or `embeddings_not_implemented`.
+This prints model IDs, Aerial routes, and unsupported notes such as `embeddings_not_implemented` or `no_supported_endpoint_advertised`. Models with upstream `ws:/responses` support are shown with the `responses_websocket` route.
 
 Run low-cost live route checks when you want to verify end-to-end behavior:
 
@@ -217,20 +217,22 @@ Per-request fields win over the configured default. Use `24h` only with models w
   "supported_endpoints": ["/responses", "ws:/responses"],
   "aerial": {
     "supported": true,
-    "routes": ["responses"],
-    "notes": ["websocket_responses_not_implemented"]
+    "routes": ["responses", "responses_websocket"],
+    "notes": []
   }
 }
 ```
 
 Route meanings:
 
-- `responses`: usable by Codex through `POST /v1/responses`.
+- `responses`: usable by Codex through HTTP `POST /v1/responses`.
+- `responses_websocket`: Aerial can use Copilot's upstream `ws:/responses` transport for streaming `/v1/responses` requests when `AERIAL_RESPONSES_WEBSOCKET=on` is set, then return SSE to the local client. When the opt-in is off (default), Aerial always uses HTTP upstream Responses even if a model advertises `ws:/responses`.
 - `messages`: usable by Claude Code through `POST /v1/messages`.
 - `chat`: usable by generic OpenAI Chat clients through `POST /v1/chat/completions`.
+
+Local clients should not open WebSocket connections to Aerial directly. Direct WebSocket upgrades still return `501 Not Implemented`; use HTTP `POST /v1/responses` and let Aerial choose the upstream transport. HTTP upstream Responses is the default; set `AERIAL_RESPONSES_WEBSOCKET=on` to opt into Copilot's upstream WebSocket transport for streaming Responses calls (still experimental, only effective for streaming requests on models that advertise `ws:/responses`).
 
 Known unsupported notes:
 
 - `embeddings_not_implemented`: Aerial does not expose `/v1/embeddings` yet.
-- `websocket_responses_not_implemented`: HTTP Responses is supported; WebSocket Responses is not.
 - `no_supported_endpoint_advertised`: the model did not declare a route Aerial can safely select.

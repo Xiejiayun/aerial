@@ -72,12 +72,12 @@ Each model returned by `/v1/models` includes an `aerial` field that tells you wh
 ```json
 "aerial": {
   "supported": true,
-  "routes": ["responses", "chat"],
-  "notes": ["websocket_responses_not_implemented"]
+  "routes": ["responses", "responses_websocket", "chat"],
+  "notes": []
 }
 ```
 
-Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. Models marked with `embeddings_not_implemented`, `websocket_responses_not_implemented`, or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
+Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. `responses_websocket` means Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses calls when `AERIAL_RESPONSES_WEBSOCKET=on` is set; with the opt-in off (default), Aerial always uses HTTP upstream Responses. Models marked with `embeddings_not_implemented` or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
 
 
 
@@ -97,7 +97,7 @@ aerial probe --live
 
 `--live` sends one small request through the first available model for each supported route. Use `--json` when you want machine-readable output for CI or debugging.
 
-WebSocket Responses is not implemented yet. If a client attempts a WebSocket upgrade, Aerial returns `501 Not Implemented` instead of pretending to support the route.
+For streaming `/v1/responses` requests, Aerial defaults to HTTP upstream Responses. Set `AERIAL_RESPONSES_WEBSOCKET=on` to opt into Copilot's upstream `ws:/responses` transport for streaming Responses calls; Aerial then converts upstream WebSocket events back to SSE for the local client. Direct client WebSocket upgrades to Aerial are still not exposed and return `501 Not Implemented`; clients should keep using HTTP `POST /v1/responses`.
 
 ## 9. Use Prompt Cache
 
