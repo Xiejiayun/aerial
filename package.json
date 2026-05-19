@@ -1,5 +1,5 @@
 {
-  "name": "aerial",
+  "name": "@jiayunxie/aerial",
   "version": "0.1.0",
   "description": "Local-only GitHub Copilot proxy for Codex CLI and Claude Code.",
   "type": "module",
@@ -20,22 +20,26 @@
   ],
   "files": [
     "src",
-    "docs",
+    "docs/usage.md",
     "README.md",
     "LICENSE"
   ],
   "bin": {
-    "aerial": "./src/cli.js"
+    "aerial": "src/cli.js"
   },
   "scripts": {
     "start": "node src/cli.js start",
     "doctor": "node src/cli.js doctor",
-    "test": "node --test"
+    "test": "node --test",
+    "prepublishOnly": "npm test"
   },
   "engines": {
     "node": ">=22"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "undici": "^7.25.0"
   }

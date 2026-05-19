@@ -5,12 +5,18 @@ This document describes the current MVP implementation.
 ## 1. Install
 
 ```bash
-npm install -g .
+npm install -g @jiayunxie/aerial
 ```
 
-Or run locally from the repository:
+After install, the CLI is available as `aerial`.
+
+For local development against the repo source:
 
 ```bash
+git clone https://github.com/Xiejiayun/aerial.git
+cd aerial
+npm install -g .
+# or run without global install:
 node src/cli.js --help
 ```
 

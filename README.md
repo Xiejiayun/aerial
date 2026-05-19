@@ -37,13 +37,25 @@ Service installation, rollback automation, Gemini CLI support, dashboards, and a
 - A GitHub account with an active Copilot subscription
 - Codex CLI and/or Claude Code installed locally
 
-## Install From This Repository
+## Install
 
 ```bash
+npm install -g @jiayunxie/aerial
+```
+
+After install, the CLI is available as `aerial`.
+
+### From source (local development)
+
+For working directly on the Aerial codebase:
+
+```bash
+git clone https://github.com/Xiejiayun/aerial.git
+cd aerial
 npm install -g .
 ```
 
-For local development without global install:
+Run without global install:
 
 ```bash
 node src/cli.js --help
