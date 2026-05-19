@@ -15,7 +15,7 @@ Usage:
   aerial key print
   aerial start [--host 127.0.0.1] [--port 18181]
   aerial setup codex [--model <id>]
-  aerial setup claude
+  aerial setup claude [--model <id>]
   aerial setup all [--model <id>]
   aerial doctor
   aerial probe [--live] [--json]
@@ -53,18 +53,16 @@ async function main() {
     if (subcommand === "generate") {
       const result = ensureApiKey();
       if (result.apiKey) {
-        console.log(result.apiKey);
-        console.error("Save this value as AERIAL_API_KEY. It will not be shown again by config.");
+        console.log("Local Aerial key generated and stored privately.");
       } else {
-        console.error("Aerial API key already configured. Use AERIAL_API_KEY env or rotate by editing config.");
+        console.log("Aerial API key already configured.");
       }
       return;
     }
     if (subcommand === "print") {
       const result = ensureApiKey();
-      if (process.env.AERIAL_API_KEY) console.log(process.env.AERIAL_API_KEY);
-      else if (result.apiKey) console.log(result.apiKey);
-      else throw new Error("Raw API key is not stored. Set AERIAL_API_KEY in your environment.");
+      if (result.apiKey) console.log(result.apiKey);
+      else throw new Error("Raw API key is not available. Run: aerial key generate");
       return;
     }
   }
@@ -83,19 +81,26 @@ async function main() {
       const result = setupCodex({ model: argValue(rest, "--model") });
       console.log(`Updated Codex config: ${result.file}`);
       if (result.backup) console.log(`Backup: ${result.backup}`);
+      if (result.env?.persisted) console.log(`Configured ${result.env.name} for new user sessions.`);
+      else if (result.env?.reason) console.log(`Note: ${result.env.name} is available in this process, but was not persisted (${result.env.reason}).`);
       return;
     }
     if (subcommand === "claude") {
-      const result = setupClaude();
+      const result = setupClaude({ model: argValue(rest, "--model") });
       console.log(`Updated Claude settings: ${result.file}`);
+      if (result.model) console.log(`Configured Claude default model: ${result.model}`);
       if (result.backup) console.log(`Backup: ${result.backup}`);
       return;
     }
     if (subcommand === "all") {
-      const codex = setupCodex({ model: argValue(rest, "--model") });
-      const claude = setupClaude();
+      const model = argValue(rest, "--model");
+      const codex = setupCodex({ model });
+      const claude = setupClaude({ model });
       console.log(`Updated Codex config: ${codex.file}`);
+      if (codex.env?.persisted) console.log(`Configured ${codex.env.name} for new user sessions.`);
+      else if (codex.env?.reason) console.log(`Note: ${codex.env.name} is available in this process, but was not persisted (${codex.env.reason}).`);
       console.log(`Updated Claude settings: ${claude.file}`);
+      if (claude.model) console.log(`Configured Claude default model: ${claude.model}`);
       return;
     }
   }
@@ -122,8 +127,9 @@ async function main() {
     if (subcommand === "set") {
       const [key, value] = rest;
       if (!key || value === undefined) throw new Error("Usage: aerial config set <key> <value>");
-      if (!["host", "port", "defaultModel", "logLevel", "promptCacheRetention"].includes(key)) throw new Error(`Unsupported config key: ${key}`);
+      if (!["host", "port", "defaultModel", "logLevel", "promptCacheRetention", "promptCacheKey"].includes(key)) throw new Error(`Unsupported config key: ${key}`);
       if (key === "promptCacheRetention" && !["in_memory", "24h", "off"].includes(value)) throw new Error("promptCacheRetention must be one of: in_memory, 24h, off");
+      if (key === "promptCacheKey" && !value.trim()) throw new Error("promptCacheKey must be auto, off, or a non-empty string");
       config[key] = key === "port" ? Number(value) : value;
       saveConfig(config);
       return;

@@ -14,14 +14,13 @@ Or run locally from the repository:
 node src/cli.js --help
 ```
 
-## 2. Generate Local API Key
+## 2. Configure Local Clients
 
 ```bash
-aerial key generate
-export AERIAL_API_KEY="<printed-key>"
+aerial setup all --model <model-id>
 ```
 
-Aerial stores only a hash of this key in its config file. Keep the raw value in your shell, password manager, or local secret manager.
+Aerial creates a local API key, stores it privately, and configures supported clients to use it. On Windows, restart the terminal or VS Code after first setup so newly persisted user environment variables are visible to Codex.
 
 ## 3. Login To GitHub
 
@@ -45,17 +44,19 @@ Default URL: `http://127.0.0.1:18181`.
 aerial setup codex --model <model-id>
 ```
 
-Then run Codex with `AERIAL_API_KEY` exported. The setup command backs up and merges `~/.codex/config.toml`.
+The setup command backs up and merges `~/.codex/config.toml`, then persists the local key for new user sessions when the platform supports it.
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
 ## 6. Configure Claude Code
 
 ```bash
-aerial setup claude
+aerial setup claude --model <model-id>
 ```
 
-The setup command backs up and merges `~/.claude/settings.json`, using `apiKeyHelper = "aerial key print"` and `ANTHROPIC_BASE_URL=http://127.0.0.1:18181`.
+The setup command backs up and merges `~/.claude/settings.json`, using `apiKeyHelper = "aerial key print"` and `ANTHROPIC_BASE_URL=http://127.0.0.1:18181`. When you pass `--model` or set Aerial's `defaultModel`, it also writes Claude Code's default `model` to that Aerial-routed model.
+
+If Claude Code was previously pointed at another Anthropic-compatible gateway, setup removes stale `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_*_MODEL` entries from the managed `env` block.
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
@@ -63,7 +64,7 @@ For a dry inspection without touching your real config, set `HOME`/`USERPROFILE`
 
 ```bash
 aerial doctor
-curl -H "Authorization: Bearer $AERIAL_API_KEY" http://127.0.0.1:18181/v1/models
+aerial probe
 ```
 
 Each model returned by `/v1/models` includes an `aerial` field that tells you whether the MVP can route it:
@@ -151,8 +152,8 @@ Best practice: put stable system/project/tool context first, put changing user i
 ## Troubleshooting
 
 - `503 Missing GitHub token`: run `aerial login`.
-- `401 Invalid or missing Aerial API key`: export `AERIAL_API_KEY` and use it in the client.
-- Claude Code cannot read key: ensure `aerial` is on `PATH` and `AERIAL_API_KEY` is available to Claude Code's environment.
+- `401 Invalid or missing Aerial API key`: run `aerial setup all`, then restart the client terminal or VS Code.
+- Claude Code cannot read key: ensure `aerial` is on `PATH`; it uses `aerial key print` as its helper.
 - Upstream compatibility error: run `aerial doctor`, then retry with a model returned by `/v1/models`.
 - `Unsupported parameter: max_tokens`: Aerial normalizes Chat Completions `max_tokens` into `max_completion_tokens` before forwarding to newer OpenAI models.
 - Cache hit stays zero: ensure the stable prefix is long enough, unchanged, and placed before variable content. For Responses/Chat, try a stable `prompt_cache_key`; for Messages, put `cache_control` on the stable `system` or content block.

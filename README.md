@@ -23,7 +23,7 @@ aerial key generate
 aerial key print
 aerial start
 aerial setup codex
-aerial setup claude
+aerial setup claude --model <available-copilot-model-id>
 aerial setup all
 aerial doctor
 aerial probe
@@ -51,17 +51,13 @@ node src/cli.js --help
 
 ## First Run
 
-Generate a local Aerial API key:
+Configure your local clients. This also creates Aerial's local API key and wires it into supported clients:
 
 ```bash
-aerial key generate
+aerial setup all --model <available-copilot-model-id>
 ```
 
-Save the printed value in your shell as `AERIAL_API_KEY`:
-
-```bash
-export AERIAL_API_KEY="aerial_..."
-```
+On Windows, newly persisted user environment variables are visible to new terminals and newly launched apps. Restart your terminal or VS Code after the first setup if Codex was already open.
 
 Log in to GitHub with device flow:
 
@@ -98,7 +94,7 @@ wire_api = "responses"
 env_key = "AERIAL_API_KEY"
 ```
 
-Then run Codex with `AERIAL_API_KEY` exported in the environment.
+Aerial creates the key automatically and persists `AERIAL_API_KEY` for new user sessions when the platform supports it.
 
 ## Claude Code Setup
 
@@ -112,6 +108,7 @@ This updates `~/.claude/settings.json` and creates a timestamped backup first. I
 
 ```json
 {
+  "model": "<available-copilot-model-id>",
   "apiKeyHelper": "aerial key print",
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:18181",
@@ -120,7 +117,11 @@ This updates `~/.claude/settings.json` and creates a timestamped backup first. I
 }
 ```
 
-`aerial key print` prints `AERIAL_API_KEY` from the environment. If the raw key is not in the environment, generate and export a key first.
+The `model` field is written when you pass `--model` or set Aerial's `defaultModel`; otherwise Aerial leaves any existing Claude Code model choice alone while still switching the gateway to the local Aerial endpoint.
+
+`aerial key print` prints the locally stored Aerial API key for Claude Code's helper flow. Users normally do not need to call it directly.
+
+When switching from another Anthropic-compatible gateway, setup removes stale `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_*_MODEL` entries from Claude Code's managed `env` block so `apiKeyHelper` and the Aerial gateway are the active route.
 
 ## Diagnostics
 

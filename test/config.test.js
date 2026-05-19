@@ -8,14 +8,36 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-test-"));
 process.env.AERIAL_CONFIG_DIR = temp;
 process.env.AERIAL_API_KEY = "aerial_test_key";
 
+const { apiKeyPath } = await import("../src/paths.js");
 const { ensureApiKey, loadConfig, validateLocalAuth } = await import("../src/config.js");
 
-test("ensureApiKey stores only a hash and auth validates bearer or x-api-key", () => {
+test("ensureApiKey stores a private key file plus hash and auth validates bearer or x-api-key", () => {
   const result = ensureApiKey();
   assert.equal(result.source, "env");
   const config = loadConfig();
   assert.ok(config.apiKeyHash.startsWith("scrypt$"));
+  assert.equal(fs.readFileSync(apiKeyPath(), "utf8").trim(), "aerial_test_key");
   assert.equal(validateLocalAuth({ authorization: "Bearer aerial_test_key" }, config), true);
   assert.equal(validateLocalAuth({ "x-api-key": "aerial_test_key" }, config), true);
   assert.equal(validateLocalAuth({ authorization: "Bearer bad" }, config), false);
+});
+
+test("ensureApiKey reuses the stored key without requiring an environment variable", () => {
+  delete process.env.AERIAL_API_KEY;
+  const result = ensureApiKey();
+  assert.equal(result.source, "stored");
+  assert.equal(result.apiKey, "aerial_test_key");
+});
+
+test("ensureApiKey rotates when only a hash remains", () => {
+  delete process.env.AERIAL_API_KEY;
+  fs.rmSync(apiKeyPath(), { force: true });
+  const before = loadConfig();
+  assert.ok(before.apiKeyHash);
+
+  const result = ensureApiKey();
+  assert.equal(result.source, "rotated");
+  assert.ok(result.apiKey?.startsWith("aerial_"));
+  assert.equal(fs.readFileSync(apiKeyPath(), "utf8").trim(), result.apiKey);
+  assert.equal(validateLocalAuth({ authorization: "Bearer " + result.apiKey }, loadConfig()), true);
 });

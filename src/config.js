@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { CONFIG_VERSION, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_VERSIONS } from "./constants.js";
-import { configPath, readJsonIfExists, writeJsonPrivate } from "./paths.js";
+import { apiKeyPath, configPath, readJsonIfExists, writeJsonPrivate, writePrivateFile } from "./paths.js";
 import { hashApiKey, randomApiKey, verifyApiKey } from "./crypto.js";
 
 export function defaultConfig() {
@@ -27,19 +27,39 @@ export function saveConfig(config) {
   writeJsonPrivate(configPath(), config);
 }
 
+export function readStoredApiKey() {
+  if (!fs.existsSync(apiKeyPath())) return undefined;
+  const apiKey = fs.readFileSync(apiKeyPath(), "utf8").trim();
+  return apiKey || undefined;
+}
+
+function writeStoredApiKey(apiKey) {
+  writePrivateFile(apiKeyPath(), `${apiKey}\n`);
+}
+
 export function ensureApiKey() {
   const config = loadConfig();
   const envKey = process.env.AERIAL_API_KEY;
   if (envKey) {
     config.apiKeyHash = hashApiKey(envKey);
+    writeStoredApiKey(envKey);
     saveConfig(config);
     return { apiKey: envKey, config, created: false, source: "env" };
   }
-  if (config.apiKeyHash) return { apiKey: undefined, config, created: false, source: "config" };
+  const storedKey = readStoredApiKey();
+  if (storedKey) {
+    if (!config.apiKeyHash || !verifyApiKey(storedKey, config.apiKeyHash)) {
+      config.apiKeyHash = hashApiKey(storedKey);
+      saveConfig(config);
+    }
+    return { apiKey: storedKey, config, created: false, source: "stored" };
+  }
+  const hadHash = Boolean(config.apiKeyHash);
   const apiKey = randomApiKey();
   config.apiKeyHash = hashApiKey(apiKey);
+  writeStoredApiKey(apiKey);
   saveConfig(config);
-  return { apiKey, config, created: true, source: "generated" };
+  return { apiKey, config, created: true, source: hadHash ? "rotated" : "generated" };
 }
 
 export function validateLocalAuth(headers, config = loadConfig()) {

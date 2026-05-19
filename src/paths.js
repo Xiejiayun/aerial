@@ -21,6 +21,10 @@ export function githubTokenPath() {
   return path.join(configDir(), "github_token");
 }
 
+export function apiKeyPath() {
+  return path.join(configDir(), "api_key");
+}
+
 export function ensureDir(dir = configDir()) {
   fs.mkdirSync(dir, { recursive: true });
 }
