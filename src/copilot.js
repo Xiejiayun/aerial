@@ -293,22 +293,89 @@ function sseJsonPayloads(text) {
     });
 }
 
-async function logCacheResult(route, requestCache, upstream) {
-  const contentType = upstream.headers.get("content-type") || "";
+function shouldEmitCacheObserve(requestCache, usage) {
+  return hasExplicitCacheRequest(requestCache) || hasCacheUsage(usage);
+}
+
+// Telemetry must never extend the lifetime of a long-lived upstream stream.
+// For SSE/WebSocket bodies we pipe the upstream through a TransformStream that
+// parses usage frames as they pass to the client; for short JSON bodies a
+// clone-and-read is still cheap and finishes naturally.
+function createSseCacheObserver(route, requestCache) {
+  const decoder = new TextDecoder();
+  let buffer = "";
   let usage = {};
+  let logged = false;
+
+  const consume = () => {
+    let match;
+    const boundary = /\r?\n\r?\n/;
+    while ((match = boundary.exec(buffer)) !== null) {
+      const frame = buffer.slice(0, match.index);
+      buffer = buffer.slice(match.index + match[0].length);
+      for (const payload of sseJsonPayloads(frame)) {
+        const fields = usageFields(payload);
+        if (Object.keys(fields).length) usage = { ...usage, ...fields };
+      }
+    }
+  };
+
+  const emit = () => {
+    if (logged) return;
+    logged = true;
+    if (shouldEmitCacheObserve(requestCache, usage)) {
+      logEvent("cache_observe", { route, request: requestCache, usage });
+    }
+  };
+
+  return new TransformStream({
+    transform(chunk, controller) {
+      // Forward first so a parser failure never blocks the client stream.
+      controller.enqueue(chunk);
+      try {
+        buffer += decoder.decode(chunk, { stream: true });
+        consume();
+      } catch (error) {
+        logEvent("cache_observe_error", { route, error: error.message });
+      }
+    },
+    flush() {
+      try {
+        buffer += decoder.decode();
+        consume();
+      } catch (error) {
+        logEvent("cache_observe_error", { route, error: error.message });
+      }
+      emit();
+    }
+  });
+}
+
+async function logJsonCacheUsage(route, requestCache, clone) {
   try {
-    if (contentType.includes("text/event-stream")) {
-      for (const payload of sseJsonPayloads(await upstream.text())) usage = { ...usage, ...usageFields(payload) };
-    } else if (contentType.includes("json")) {
-      usage = usageFields(await upstream.json());
+    const payload = await clone.json();
+    const usage = usageFields(payload);
+    if (shouldEmitCacheObserve(requestCache, usage)) {
+      logEvent("cache_observe", { route, request: requestCache, usage });
     }
   } catch (error) {
     logEvent("cache_observe_error", { route, error: error.message });
-    return;
   }
-  if (hasExplicitCacheRequest(requestCache) || hasCacheUsage(usage)) {
-    logEvent("cache_observe", { route, request: requestCache, usage });
+}
+
+function wrapResponseWithCacheObserver(upstream, route, requestCache) {
+  const headers = copyResponseHeaders(upstream);
+  const contentType = upstream.headers.get("content-type") || "";
+  if (!upstream.body) return new Response(upstream.body, { status: upstream.status, headers });
+  if (contentType.includes("text/event-stream")) {
+    const observer = createSseCacheObserver(route, requestCache);
+    return new Response(upstream.body.pipeThrough(observer), { status: upstream.status, headers });
   }
+  if (contentType.includes("json")) {
+    void logJsonCacheUsage(route, requestCache, upstream.clone());
+    return new Response(upstream.body, { status: upstream.status, headers });
+  }
+  return new Response(upstream.body, { status: upstream.status, headers });
 }
 
 async function requestWithJsonBody(request, transform) {
@@ -335,8 +402,10 @@ async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride } = {
     const refreshed = await getCopilotToken({ force: true });
     upstream = await fetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers: upstreamHeaders(refreshed, { accept, "content-type": contentType, ...extraHeaders }), body });
   }
-  if (path !== "/models") void logCacheResult(path, requestCache, upstream.clone());
-  return new Response(upstream.body, { status: upstream.status, headers: copyResponseHeaders(upstream) });
+  if (path === "/models") {
+    return new Response(upstream.body, { status: upstream.status, headers: copyResponseHeaders(upstream) });
+  }
+  return wrapResponseWithCacheObserver(upstream, path, requestCache);
 }
 
 async function fetchModelsForResponseSelection() {
@@ -379,8 +448,11 @@ export async function proxyResponses(request) {
       });
       logEvent("responses_websocket", { model: payload.model });
       const response = await proxyResponsesWebSocket(payload, headers, { initiator });
-      void logCacheResult("/responses", requestCache, response.clone());
-      return response;
+      if (!response.body) return response;
+      // Pass-through usage observer for SSE; never another reader on the
+      // upstream WebSocket-backed stream.
+      const observer = createSseCacheObserver("/responses", requestCache);
+      return new Response(response.body.pipeThrough(observer), { status: response.status, headers: response.headers });
     }
     logEvent("responses_websocket_skip", {
       model: payload.model,

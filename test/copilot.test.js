@@ -142,6 +142,53 @@ test("proxyResponses observes cache usage from SSE responses", async () => {
   assert.equal(observed.usage.cached, 11);
 });
 
+test("cache telemetry preserves upstream cancel on SSE responses", async () => {
+  const logs = [];
+  console.error = (line) => logs.push(JSON.parse(line));
+  let upstreamCanceled = false;
+  let pullCount = 0;
+  const encoder = new TextEncoder();
+  const upstreamBody = new ReadableStream({
+    pull(controller) {
+      pullCount += 1;
+      if (pullCount === 1) {
+        controller.enqueue(encoder.encode("data: {\"type\":\"response.in_progress\"}\n\n"));
+        return;
+      }
+      // Keep the stream open: never enqueue more, never close. A telemetry
+      // reader that ignores client cancel would block waiting on this pull
+      // and the upstream would stay alive indefinitely.
+    },
+    cancel() {
+      upstreamCanceled = true;
+    }
+  });
+
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/models")) return Response.json({ data: [] });
+    return new Response(upstreamBody, { headers: { "content-type": "text/event-stream" } });
+  };
+
+  const request = new Request("http://127.0.0.1/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json", accept: "text/event-stream" },
+    body: JSON.stringify({ model: "gpt-5.4", input: "hello", prompt_cache_retention: "in_memory" })
+  });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  assert.equal(first.done, false);
+  await reader.cancel();
+
+  await waitFor(() => upstreamCanceled);
+  assert.equal(upstreamCanceled, true, "client cancel must propagate to upstream source");
+  // No flush ran, so cache_observe must not log under cancel even though a
+  // prompt_cache_retention hint was sent (telemetry must not extend lifetime).
+  assert.equal(logs.some((line) => line.event === "cache_observe"), false);
+});
+
 
 test("proxyResponses injects default cache hints transparently", async () => {
   const previousRetention = process.env.AERIAL_PROMPT_CACHE_RETENTION;
