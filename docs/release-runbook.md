@@ -182,8 +182,8 @@ post-publish smoke passes.
   (default) and `nightly`. The same workflow handles both channels
   because npm only allows one trusted publisher binding per package
   (§2 Phase 2, §14). Tag-triggered runs are always `mode=stable`
-  regardless of any input; future `schedule`-triggered runs are
-  always `mode=nightly` (γ).
+  regardless of any input; `schedule`-triggered runs are always
+  `mode=nightly`.
 - `release.yml`'s `workflow_dispatch` trigger requires `github.ref ==
   refs/heads/main` for both modes (the job fails fast otherwise).
 - The clean-stable-semver guard (§3, §5) also applies to manual dispatch
@@ -221,12 +221,13 @@ post-publish smoke passes.
       (allowed only from `refs/heads/main`, see §6). This is the
       validation path during initial rollout and a manual escape hatch
       afterwards.
-    - `schedule` on cron `0 18 * * *` (UTC, i.e. ~02:00 the next day
-      in Beijing time). The cron entry will be added to `release.yml`
-      in commit γ — at that point the `on.schedule` block is added
-      directly to `release.yml`. The mode-detection step already routes
-      `schedule` events to `nightly`, so γ is a one-line addition with
-      no logic change.
+    - `schedule` on cron `0 15 * * *` (15:00 UTC, 23:00 Asia/Shanghai).
+      GitHub Actions cron is best-effort and may be delayed by a few
+      minutes at the hour mark; nightly is not a real-time job, so a
+      small drift is acceptable. The mode-detection step routes
+      `schedule` events to `nightly` directly. Stable `@latest` is
+      unaffected by the cron: it only publishes on `v*` tag push (or,
+      as an escape hatch, `workflow_dispatch` with `mode=stable`).
 - **Skip watermark.** `scripts/publish-nightly.mjs` calls
   `npm view @jiayunxie/aerial@nightly --json` and tolerates only two
   known watermark states; anything else is "unknown registry state" and
@@ -285,7 +286,7 @@ post-publish smoke passes.
     - `push tags: ['v*']` → always `mode=stable`;
     - `workflow_dispatch` with required `mode` choice input (`stable`
       default, or `nightly`) — both modes require `refs/heads/main`;
-    - `schedule` (added in commit γ) → always `mode=nightly`.
+    - `schedule` on cron `0 15 * * *` UTC → always `mode=nightly`.
 
   The same `test` matrix and `package & secret scan` gates as CI run as
   parallel prerequisites for both modes, then a single Ubuntu `publish`
@@ -606,9 +607,9 @@ on the registry)
   per package, which is why both the stable and nightly publish paths
   must originate from `release.yml`; do not attempt to register a
   second workflow file.
-- [ ] README badges added (CI, npm version).
-- [ ] Cron time in `release.yml` confirmed (UTC 18:00 = Beijing 02:00
-  next day). Enabled only in commit γ.
+- [x] README badges added (CI, npm version).
+- [x] Cron time in `release.yml` set to `0 15 * * *` UTC
+  (23:00 Asia/Shanghai) and enabled.
 
 **Phase 3 — End-to-end verification** (recommended)
 
@@ -621,7 +622,8 @@ on the registry)
   no cron) to verify the end-to-end nightly publish + smoke against
   the freshly bootstrapped `@latest`.
 - [ ] Only after that manual nightly is green, ship commit γ to
-  enable the cron schedule on `release.yml` (`0 18 * * *`).
+  enable the cron schedule on `release.yml` (`0 15 * * *` UTC,
+  23:00 Asia/Shanghai).
 
 ### B. Implementation commit sequence (recap)
 
@@ -633,7 +635,7 @@ on the registry)
 | β  | `ci: add npm release and nightly workflows` | superseded by correction commit |
 | δ  | `docs: clarify first release trusted publisher bootstrap` | done |
 | correction | `ci: consolidate stable and nightly publish into release.yml` (delete `nightly.yml`, update runbook + README for npm's one-trusted-publisher-per-package constraint) | this commit |
-| γ  | `ci: enable scheduled nightly releases` (adds `on.schedule` cron to `release.yml` dispatching `mode=nightly`) | optional, only after a manual nightly succeeds |
+| γ  | `ci: enable scheduled nightly releases` (adds `on.schedule` cron `0 15 * * *` UTC to `release.yml` dispatching `mode=nightly`) | done |
 
 ### C. Key environment variables and file locations
 
@@ -643,8 +645,8 @@ on the registry)
   `"false"`), `published_version` (semver string or empty).
 - `release.yml` `workflow_dispatch.inputs.mode`: required choice input
   with values `stable` (default) and `nightly`. Tag-triggered runs are
-  always `stable` regardless of input; future `schedule`-triggered
-  runs are always `nightly`.
+  always `stable` regardless of input; `schedule`-triggered runs are
+  always `nightly`.
 - Workflow files: `.github/workflows/ci.yml`,
   `.github/workflows/release.yml`. There is no separate
   `nightly.yml` — `release.yml` is the single publish workflow,

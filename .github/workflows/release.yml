@@ -28,10 +28,9 @@ name: Release
 #          only from refs/heads/main.
 #        - mode=nightly: publish a nightly pre-release through
 #          scripts/publish-nightly.mjs. Allowed only from refs/heads/main.
-#   3. schedule (future, added by commit γ) — cron-driven runs are
-#      ALWAYS mode=nightly. The mode-detection step already routes
-#      schedule events to nightly so γ is a one-line `on.schedule.cron`
-#      addition with no logic change.
+#   3. schedule - daily cron-driven nightly path. Cron-driven runs
+#      are ALWAYS mode=nightly. The mode-detection step routes
+#      schedule events to nightly directly with no logic change.
 #
 # Authentication: OIDC trusted publisher (npm "trusted publishers")
 # only. No NPM_TOKEN secret is configured. OIDC's `job_workflow_ref`
@@ -72,6 +71,13 @@ on:
         options:
           - stable
           - nightly
+  # Daily nightly publish at 15:00 UTC (23:00 Asia/Shanghai). Cron in
+  # GitHub Actions is best-effort and may be delayed by a few minutes
+  # at the hour mark; nightly is not a real-time job, so a small drift
+  # is fine. Schedule events route to mode=nightly via the
+  # Determine effective release mode step; see runbook section 7.
+  schedule:
+    - cron: "0 15 * * *"
 
 # Default token permissions are minimal. The publish job widens to
 # id-token:write locally for OIDC; no other job needs more than read.
@@ -266,11 +272,11 @@ jobs:
         #                         declaration is `required: true` with
         #                         `default: stable`, so every dispatch
         #                         carries an explicit value.
-        #   - schedule          → mode is ALWAYS "nightly". The schedule
-        #                         trigger itself is added by commit γ;
-        #                         routing it to nightly here means γ is
-        #                         a one-line addition (the cron entry)
-        #                         with no mode-logic change.
+        #   - schedule          → mode is ALWAYS "nightly". The cron
+        #                         entry lives in `on.schedule` at the
+        #                         top of this file; this step
+        #                         normalizes the event to nightly with
+        #                         no mode-logic change.
         # Any other event type is unsupported and fails fast so an
         # accidentally-wired future trigger surfaces immediately.
         run: |
@@ -306,7 +312,7 @@ jobs:
         # Both stable and nightly manual dispatches must originate from
         # refs/heads/main. The tag-trigger path does NOT go through this
         # check because the tag ref (refs/tags/v*) is itself the gate
-        # for the stable path. Future schedule events also bypass this
+        # for the stable path. Schedule events also bypass this
         # check because their ref is the default branch by GHA contract.
         run: |
           if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
