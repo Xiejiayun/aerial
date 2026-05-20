@@ -2,10 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig } from "./config.js";
+import { apiKeyPath, githubTokenPath } from "./paths.js";
 import { logEvent } from "./log.js";
 
 const AERIAL_ENV_KEY = "AERIAL_API_KEY";
+const BACKUP_PREFIX = ".aerial-backup-";
+const PRE_RESTORE_PREFIX = ".aerial-pre-restore-";
+const ISO_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 function backupIfExists(file) {
   if (!fs.existsSync(file)) return undefined;
@@ -117,5 +122,227 @@ export function setupClaude({ model } = {}) {
   fs.writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   logEvent("setup_write", { target: "claude", file, backup, model: selectedModel });
   return { file, backup, model: selectedModel };
+}
+
+function codexConfigFile() {
+  return path.join(os.homedir(), ".codex", "config.toml");
+}
+
+function claudeSettingsFile() {
+  return path.join(os.homedir(), ".claude", "settings.json");
+}
+
+function listBackups(file) {
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  if (!fs.existsSync(dir)) return [];
+  const prefix = `${base}${BACKUP_PREFIX}`;
+  const entries = fs.readdirSync(dir);
+  const matches = [];
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const stamp = entry.slice(prefix.length);
+    if (!ISO_STAMP_RE.test(stamp)) continue;
+    matches.push({ name: entry, path: path.join(dir, entry), stamp });
+  }
+  matches.sort((a, b) => (a.stamp < b.stamp ? -1 : a.stamp > b.stamp ? 1 : 0));
+  return matches;
+}
+
+export function findLatestBackup(file) {
+  const all = listBackups(file);
+  return all.length ? all[all.length - 1] : undefined;
+}
+
+function backupPathsFor(file) {
+  return listBackups(file).map((entry) => entry.path);
+}
+
+function codexStateFromDoc(doc, expectedBaseUrl) {
+  const providerSection = doc && typeof doc === "object" ? doc.model_providers?.aerial : undefined;
+  const providerSet = doc?.model_provider === "aerial";
+  const providerShapeComplete = providerSection
+    && providerSection.wire_api === "responses"
+    && providerSection.env_key === AERIAL_ENV_KEY
+    && typeof providerSection.base_url === "string";
+  const providerBaseMatches = providerSection?.base_url === expectedBaseUrl;
+  if (!providerSection && !providerSet) return "not-aerial";
+  if (providerSet && providerShapeComplete && providerBaseMatches) return "aerial";
+  if (providerShapeComplete) return "aerial-stale";
+  return "aerial-drift";
+}
+
+export function codexStatus() {
+  const config = loadConfig();
+  const expectedBaseUrl = `http://${config.host}:${config.port}/v1`;
+  const file = codexConfigFile();
+  const backups = backupPathsFor(file);
+  if (!fs.existsSync(file)) return { target: "codex", state: "missing", file, backups };
+  let content;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    return { target: "codex", state: "invalid", file, backups, error: err.message };
+  }
+  let doc;
+  try {
+    doc = parseToml(content);
+  } catch (err) {
+    return { target: "codex", state: "invalid", file, backups, error: err.message };
+  }
+  const state = codexStateFromDoc(doc, expectedBaseUrl);
+  const model = typeof doc?.model === "string" ? doc.model : undefined;
+  const baseUrl = typeof doc?.model_providers?.aerial?.base_url === "string"
+    ? doc.model_providers.aerial.base_url
+    : undefined;
+  return { target: "codex", state, file, backups, model, baseUrl };
+}
+
+function claudeStateFromDoc(doc, expectedBaseUrl) {
+  const helperIsAerial = doc?.apiKeyHelper === "aerial key print";
+  const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
+  const baseUrlMatches = baseUrl === expectedBaseUrl;
+  const baseUrlAerialShape = typeof baseUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+/.test(baseUrl);
+  const hasAerialTrace = helperIsAerial || baseUrlAerialShape;
+  if (!hasAerialTrace) return "not-aerial";
+  if (helperIsAerial && baseUrlMatches) return "aerial";
+  if (helperIsAerial && typeof baseUrl === "string" && !baseUrlMatches) return "aerial-stale";
+  return "aerial-drift";
+}
+
+export function claudeStatus() {
+  const config = loadConfig();
+  const expectedBaseUrl = `http://${config.host}:${config.port}`;
+  const file = claudeSettingsFile();
+  const backups = backupPathsFor(file);
+  if (!fs.existsSync(file)) return { target: "claude", state: "missing", file, backups };
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (err) {
+    return { target: "claude", state: "invalid", file, backups, error: err.message };
+  }
+  const state = claudeStateFromDoc(doc, expectedBaseUrl);
+  const model = typeof doc?.model === "string" ? doc.model : undefined;
+  const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
+  return { target: "claude", state, file, backups, model, baseUrl };
+}
+
+export function setupStatus() {
+  const config = loadConfig();
+  const apiKeyFile = apiKeyPath();
+  const githubTokenFile = githubTokenPath();
+  return {
+    schema: "aerial.setup-status.v1",
+    platform: process.platform,
+    config: { host: config.host, port: config.port },
+    auth: {
+      api_key: { file: apiKeyFile, exists: fs.existsSync(apiKeyFile) },
+      github_token: { file: githubTokenFile, exists: fs.existsSync(githubTokenFile) }
+    },
+    clients: {
+      codex: codexStatus(),
+      claude: claudeStatus()
+    }
+  };
+}
+
+function clientFile(target) {
+  if (target === "codex") return codexConfigFile();
+  if (target === "claude") return claudeSettingsFile();
+  throw new Error(`Unknown restore target: ${target}. Use codex, claude, or all.`);
+}
+
+function resolveWritePath(file) {
+  if (!fs.existsSync(file)) return file;
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
+function validateBackupContent(target, content) {
+  const text = content.toString("utf8");
+  if (target === "codex") {
+    try {
+      parseToml(text);
+    } catch (err) {
+      throw new Error(`Restore aborted: backup is not valid TOML (${err.message}). Live file left unchanged.`);
+    }
+  } else if (target === "claude") {
+    try {
+      JSON.parse(text);
+    } catch (err) {
+      throw new Error(`Restore aborted: backup is not valid JSON (${err.message}). Live file left unchanged.`);
+    }
+  }
+}
+
+function resolveRestoreMode(writePath, backupPath, targetExisted) {
+  if (process.platform === "win32") return undefined;
+  let preserved;
+  if (targetExisted) {
+    try { preserved = fs.statSync(writePath).mode & 0o777; } catch { preserved = undefined; }
+  }
+  if (preserved === undefined) {
+    try { preserved = fs.statSync(backupPath).mode & 0o777; } catch { preserved = 0o600; }
+  }
+  return preserved & 0o600;
+}
+
+export function restoreClient(target, { now = () => new Date() } = {}) {
+  const file = clientFile(target);
+  const writePath = resolveWritePath(file);
+  const latest = findLatestBackup(file);
+  if (!latest) {
+    return { target, ok: true, restored: false, reason: "no_backup", file };
+  }
+  let backupContent;
+  try {
+    backupContent = fs.readFileSync(latest.path);
+  } catch (err) {
+    throw new Error(`Restore failed: cannot read backup ${latest.path}: ${err.message}`);
+  }
+  validateBackupContent(target, backupContent);
+  const targetExisted = fs.existsSync(writePath);
+  const mode = resolveRestoreMode(writePath, latest.path, targetExisted);
+  let snapshot;
+  if (targetExisted) {
+    const stamp = now().toISOString().replace(/[:.]/g, "-");
+    snapshot = `${writePath}${PRE_RESTORE_PREFIX}${stamp}`;
+    fs.copyFileSync(writePath, snapshot);
+  }
+  ensureParent(writePath);
+  const tmp = `${writePath}.aerial-restore-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const writeOpts = mode !== undefined ? { mode } : undefined;
+  fs.writeFileSync(tmp, backupContent, writeOpts);
+  try {
+    fs.renameSync(tmp, writePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch {}
+    if (err.code === "EXDEV") {
+      throw new Error(`Restore failed: backup and target on different filesystems (EXDEV). File: ${writePath}. Move the backup next to the target and retry.`);
+    }
+    throw err;
+  }
+  if (mode !== undefined) {
+    try { fs.chmodSync(writePath, mode); } catch {}
+  }
+  logEvent("setup_restore", { target, file: writePath, from: latest.path, snapshot, mode });
+  return { target, ok: true, restored: true, file: writePath, from: latest.path, snapshot, mode };
+}
+
+export function restoreAllClients(opts) {
+  const results = {};
+  for (const target of ["codex", "claude"]) {
+    try {
+      results[target] = restoreClient(target, opts);
+    } catch (err) {
+      results[target] = { target, ok: false, error: err.message };
+    }
+  }
+  const ok = Object.values(results).every((r) => r.ok);
+  return { ok, results };
 }
 

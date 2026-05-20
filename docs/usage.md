@@ -85,6 +85,61 @@ Each model returned by `/v1/models` includes an `aerial` field that tells you wh
 
 Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. `responses_websocket` means Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses calls when `AERIAL_RESPONSES_WEBSOCKET=on` is set; with the opt-in off (default), Aerial always uses HTTP upstream Responses. Models marked with `embeddings_not_implemented` or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
 
+## 7.5 Manage Setup
+
+```bash
+aerial setup status [--json]
+aerial setup restore <codex|claude|all> --latest
+aerial disable
+```
+
+`aerial setup status` reports whether each supported client is currently configured to route through Aerial, plus the local API key and GitHub token files. The state for each client is one of:
+
+- `aerial` — fully configured for the current Aerial host/port.
+- `aerial-stale` — was configured by Aerial, but the file no longer matches (for example, host or port was changed via `aerial config set`).
+- `aerial-drift` — partial Aerial markers, likely from manual edits.
+- `not-aerial` — file exists with no Aerial signature.
+- `missing` — file does not exist.
+- `invalid` — file exists but failed to parse.
+
+`--json` prints a machine-readable report under the stable schema `aerial.setup-status.v1`:
+
+```json
+{
+  "schema": "aerial.setup-status.v1",
+  "platform": "darwin",
+  "config": { "host": "127.0.0.1", "port": 18181 },
+  "auth": {
+    "api_key":      { "file": "/Users/you/Library/Application Support/aerial/api_key", "exists": true },
+    "github_token": { "file": "/Users/you/Library/Application Support/aerial/github_token", "exists": false }
+  },
+  "clients": {
+    "codex": {
+      "target": "codex",
+      "state": "aerial",
+      "file": "/Users/you/.codex/config.toml",
+      "backups": ["/Users/you/.codex/config.toml.aerial-backup-2026-05-20T10-00-00-000Z"],
+      "model": "gpt-4.1",
+      "baseUrl": "http://127.0.0.1:18181/v1"
+    },
+    "claude": {
+      "target": "claude",
+      "state": "aerial",
+      "file": "/Users/you/.claude/settings.json",
+      "backups": [],
+      "model": "claude-sonnet-4.6",
+      "baseUrl": "http://127.0.0.1:18181"
+    }
+  }
+}
+```
+
+Stability rules for `aerial.setup-status.v1`: new fields may be added at any level in future Aerial releases — consumers must ignore unknown keys. Existing fields will not be removed or repurposed without bumping the `schema` value. Field types remain constant within a schema version.
+
+`aerial setup restore <codex|claude|all> --latest` restores the most recent `*.aerial-backup-<ISO>` snapshot for the named client. Before overwriting, it takes a `*.aerial-pre-restore-<ISO>` snapshot of the current file so the restore itself is reversible. With `all`, both clients are restored best-effort and the command exits non-zero if any individual restore failed. If there is no backup to restore, the command prints a note and exits 0.
+
+`aerial disable` is a convenience that runs `setup restore all --latest`. Once service support lands, `aerial disable` will also stop and uninstall the local Aerial service; until then the command prints `service uninstall: not available until service support is installed`.
+
 
 
 ## 8. Probe Capabilities
@@ -174,3 +229,4 @@ Best practice: put stable system/project/tool context first, put changing user i
 - Upstream compatibility error: run `aerial doctor`, then retry with a model returned by `/v1/models`.
 - `Unsupported parameter: max_tokens`: Aerial normalizes Chat Completions `max_tokens` into `max_completion_tokens` before forwarding to newer OpenAI models.
 - Cache hit stays zero: ensure the stable prefix is long enough, unchanged, and placed before variable content. For Responses/Chat, try a stable `prompt_cache_key`; for Messages, keep stable content in `system` or put manual `cache_control` on the stable content block.
+- Need to revert client config: run `aerial setup status` to see current state, then `aerial setup restore <codex|claude|all> --latest`. The current file is snapshotted as `*.aerial-pre-restore-<ISO>` before being overwritten.

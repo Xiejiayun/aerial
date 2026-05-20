@@ -41,6 +41,7 @@
     "access": "public"
   },
   "dependencies": {
+    "smol-toml": "^1.6.1",
     "undici": "^7.25.0"
   }
 }

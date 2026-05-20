@@ -2,7 +2,7 @@
 import { startDeviceFlow, pollDeviceFlow } from "./auth.js";
 import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
 import { startServer } from "./server.js";
-import { setupClaude, setupCodex } from "./setup.js";
+import { setupClaude, setupCodex, setupStatus, restoreClient, restoreAllClients } from "./setup.js";
 import { doctor } from "./doctor.js";
 import { runProbe, formatProbeReport } from "./probe.js";
 import { printVersion } from "./version.js";
@@ -19,6 +19,9 @@ Usage:
   aerial setup codex [--model <id>]
   aerial setup claude [--model <id>]
   aerial setup all [--model <id>]
+  aerial setup status [--json]
+  aerial setup restore <codex|claude|all> --latest
+  aerial disable
   aerial doctor
   aerial probe [--live] [--json]
 
@@ -106,6 +109,69 @@ async function main() {
       if (claude.model) console.log(`Configured Claude default model: ${claude.model}`);
       return;
     }
+    if (subcommand === "status") {
+      const status = setupStatus();
+      if (rest.includes("--json")) {
+        console.log(JSON.stringify(status, null, 2));
+        return;
+      }
+      console.log(`Aerial: http://${status.config.host}:${status.config.port}  (platform: ${status.platform})`);
+      console.log(`API key file:    ${status.auth.api_key.file}  (${status.auth.api_key.exists ? "present" : "missing"})`);
+      console.log(`GitHub token:    ${status.auth.github_token.file}  (${status.auth.github_token.exists ? "present" : "missing"})`);
+      for (const cs of Object.values(status.clients)) {
+        const head = `${cs.target.padEnd(7)} state=${cs.state}`;
+        console.log(`${head}  file=${cs.file}`);
+        if (cs.backups.length) console.log(`         backups=${cs.backups.length}`);
+        if (cs.error) console.log(`         error=${cs.error}`);
+      }
+      return;
+    }
+    if (subcommand === "restore") {
+      const which = rest[0];
+      if (!which) throw new Error("Usage: aerial setup restore <codex|claude|all> --latest");
+      if (!rest.includes("--latest")) throw new Error("aerial setup restore: only --latest is supported in this release");
+      if (which === "all") {
+        const { ok, results } = restoreAllClients();
+        for (const r of Object.values(results)) {
+          if (r.restored) {
+            console.log(`Restored ${r.target}: ${r.file} <- ${r.from}`);
+            if (r.snapshot) console.log(`  pre-restore snapshot: ${r.snapshot}`);
+          } else if (r.reason === "no_backup") {
+            console.log(`Restored ${r.target}: no backup to restore`);
+          } else if (r.error) {
+            console.log(`Restored ${r.target}: FAILED  ${r.error}`);
+          }
+        }
+        process.exitCode = ok ? 0 : 1;
+        return;
+      }
+      if (which !== "codex" && which !== "claude") throw new Error(`Unknown restore target: ${which}. Use codex, claude, or all.`);
+      const r = restoreClient(which);
+      if (r.restored) {
+        console.log(`Restored ${which}: ${r.file} <- ${r.from}`);
+        if (r.snapshot) console.log(`  pre-restore snapshot: ${r.snapshot}`);
+      } else if (r.reason === "no_backup") {
+        console.log(`Restored ${which}: no backup to restore`);
+      }
+      return;
+    }
+  }
+
+  if (command === "disable") {
+    const { ok, results } = restoreAllClients();
+    for (const r of Object.values(results)) {
+      if (r.restored) {
+        console.log(`Restored ${r.target}: ${r.file} <- ${r.from}`);
+        if (r.snapshot) console.log(`  pre-restore snapshot: ${r.snapshot}`);
+      } else if (r.reason === "no_backup") {
+        console.log(`Restored ${r.target}: no backup to restore`);
+      } else if (r.error) {
+        console.log(`Restored ${r.target}: FAILED  ${r.error}`);
+      }
+    }
+    console.log("service uninstall: not available until service support is installed");
+    process.exitCode = ok ? 0 : 1;
+    return;
   }
 
   if (command === "doctor") {
