@@ -546,10 +546,14 @@ jobs:
         # mirror cannot accidentally turn this into a no-op or test the
         # wrong build.
         #
-        # Retry the install up to 3 times with 5/10/20s backoff: just-
-        # published versions can take a few seconds to propagate to all
-        # registry edges, and we don't want a transient 404 to red the
-        # workflow.
+        # Retry shape: an initial install attempt plus 4 retries with
+        # 10/20/30/30s waits between them (~90s of waiting before the
+        # final attempt). Just-published versions can take tens of
+        # seconds to propagate to all registry edges, and we don't want
+        # a transient 404 to red the workflow. The 35s window
+        # (5/10/20) we used originally undershot observed CDN
+        # propagation on multiple real runs; see docs/release-runbook.md
+        # §10 ("Smoke install ETARGET after publish succeeds") and §11.
         #
         # Stable smoke is gated on `mode == 'stable'` only, NOT on
         # `did_publish`. Idempotency skip (did_publish=false) still
@@ -563,7 +567,7 @@ jobs:
           SMOKE_DIR="$(mktemp -d)"
           cd "${SMOKE_DIR}"
           npm init -y >/dev/null
-          DELAYS="5 10 20"
+          DELAYS="10 20 30 30"
           INSTALLED=0
           ATTEMPT=0
           for DELAY in ${DELAYS}; do
@@ -601,6 +605,12 @@ jobs:
         # When we do smoke, install the EXACT computed nightly version,
         # never the floating @nightly dist-tag, so a stale registry
         # mirror cannot fake a green smoke.
+        #
+        # Retry budget mirrors the stable smoke: an initial install
+        # attempt plus 4 retries with 10/20/30/30s waits between them
+        # (~90s of waiting before the final attempt). The original
+        # 5/10/20 window undershot observed CDN propagation; see
+        # docs/release-runbook.md §10 and §11.
         run: |
           PKG_VERSION="${{ steps.publish-nightly.outputs.published_version }}"
           if [ -z "${PKG_VERSION}" ]; then
@@ -611,7 +621,7 @@ jobs:
           SMOKE_DIR="$(mktemp -d)"
           cd "${SMOKE_DIR}"
           npm init -y >/dev/null
-          DELAYS="5 10 20"
+          DELAYS="10 20 30 30"
           INSTALLED=0
           ATTEMPT=0
           for DELAY in ${DELAYS}; do

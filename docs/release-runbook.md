@@ -159,10 +159,11 @@ post-publish smoke passes.
         `should_publish=false`).
       - **Post-publish smoke**: install `@jiayunxie/aerial@<version>`
         exactly (never via the floating `@latest` dist-tag) in a clean
-        temp directory, with up to 3 retries at 5/10/20 s backoff to
-        absorb registry propagation delay, then assert
-        `aerial --version` equals the published version and run
-        `aerial --help`.
+        temp directory, with an initial install attempt plus 4 retries
+        at 10/20/30/30 s waits between them (~90 s of waiting before
+        the final attempt) to absorb registry propagation delay, then
+        assert `aerial --version` equals the published version and
+        run `aerial --help`.
 
 ## §6 Manual Dispatch Release (escape hatch)
 
@@ -268,7 +269,9 @@ post-publish smoke passes.
   `publish` job runs **only** when both `steps.mode.outputs.mode ==
   'nightly'` and `steps.publish-nightly.outputs.did_publish == 'true'`.
   It installs the exact computed version (not the `@nightly`
-  dist-tag) with the same 5/10/20 s retry backoff as the stable smoke.
+  dist-tag) with the same initial attempt plus 4 retries at
+  10/20/30/30 s waits (~90 s of waiting before the final attempt) as
+  the stable smoke.
 
 ## §8 CI / Workflow File Structure
 
@@ -401,6 +404,22 @@ post-publish smoke passes.
   the cause is elsewhere (trusted publisher binding, OIDC claim
   match, registry side); diagnose without assuming the runtime is at
   fault.
+- **Smoke install `ETARGET` after publish succeeds.** When `(stable)`
+  or `(nightly) Post-publish smoke` reports `ETARGET No matching version
+  found for @jiayunxie/aerial@<version>` despite the preceding publish
+  step finishing green, the cause is npm registry / CDN propagation
+  lag: the version is committed but the install-side view has not
+  caught up yet. The retry budget is an initial install attempt plus
+  4 retries at 10/20/30/30 s waits (~90 s of waiting before the final
+  attempt); if the entire window still misses propagation, the
+  publish is not lost: the package, gitHead, shasum/integrity, and
+  provenance are all on the registry already. Rerun the failed jobs
+  and the publish job will take its idempotency / watermark skip path
+  (`should_publish=false` for stable, `did_publish=false` for nightly
+  via `publish-nightly.mjs`'s watermark) and the smoke will re-run
+  (stable) or be correctly skipped (nightly, since the rerun did not
+  produce a new tarball). See §11 for the half-success recovery
+  walk-through.
 - **`setup-node` cache miss / lockfile drift.** `npm ci` is authoritative in
   CI; if it fails, the cause is almost always that a local dependency change
   was committed without committing the updated `package-lock.json`. Fix
@@ -435,9 +454,12 @@ metadata bookkeeping failed.
   checked-out HEAD, i.e. `git rev-parse HEAD`, not `$GITHUB_SHA`), skips
   `npm publish`, and proceeds straight to post-publish smoke. Fix
   whatever caused smoke to fail (registry propagation, environmental
-  flake) and rerun until smoke is green. The smoke step itself retries
-  the install up to 3 times with 5/10/20 s backoff to absorb short
-  propagation delays.
+  flake) and rerun until smoke is green. The smoke step itself runs
+  an initial install attempt plus 4 retries with 10/20/30/30 s waits
+  between them (~90 s of waiting before the final attempt) to absorb
+  short propagation delays; if the entire window still misses
+  propagation, rerun the failed jobs and the idempotency path skips
+  republish and re-runs the smoke against the now-visible artifact.
 - **Do not** call `npm unpublish` for retry. Unpublish is reserved for the
   three categories in §12.
 
