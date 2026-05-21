@@ -319,9 +319,10 @@ test("restoreAllClients surfaces per-client failure without aborting siblings", 
   fs.writeFileSync(`${codexFile}.aerial-backup-2026-05-20T10-00-00-000Z`, VALID_CODEX_BACKUP);
   writeFile(claudeFile, JSON.stringify({ live: true }));
   fs.writeFileSync(`${claudeFile}.aerial-backup-2026-05-20T10-00-00-000Z`, VALID_CLAUDE_BACKUP);
+  const claudeWritePath = fs.realpathSync(claudeFile);
   const originalRename = fs.renameSync;
   const renameSpy = mock.method(fs, "renameSync", (src, dst) => {
-    if (dst === claudeFile) {
+    if (dst === claudeFile || dst === claudeWritePath) {
       const err = new Error("simulated EXDEV on claude");
       err.code = "EXDEV";
       throw err;
