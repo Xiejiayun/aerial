@@ -28,11 +28,20 @@ aerial start
 aerial setup codex
 aerial setup claude --model <available-copilot-model-id>
 aerial setup all
+aerial setup status
+aerial setup restore <codex|claude|all> --latest
+aerial service install
+aerial service start
+aerial service status
+aerial service stop
+aerial service restart
+aerial service uninstall
+aerial disable
 aerial doctor
 aerial probe
 ```
 
-Service installation, rollback automation, Gemini CLI support, dashboards, and analytics are intentionally out of this MVP. For Codex, local clients keep using HTTP POST /v1/responses. Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses and translate events back to SSE — this transport is opt-in (`AERIAL_RESPONSES_WEBSOCKET=on`) and HTTP is the default.
+Rollback safety net, log file rotation, and bundled service management (macOS launchd + Windows Task Scheduler) are part of this release. Gemini CLI support, Linux service management, dashboards, and analytics are intentionally out of this MVP. For Codex, local clients keep using HTTP POST /v1/responses. Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses and translate events back to SSE — this transport is opt-in (`AERIAL_RESPONSES_WEBSOCKET=on`) and HTTP is the default.
 
 ## Requirements
 
@@ -171,7 +180,7 @@ Aerial is for personal local use only.
 
 - Copilot inference routes are an observed compatibility target, not a public stable GitHub REST API.
 - `/v1/messages/count_tokens` is a local estimate, not upstream tokenization.
-- Service install/uninstall and disable/rollback are not implemented yet.
+- Bundled service management is implemented for macOS (launchd) and Windows (Task Scheduler). On Linux, run `aerial start` directly or wrap it in your own init system.
 - Model choice is not automated; query `/v1/models` and select an available model explicitly.
 - Chat Completions requests normalize `max_tokens` to `max_completion_tokens` for newer OpenAI models that reject the older field.
 - Prompt caching is upstream-managed: Aerial does not store prompt bodies locally, and it preserves or injects cache protocol fields before forwarding.

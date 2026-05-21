@@ -12,14 +12,17 @@ function mkHome(label) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `aerial-cli-rb-${label}-`));
 }
 
-function runCli(args, home) {
+function runCli(args, home, extraEnv = {}) {
   const env = {
     ...process.env,
     HOME: home,
     USERPROFILE: home,
     AERIAL_CONFIG_DIR: path.join(home, "config"),
+    AERIAL_LOG_DIR: path.join(home, "logs"),
     AERIAL_API_KEY: "aerial_test_key",
-    AERIAL_SKIP_ENV_PERSIST: "1"
+    AERIAL_SKIP_ENV_PERSIST: "1",
+    AERIAL_SERVICE_DRYRUN: "1",
+    ...extraEnv
   };
   return spawnSync(process.execPath, [cliPath, ...args], {
     cwd: repoRoot,
@@ -57,11 +60,100 @@ test("aerial setup restore codex --latest exits 0 when no backup", () => {
   assert.match(r.stdout, /no backup to restore/);
 });
 
-test("aerial disable exits 0 with no backups and notes service uninstall unavailable", () => {
+test("aerial disable exits 0 with no backups and reports service uninstall result on unsupported platforms", () => {
   const home = mkHome("disable-empty");
   const r = runCli(["disable"], home);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /service uninstall: not available until service support is installed/);
+  if (process.platform === "darwin" || process.platform === "win32") {
+    assert.match(r.stdout, /service uninstall: (ok|no service installed)/);
+  } else {
+    assert.match(r.stdout, /service uninstall: skipped/);
+  }
+});
+
+test("aerial service install --dry-run via AERIAL_SERVICE_DRYRUN exits 0 on supported platforms", { skip: process.platform !== "darwin" && process.platform !== "win32" }, () => {
+  const home = mkHome("svc-install");
+  const r = runCli(["service", "install"], home);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Service installed/);
+});
+
+test("aerial service install on linux exits 1 with unsupported-platform message", { skip: process.platform === "darwin" || process.platform === "win32" }, () => {
+  const home = mkHome("svc-install-linux");
+  const r = runCli(["service", "install"], home);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /unsupported platform/);
+});
+
+test("aerial service status --json emits aerial.service-status.v1", () => {
+  const home = mkHome("svc-status");
+  const r = runCli(["service", "status", "--json"], home);
+  const doc = JSON.parse(r.stdout);
+  assert.equal(doc.schema, "aerial.service-status.v1");
+  assert.equal(typeof doc.platform, "string");
+  assert.ok(doc.service);
+  assert.ok(doc.health);
+  assert.ok(doc.logs);
+  assert.ok(doc.auth);
+  if (process.platform === "darwin" || process.platform === "win32") {
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(doc.supported, true);
+  } else {
+    assert.equal(r.status, 1);
+    assert.equal(doc.supported, false);
+  }
+});
+
+test("aerial service stop on not-installed exits 0 with note (idempotent)", { skip: process.platform !== "darwin" && process.platform !== "win32" }, () => {
+  const home = mkHome("svc-stop-noop");
+  const r = runCli(["service", "stop"], home);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /not installed/);
+});
+
+test("aerial service uninstall on not-installed exits 0 with note (idempotent)", { skip: process.platform !== "darwin" && process.platform !== "win32" }, () => {
+  const home = mkHome("svc-uninstall-noop");
+  const r = runCli(["service", "uninstall"], home);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /no service installed/);
+});
+
+test("aerial service uninstall surfaces reason + retry message when /Delete fails (Windows)", { skip: process.platform !== "win32" }, () => {
+  const home = mkHome("svc-uninstall-fail");
+  const r = runCli(["service", "uninstall"], home, {
+    AERIAL_SERVICE_DRYRUN_INSTALLED: "1",
+    AERIAL_SERVICE_DRYRUN_FAIL: "delete"
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAILED \(delete_failed\)/);
+  assert.match(r.stdout, /schtasks \/Delete failed/);
+  assert.match(r.stdout, /Retry with `aerial service uninstall`/);
+  assert.match(r.stdout, /schtasks stderr: ERROR: Access is denied\./);
+});
+
+test("aerial disable surfaces uninstall reason + retry message on Windows when /Delete fails", { skip: process.platform !== "win32" }, () => {
+  const home = mkHome("disable-uninstall-fail");
+  const r = runCli(["disable"], home, {
+    AERIAL_SERVICE_DRYRUN_INSTALLED: "1",
+    AERIAL_SERVICE_DRYRUN_FAIL: "delete"
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /service uninstall: FAILED \(delete_failed\)/);
+  assert.match(r.stdout, /schtasks \/Delete failed/);
+});
+
+test("aerial service start without install exits 1 with not_installed reason", { skip: process.platform !== "darwin" && process.platform !== "win32" }, () => {
+  const home = mkHome("svc-start-not-installed");
+  const r = runCli(["service", "start"], home);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /not_installed|service install/);
+});
+
+test("aerial service unknown subcommand exits 1", () => {
+  const home = mkHome("svc-unknown");
+  const r = runCli(["service", "wat"], home);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Unknown service subcommand/);
 });
 
 test("aerial setup restore codex --latest exits 1 when backup is corrupt and leaves live file unchanged", () => {
