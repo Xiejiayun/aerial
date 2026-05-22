@@ -2,12 +2,14 @@
 import { fileURLToPath } from "node:url";
 import { startDeviceFlow, pollDeviceFlow, readGitHubToken, gitHubTokenSource } from "./auth.js";
 import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
+import { configPath } from "./paths.js";
 import { startServer } from "./server.js";
 import { setupClaude, setupCodex, setupStatus, restoreClient, restoreAllClients } from "./setup.js";
 import { serviceInstall, serviceStart, serviceStop, serviceRestart, serviceUninstall, serviceStatus } from "./service.js";
 import { doctor, renderDoctorText } from "./doctor.js";
 import { runProbe, formatProbeReport } from "./probe.js";
 import { chooseSetupModel, formatModelChoices } from "./model-selection.js";
+import { chooseSetupEffort, formatEffortSelection, assertValidEffort } from "./setup-selection.js";
 import { printVersion } from "./version.js";
 import { computeAppStatus } from "./app-status.js";
 
@@ -36,8 +38,8 @@ function printHelp() {
 Usage:
   aerial --version
   aerial login
-  aerial setup codex [--model <id>]
-  aerial setup claude [--model <id>]
+  aerial setup codex [--model <id>] [--effort <low|medium|high|xhigh|max>]
+  aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max>]
   aerial service install
   aerial status [--json]
 
@@ -58,8 +60,20 @@ function argValue(args, name) {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-async function selectSetupModel(target, route, args) {
-  const selected = await chooseSetupModel({ target, route, explicitModel: argValue(args, "--model") });
+function requiredArgValue(args, name) {
+  const index = args.indexOf(name);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${name} requires a value.`);
+  }
+  return value;
+}
+
+async function selectSetupOptions(target, route, args) {
+  const explicitEffort = requiredArgValue(args, "--effort");
+  if (explicitEffort !== undefined) assertValidEffort(explicitEffort);
+  const selected = await chooseSetupModel({ target, route, explicitModel: requiredArgValue(args, "--model") });
   if (!selected.displayed) {
     for (const line of formatModelChoices({ target, route, choices: selected.choices, selectedModel: selected.model, source: selected.source, recommended: selected.recommended })) {
       console.log(line);
@@ -67,14 +81,38 @@ async function selectSetupModel(target, route, args) {
   } else {
     console.log(`Selected ${target} model: ${selected.model}`);
   }
-  return selected.model;
+  const effortChoice = await chooseSetupEffort({ target, explicitEffort });
+  console.log(formatEffortSelection({ target, effort: effortChoice.effort, source: effortChoice.source }));
+  return {
+    model: selected.model,
+    effort: effortChoice.effort,
+    modelSource: selected.source,
+    effortSource: effortChoice.source,
+    modelDisplayed: Boolean(selected.displayed),
+    effortDisplayed: Boolean(effortChoice.displayed)
+  };
+}
+
+function printSetupCompletionSummary({ heading, cli, model, effort, proxy, configFile, aerialConfigFile, aerialDefaultEffort, backup, auth, notes = [] }) {
+  console.log(heading);
+  console.log(`  cli: ${cli}`);
+  console.log(`  model: ${model}`);
+  console.log(`  effort: ${effort}`);
+  console.log(`  proxy: ${proxy}`);
+  console.log(`  client config: ${configFile}`);
+  console.log(`  aerial config: ${aerialConfigFile}`);
+  console.log(`  aerial defaultEffort: ${aerialDefaultEffort}`);
+  console.log(`  backup: ${backup || "none"}`);
+  console.log(`  auth: ${auth}`);
+  for (const note of notes) console.log(`  note: ${note}`);
 }
 
 function printSetupSummary(status) {
   console.log("clients:");
   for (const client of Object.values(status.clients)) {
     const model = client.model ? ` model=${client.model}` : "";
-    console.log(`  ${client.target}: ${client.state}${model}`);
+    const effort = ` effort=${client.effort || "missing"}`;
+    console.log(`  ${client.target}: ${client.state}${model}${effort}`);
   }
   console.log(`api key: ${status.auth.api_key.exists ? "present" : "missing"}`);
   const ghSource = status.auth.github_token.source;
@@ -186,21 +224,41 @@ async function main() {
 
   if (command === "setup") {
     if (subcommand === "codex") {
-      const model = await selectSetupModel("Codex", "responses", rest);
-      const result = setupCodex({ model, authCommand: codexAuthCommand() });
-      console.log(`Updated Codex config: ${result.file}`);
-      console.log(`Configured Codex model: ${result.model}`);
-      if (result.backup) console.log(`Backup: ${result.backup}`);
-      console.log("Configured Codex to read the local Aerial key automatically.");
+      const options = await selectSetupOptions("Codex", "responses", rest);
+      const result = setupCodex({ model: options.model, effort: options.effort, authCommand: codexAuthCommand() });
+      const config = loadConfig();
+      printSetupCompletionSummary({
+        heading: "Configured Codex",
+        cli: "Codex",
+        model: result.model,
+        effort: result.effort || "missing",
+        proxy: `http://${config.host}:${config.port}/v1`,
+        configFile: result.file,
+        aerialConfigFile: configPath(),
+        aerialDefaultEffort: config.defaultEffort || "missing",
+        backup: result.backup,
+        auth: "command-backed local Aerial key",
+        notes: ["restart Codex if it was already running so it reloads the profile."]
+      });
       return;
     }
     if (subcommand === "claude") {
-      const model = await selectSetupModel("Claude Code", "messages", rest);
-      const result = setupClaude({ model, apiKeyHelper: claudeApiKeyHelper() });
-      console.log(`Updated Claude settings: ${result.file}`);
-      if (result.model) console.log(`Configured Claude default model: ${result.model}`);
-      console.log("Configured Claude Code to read the local Aerial key automatically.");
-      if (result.backup) console.log(`Backup: ${result.backup}`);
+      const options = await selectSetupOptions("Claude Code", "messages", rest);
+      const result = setupClaude({ model: options.model, effort: options.effort, apiKeyHelper: claudeApiKeyHelper() });
+      const config = loadConfig();
+      printSetupCompletionSummary({
+        heading: "Configured Claude Code",
+        cli: "Claude Code",
+        model: result.model || "preserved",
+        effort: result.effort || config.defaultEffort || "missing",
+        proxy: `http://${config.host}:${config.port}`,
+        configFile: result.file,
+        aerialConfigFile: configPath(),
+        aerialDefaultEffort: config.defaultEffort || "missing",
+        backup: result.backup,
+        auth: "apiKeyHelper local Aerial key",
+        notes: ["effort is applied via Aerial defaultEffort and proxy fallback; Claude settings.json does not store an effort value."]
+      });
       return;
     }
     if (subcommand === "all") {
@@ -222,7 +280,8 @@ async function main() {
       console.log(`GitHub token:    ${ghSourceText}`);
       for (const cs of Object.values(status.clients)) {
         const head = `${cs.target.padEnd(7)} state=${cs.state}`;
-        console.log(`${head}  file=${cs.file}`);
+        const effortText = ` effort=${cs.effort || "missing"}`;
+        console.log(`${head}${effortText}  file=${cs.file}`);
         if (cs.backups.length) console.log(`         backups=${cs.backups.length}`);
         if (cs.error) console.log(`         error=${cs.error}`);
       }
@@ -469,9 +528,14 @@ async function main() {
     if (subcommand === "set") {
       const [key, value] = rest;
       if (!key || value === undefined) throw new Error("Usage: aerial config set <key> <value>");
-      if (!["host", "port", "defaultModel", "logLevel", "promptCacheRetention", "promptCacheKey"].includes(key)) throw new Error(`Unsupported config key: ${key}`);
+      if (!["host", "port", "defaultModel", "defaultEffort", "logLevel", "promptCacheRetention", "promptCacheKey"].includes(key)) throw new Error(`Unsupported config key: ${key}`);
       if (key === "promptCacheRetention" && !["in_memory", "24h", "off"].includes(value)) throw new Error("promptCacheRetention must be one of: in_memory, 24h, off");
       if (key === "promptCacheKey" && !value.trim()) throw new Error("promptCacheKey must be auto, off, or a non-empty string");
+      if (key === "defaultEffort") {
+        config.defaultEffort = assertValidEffort(value);
+        saveConfig(config);
+        return;
+      }
       config[key] = key === "port" ? Number(value) : value;
       saveConfig(config);
       return;

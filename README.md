@@ -73,18 +73,18 @@ You normally do not need to create, copy, or export an API key yourself.
 
 ## Choosing A Model
 
-The easiest path is to let setup show the compatible models:
+The easiest path is to let setup show the compatible models and ask for reasoning effort:
 
 ```bash
 aerial setup codex
 aerial setup claude
 ```
 
-To pin a model without the prompt:
+To skip the prompts:
 
 ```bash
-aerial setup codex --model <responses-model-id>
-aerial setup claude --model <messages-model-id>
+aerial setup codex --model <responses-model-id> --effort <low|medium|high|xhigh|max>
+aerial setup claude --model <messages-model-id> --effort <low|medium|high|xhigh|max>
 ```
 
 To inspect the full model matrix:

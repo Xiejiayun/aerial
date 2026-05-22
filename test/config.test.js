@@ -8,8 +8,8 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-test-"));
 process.env.AERIAL_CONFIG_DIR = temp;
 process.env.AERIAL_API_KEY = "aerial_test_key";
 
-const { apiKeyPath } = await import("../src/paths.js");
-const { ensureApiKey, loadConfig, validateLocalAuth } = await import("../src/config.js");
+const { apiKeyPath, configPath } = await import("../src/paths.js");
+const { ensureApiKey, loadConfig, validateLocalAuth, saveConfig } = await import("../src/config.js");
 
 test("ensureApiKey stores a private key file plus hash and auth validates bearer or x-api-key", () => {
   const result = ensureApiKey();
@@ -40,4 +40,25 @@ test("ensureApiKey rotates when only a hash remains", () => {
   assert.ok(result.apiKey?.startsWith("aerial_"));
   assert.equal(fs.readFileSync(apiKeyPath(), "utf8").trim(), result.apiKey);
   assert.equal(validateLocalAuth({ authorization: "Bearer " + result.apiKey }, loadConfig()), true);
+});
+
+test("loadConfig defaults defaultEffort to medium when not stored", () => {
+  const cfg = loadConfig();
+  if (cfg.defaultEffort) {
+    saveConfig({ ...cfg, defaultEffort: undefined });
+  }
+  const reloaded = loadConfig();
+  assert.equal(reloaded.defaultEffort, "medium");
+});
+
+test("loadConfig falls back to medium when stored defaultEffort is invalid", () => {
+  const current = JSON.parse(fs.readFileSync(configPath(), "utf8"));
+  fs.writeFileSync(configPath(), JSON.stringify({ ...current, defaultEffort: "turbo" }, null, 2));
+  const reloaded = loadConfig();
+  assert.equal(reloaded.defaultEffort, "medium");
+});
+
+test("loadConfig preserves valid stored defaultEffort", () => {
+  saveConfig({ ...loadConfig(), defaultEffort: "xhigh" });
+  assert.equal(loadConfig().defaultEffort, "xhigh");
 });

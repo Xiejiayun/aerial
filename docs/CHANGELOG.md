@@ -4,6 +4,18 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-05-22
+
+### Added
+
+- `aerial setup codex` and `aerial setup claude` now run an interactive wizard for model and effort selection when those flags are omitted. `--model <id>` and `--effort <low|medium|high|xhigh|max>` skip the prompts; `max` is accepted as an alias for `xhigh`. Under non-TTY (CI/pipes) the wizard does not prompt and falls back to the default effort `medium`.
+- `aerial config set defaultEffort <value>` persists the Aerial-wide default reasoning effort. `setup codex` writes `model_reasoning_effort` into the `[profiles.aerial]` block of `~/.codex/config.toml`; `setup claude` does not write effort into Claude `settings.json` and instead syncs Aerial `defaultEffort`. The local Anthropic proxy injects the Aerial default into `/v1/messages` payloads for Claude Opus 4.7 only when the request does not already specify `output_config.effort` and is not using `thinking.type = "adaptive"` without an explicit effort.
+- `aerial setup status` and `aerial status --json` now expose an additive `clients.codex.effort` and `clients.claude.effort` field under the existing `aerial.setup-status.v1` schema. Values are the canonical effort string or `"missing"` when no effort is configured for that client.
+
+### Changed
+
+- `aerial setup codex` and `aerial setup claude` completion output now prints a single grouped summary block (CLI, model, effort, proxy URL, config file, backup path, auth helper, and a short note) so users can see at a glance what was configured and where to look on disk.
+
 ## [0.1.9] - 2026-05-22
 
 ### Added

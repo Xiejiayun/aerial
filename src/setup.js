@@ -2,10 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { ensureApiKey, loadConfig } from "./config.js";
+import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
 import { apiKeyPath, githubTokenPath } from "./paths.js";
 import { gitHubTokenSource } from "./auth.js";
 import { logEvent } from "./log.js";
+import { assertValidEffort, normalizeEffort } from "./setup-selection.js";
 
 const BACKUP_PREFIX = ".aerial-backup-";
 const PRE_RESTORE_PREFIX = ".aerial-pre-restore-";
@@ -75,7 +76,8 @@ function claudeEnvForAerial(currentEnv, config) {
   };
 }
 
-export function setupCodex({ model, authCommand = DEFAULT_CODEX_AUTH } = {}) {
+export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } = {}) {
+  const normalizedEffort = effort === undefined ? undefined : assertValidEffort(effort);
   ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel;
@@ -99,13 +101,19 @@ export function setupCodex({ model, authCommand = DEFAULT_CODEX_AUTH } = {}) {
     timeout_ms: authCommand.timeout_ms || DEFAULT_CODEX_AUTH.timeout_ms,
     refresh_interval_ms: authCommand.refresh_interval_ms ?? DEFAULT_CODEX_AUTH.refresh_interval_ms
   });
-  content = upsertTomlSection(content, "profiles.aerial", { model_provider: "aerial", model: selectedModel });
+  const profileValues = { model_provider: "aerial", model: selectedModel };
+  if (normalizedEffort) profileValues.model_reasoning_effort = normalizedEffort;
+  content = upsertTomlSection(content, "profiles.aerial", profileValues);
   fs.writeFileSync(file, content, "utf8");
-  logEvent("setup_write", { target: "codex", file, backup, auth: "command" });
-  return { file, backup, model: selectedModel, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
+  if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
+    saveConfig({ ...config, defaultEffort: normalizedEffort });
+  }
+  logEvent("setup_write", { target: "codex", file, backup, auth: "command", effort: normalizedEffort });
+  return { file, backup, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
-export function setupClaude({ model, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPER } = {}) {
+export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPER } = {}) {
+  const normalizedEffort = effort === undefined ? undefined : assertValidEffort(effort);
   ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel;
@@ -121,8 +129,11 @@ export function setupClaude({ model, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPE
   };
   if (selectedModel) next.model = selectedModel;
   fs.writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  logEvent("setup_write", { target: "claude", file, backup, model: selectedModel });
-  return { file, backup, model: selectedModel, apiKeyHelper };
+  if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
+    saveConfig({ ...config, defaultEffort: normalizedEffort });
+  }
+  logEvent("setup_write", { target: "claude", file, backup, model: selectedModel, effort: normalizedEffort });
+  return { file, backup, model: selectedModel, effort: normalizedEffort, apiKeyHelper };
 }
 
 function codexConfigFile() {
@@ -182,25 +193,27 @@ export function codexStatus() {
   const expectedBaseUrl = `http://${config.host}:${config.port}/v1`;
   const file = codexConfigFile();
   const backups = backupPathsFor(file);
-  if (!fs.existsSync(file)) return { target: "codex", state: "missing", file, backups };
+  if (!fs.existsSync(file)) return { target: "codex", state: "missing", file, backups, effort: "missing" };
   let content;
   try {
     content = fs.readFileSync(file, "utf8");
   } catch (err) {
-    return { target: "codex", state: "invalid", file, backups, error: err.message };
+    return { target: "codex", state: "invalid", file, backups, error: err.message, effort: "missing" };
   }
   let doc;
   try {
     doc = parseToml(content);
   } catch (err) {
-    return { target: "codex", state: "invalid", file, backups, error: err.message };
+    return { target: "codex", state: "invalid", file, backups, error: err.message, effort: "missing" };
   }
   const state = codexStateFromDoc(doc, expectedBaseUrl);
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = typeof doc?.model_providers?.aerial?.base_url === "string"
     ? doc.model_providers.aerial.base_url
     : undefined;
-  return { target: "codex", state, file, backups, model, baseUrl };
+  const profileEffort = doc?.profiles?.aerial?.model_reasoning_effort;
+  const effort = typeof profileEffort === "string" ? (normalizeEffort(profileEffort) || "missing") : "missing";
+  return { target: "codex", state, file, backups, model, baseUrl, effort };
 }
 
 function claudeStateFromDoc(doc, expectedBaseUrl) {
@@ -220,17 +233,18 @@ export function claudeStatus() {
   const expectedBaseUrl = `http://${config.host}:${config.port}`;
   const file = claudeSettingsFile();
   const backups = backupPathsFor(file);
-  if (!fs.existsSync(file)) return { target: "claude", state: "missing", file, backups };
+  const effort = typeof config.defaultEffort === "string" && config.defaultEffort.trim() ? config.defaultEffort.trim() : "missing";
+  if (!fs.existsSync(file)) return { target: "claude", state: "missing", file, backups, effort };
   let doc;
   try {
     doc = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (err) {
-    return { target: "claude", state: "invalid", file, backups, error: err.message };
+    return { target: "claude", state: "invalid", file, backups, error: err.message, effort };
   }
   const state = claudeStateFromDoc(doc, expectedBaseUrl);
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
-  return { target: "claude", state, file, backups, model, baseUrl };
+  return { target: "claude", state, file, backups, model, baseUrl, effort };
 }
 
 export function setupStatus() {

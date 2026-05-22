@@ -10,7 +10,7 @@ process.env.AERIAL_GITHUB_TOKEN = "github-test-token";
 
 const { proxyModels, proxyResponses, proxyMessages, proxyChatCompletions } = await import("../src/copilot.js");
 const { clearModelCatalogCacheForTests } = await import("../src/model-catalog.js");
-const { ensureApiKey } = await import("../src/config.js");
+const { ensureApiKey, loadConfig, saveConfig } = await import("../src/config.js");
 ensureApiKey();
 
 const originalFetch = globalThis.fetch;
@@ -603,4 +603,144 @@ test("proxyMessages catalog fetch is cached across sequential Claude Opus 4.7 re
   assert.equal(modelsCalls, 1, "two sequential Claude Opus 4.7 effort requests must share catalog cache");
   assert.equal(forwarded.length, 2);
   for (const body of forwarded) assert.equal(body.model, "claude-opus-4.7-cache-target");
+});
+
+function withDefaultEffort(value, fn) {
+  const original = loadConfig().defaultEffort;
+  saveConfig({ ...loadConfig(), defaultEffort: value });
+  return Promise.resolve(fn()).finally(() => {
+    saveConfig({ ...loadConfig(), defaultEffort: original });
+  });
+}
+
+test("proxyMessages injects Aerial defaultEffort when request has no effort/thinking signal", async () => {
+  await withDefaultEffort("high", async () => {
+    const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
+    const request = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4.7",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+    const response = await proxyMessages(request);
+    const forwarded = capture.forwarded[0];
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.output_config.effort, "high");
+    assert.equal(forwarded.model, "claude-opus-4.7-thinking-current");
+  });
+});
+
+test("proxyMessages does not override explicit output_config.effort with defaultEffort", async () => {
+  await withDefaultEffort("high", async () => {
+    const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-low")] });
+    const request = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4.7",
+        max_tokens: 32,
+        output_config: { effort: "low" },
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+    const response = await proxyMessages(request);
+    const forwarded = capture.forwarded[0];
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.output_config.effort, "low");
+  });
+});
+
+test("proxyMessages does not override legacy thinking effort with defaultEffort", async () => {
+  await withDefaultEffort("xhigh", async () => {
+    const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
+    const request = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4.7",
+        max_tokens: 32,
+        thinking: { type: "enabled", budget_tokens: 4096 },
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+    const response = await proxyMessages(request);
+    const forwarded = capture.forwarded[0];
+    assert.equal(response.status, 200);
+    assert.deepEqual(forwarded.thinking, { type: "adaptive" });
+    assert.equal(forwarded.output_config.effort, "low");
+  });
+});
+
+test("proxyMessages does not inject defaultEffort when adaptive thinking is set without explicit effort", async () => {
+  await withDefaultEffort("high", async () => {
+    let forwarded;
+    globalThis.fetch = async (_url, init) => {
+      forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+      return Response.json({ ok: true });
+    };
+    const request = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4.6",
+        max_tokens: 32,
+        thinking: { type: "adaptive" },
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+    const response = await proxyMessages(request);
+    assert.equal(response.status, 200);
+    assert.deepEqual(forwarded.thinking, { type: "adaptive" });
+    assert.equal(forwarded.output_config, undefined);
+  });
+});
+
+test("proxyMessages does not inject defaultEffort for non-Opus Claude models (e.g. Sonnet 4.6)", async () => {
+  await withDefaultEffort("high", async () => {
+    let forwarded;
+    globalThis.fetch = async (_url, init) => {
+      forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+      return Response.json({ ok: true });
+    };
+    const request = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4.6",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+    const response = await proxyMessages(request);
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.output_config, undefined);
+  });
+});
+
+test("proxyMessages falls back to medium when defaultEffort is invalid in config", async () => {
+  const original = loadConfig().defaultEffort;
+  const raw = (await import("../src/paths.js")).configPath();
+  const current = JSON.parse(fs.readFileSync(raw, "utf8"));
+  fs.writeFileSync(raw, JSON.stringify({ ...current, defaultEffort: "turbo" }, null, 2));
+  try {
+    const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-medium-target")] });
+    const request = new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-4.7",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "hello" }]
+      })
+    });
+    const response = await proxyMessages(request);
+    const forwarded = capture.forwarded[0];
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.output_config.effort, "medium");
+  } finally {
+    saveConfig({ ...loadConfig(), defaultEffort: original });
+  }
 });

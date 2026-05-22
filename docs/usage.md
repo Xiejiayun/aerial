@@ -71,7 +71,7 @@ The local key is generated and stored by Aerial automatically. Users do not need
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-To skip the prompt, pass `--model <responses-model-id>`.
+To skip the prompts, pass `--model <responses-model-id>` and/or `--effort <low|medium|high|xhigh|max>` (`max` is an alias for `xhigh`). The chosen effort is written into the `[profiles.aerial]` block as `model_reasoning_effort = "<effort>"` and is also persisted as Aerial-wide `defaultEffort` in `~/.aerial/config.json`. Under non-TTY (CI/pipes) the wizard does not prompt and falls back to the default effort `medium`.
 
 ## 6. Configure Claude Code
 
@@ -85,7 +85,15 @@ If Claude Code was previously pointed at another Anthropic-compatible gateway, s
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-To skip the prompt, pass `--model <messages-model-id>`.
+To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|medium|high|xhigh|max>`. Claude `settings.json` does not store an effort value; instead, `setup claude --effort <value>` updates Aerial-wide `defaultEffort` and the local proxy injects it into outgoing `/v1/messages` payloads. Precedence for the Anthropic effort applied to a Claude Opus 4.7 request, in order:
+
+1. An explicit `output_config.effort` in the request body is preserved verbatim.
+2. A legacy `thinking: { type: "enabled", budget_tokens }` is translated to `thinking: { type: "adaptive" }` with a derived `output_config.effort`.
+3. `thinking: { type: "adaptive" }` without an explicit effort is preserved as-is; Aerial does not inject a default.
+4. Otherwise Aerial injects Aerial `defaultEffort` from `~/.aerial/config.json` as `output_config.effort`.
+5. If no Aerial default is set, Aerial falls back to `medium`.
+
+Non-Opus-4.7 Claude requests are not modified.
 
 ## 7. Verify
 

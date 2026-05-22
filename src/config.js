@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { CONFIG_VERSION, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_VERSIONS } from "./constants.js";
 import { apiKeyPath, configPath, readJsonIfExists, writeJsonPrivate, writePrivateFile } from "./paths.js";
 import { hashApiKey, randomApiKey, verifyApiKey } from "./crypto.js";
+import { DEFAULT_EFFORT, normalizeEffort } from "./setup-selection.js";
 
 export function defaultConfig() {
   return {
@@ -10,6 +11,7 @@ export function defaultConfig() {
     port: DEFAULT_PORT,
     apiKeyHash: undefined,
     defaultModel: undefined,
+    defaultEffort: DEFAULT_EFFORT,
     logLevel: "info",
     promptCacheRetention: "in_memory",
     promptCacheKey: "auto",
@@ -24,7 +26,8 @@ export function loadConfig() {
   const defaults = defaultConfig();
   const promptCacheRetention = envRetention === undefined ? (loaded.promptCacheRetention ?? defaults.promptCacheRetention) : envRetention;
   const promptCacheKey = envCacheKey === undefined ? (loaded.promptCacheKey ?? defaults.promptCacheKey) : envCacheKey;
-  return { ...defaults, ...loaded, promptCacheRetention, promptCacheKey, versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) } };
+  const defaultEffort = normalizeEffort(loaded.defaultEffort) || DEFAULT_EFFORT;
+  return { ...defaults, ...loaded, defaultEffort, promptCacheRetention, promptCacheKey, versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) } };
 }
 
 export function saveConfig(config) {

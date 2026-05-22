@@ -251,8 +251,24 @@ async function fetchModelsCatalogForCopilot() {
   });
 }
 
+function withDefaultAnthropicEffort(payload) {
+  if (payload?.output_config?.effort !== undefined) return payload;
+  if (payload?.thinking?.type === "adaptive") return payload;
+  const model = typeof payload?.model === "string" ? payload.model : "";
+  if (!canonicalClaudeFamily(model)) return payload;
+  const config = loadConfig();
+  const effort = config.defaultEffort || "medium";
+  const outputConfig = payload?.output_config && typeof payload.output_config === "object" && !Array.isArray(payload.output_config)
+    ? payload.output_config
+    : {};
+  logEvent("anthropic_default_effort", { model, effort });
+  return { ...payload, output_config: { ...outputConfig, effort } };
+}
+
 async function withAnthropicDefaults(payload) {
-  const next = withSupportedAnthropicThinking(withDefaultAnthropicCache(payload));
+  const cached = withDefaultAnthropicCache(payload);
+  const thinkingApplied = withSupportedAnthropicThinking(cached);
+  const next = withDefaultAnthropicEffort(thinkingApplied);
   const models = shouldLoadAnthropicCatalog(next)
     ? await fetchModelsCatalogForCopilot().catch(() => undefined)
     : undefined;
