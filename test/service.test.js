@@ -729,6 +729,8 @@ test("serviceStatus on linux marks supported=false and returns schema-valid resu
   assert.equal(status.schema, "aerial.service-status.v1");
   assert.equal(status.supported, false);
   assert.equal(status.service.reason, "unsupported_platform");
+  assert.equal(status.service.wrapper.stale, false);
+  assert.deepEqual(status.service.wrapper.staleReasons, []);
   assert.equal(run.calls.length, 0);
 });
 

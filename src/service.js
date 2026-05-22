@@ -1030,7 +1030,7 @@ export async function serviceStatus({ run = defaultRunCommand, healthFetch } = {
       platform: process.platform,
       supported: false,
       config: { host: config.host, port: config.port },
-      service: { installed: false, loaded: false, reason: "unsupported_platform", platform: process.platform },
+      service: { installed: false, loaded: false, reason: "unsupported_platform", platform: process.platform, wrapper: wrapperBlock({ installed: false }) },
       health: { ok: false, error: "unsupported_platform" },
       logs: logsBlock(),
       auth: authBlock(),
