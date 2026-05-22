@@ -267,7 +267,7 @@ model_provider = "aerial"
 model = "<available-copilot-model-id>"
 
 [model_providers.aerial]
-name = "Aerial Copilot Local"
+name = "Aerial"
 base_url = "http://127.0.0.1:18181/v1"
 wire_api = "responses"
 

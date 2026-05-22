@@ -358,21 +358,147 @@ async function pollForAerialUp(host, port, healthFetch, deadlineMs = HEALTH_STAR
   return { cls: lastCls || { mode: "absent" }, probe: lastProbe, attempts, elapsedMs: Date.now() - start };
 }
 
-function readWrapperNodePath(wrapperFile) {
-  if (!wrapperFile) return undefined;
+function unescapeShSingleQuoted(line, prefix) {
+  if (!line.startsWith(prefix)) return undefined;
+  const rest = line.slice(prefix.length);
+  if (!rest.startsWith("'")) return undefined;
+  let i = 1;
+  let out = "";
+  while (i < rest.length) {
+    const ch = rest[i];
+    if (ch === "'") {
+      if (rest.slice(i, i + 4) === "'\\''") {
+        out += "'";
+        i += 4;
+        continue;
+      }
+      return out;
+    }
+    out += ch;
+    i += 1;
+  }
+  return undefined;
+}
+
+function unescapePsSingleQuoted(line, prefix) {
+  if (!line.startsWith(prefix)) return undefined;
+  const rest = line.slice(prefix.length);
+  if (!rest.startsWith("'")) return undefined;
+  let i = 1;
+  let out = "";
+  while (i < rest.length) {
+    const ch = rest[i];
+    if (ch === "'") {
+      if (rest[i + 1] === "'") {
+        out += "'";
+        i += 2;
+        continue;
+      }
+      return out;
+    }
+    out += ch;
+    i += 1;
+  }
+  return undefined;
+}
+
+function parseWrapperPaths(wrapperFile) {
+  if (!wrapperFile) return { node: undefined, cli: undefined };
   try {
-    if (!fs.existsSync(wrapperFile)) return undefined;
+    if (!fs.existsSync(wrapperFile)) return { node: undefined, cli: undefined };
     const data = fs.readFileSync(wrapperFile, "utf8");
+    const lines = data.split(/\r?\n/);
     if (wrapperFile.endsWith(".sh")) {
-      const m = data.match(/^NODE_BIN='([^']*)'/m);
-      return m ? m[1] : undefined;
+      let node;
+      let cli;
+      for (const line of lines) {
+        if (node === undefined) {
+          const candidate = unescapeShSingleQuoted(line, "NODE_BIN=");
+          if (candidate !== undefined) node = candidate;
+        }
+        if (cli === undefined) {
+          const candidate = unescapeShSingleQuoted(line, "CLI_ENTRY=");
+          if (candidate !== undefined) cli = candidate;
+        }
+        if (node !== undefined && cli !== undefined) break;
+      }
+      return { node, cli };
     }
     if (wrapperFile.endsWith(".ps1")) {
-      const m = data.match(/^\$node\s*=\s*'([^']*)'/m);
-      return m ? m[1] : undefined;
+      let node;
+      let cli;
+      for (const line of lines) {
+        if (node === undefined) {
+          const m = line.match(/^\$node\s*=\s*(.*)$/);
+          if (m) {
+            const candidate = unescapePsSingleQuoted(m[1].trim(), "");
+            if (candidate !== undefined) node = candidate;
+          }
+        }
+        if (cli === undefined) {
+          const m = line.match(/^\$cli\s*=\s*(.*)$/);
+          if (m) {
+            const candidate = unescapePsSingleQuoted(m[1].trim(), "");
+            if (candidate !== undefined) cli = candidate;
+          }
+        }
+        if (node !== undefined && cli !== undefined) break;
+      }
+      return { node, cli };
     }
   } catch {}
-  return undefined;
+  return { node: undefined, cli: undefined };
+}
+
+function readWrapperNodePath(wrapperFile) {
+  return parseWrapperPaths(wrapperFile).node;
+}
+
+export const STALE_REASONS = Object.freeze({
+  WRAPPER_MISSING: "wrapper_missing",
+  WRAPPER_NODE_MISSING: "wrapper_node_missing",
+  WRAPPER_CLI_MISSING: "wrapper_cli_missing",
+  WRAPPER_LOG_CONFIG_UNPARSEABLE: "wrapper_log_config_unparseable"
+});
+
+function wrapperBlock(state) {
+  if (!state || state.installed !== true) {
+    return { stale: false, staleReasons: [] };
+  }
+  let wrapperPath;
+  if (process.platform === "darwin") wrapperPath = darwinWrapperPath();
+  else if (process.platform === "win32") wrapperPath = winWrapperPath();
+  const wrapperFileExists = wrapperPath ? fs.existsSync(wrapperPath) : false;
+  const staleReasons = [];
+  if (!wrapperFileExists) {
+    return {
+      path: wrapperPath,
+      nodePath: undefined,
+      nodeExists: undefined,
+      cliPath: undefined,
+      cliExists: undefined,
+      logConfigParseable: undefined,
+      stale: true,
+      staleReasons: [STALE_REASONS.WRAPPER_MISSING]
+    };
+  }
+  const { node: nodePath, cli: cliPath } = parseWrapperPaths(wrapperPath);
+  const nodeExists = nodePath ? fs.existsSync(nodePath) : false;
+  const cliExists = cliPath ? fs.existsSync(cliPath) : false;
+  const logConfigParseable = parseWrapperLogValues(wrapperPath) !== null;
+  if (!nodeExists) staleReasons.push(STALE_REASONS.WRAPPER_NODE_MISSING);
+  if (!cliExists) staleReasons.push(STALE_REASONS.WRAPPER_CLI_MISSING);
+  if (!logConfigParseable) staleReasons.push(STALE_REASONS.WRAPPER_LOG_CONFIG_UNPARSEABLE);
+  return {
+    path: wrapperPath,
+    nodePath,
+    nodeExists,
+    cliPath,
+    cliExists,
+    logConfigParseable,
+    stale: staleReasons.length > 0,
+    staleReasons
+  };
 }
 
 function healthFailedDiagnostics({ wrapper, probe, attempts, elapsedMs }) {
@@ -914,6 +1040,7 @@ export async function serviceStatus({ run = defaultRunCommand, healthFetch } = {
   const state = serviceState(ctx);
   const probe = await (healthFetch || defaultHealthFetch)(config.host, config.port);
   const cls = classifyHealth(probe);
+  const wrapper = wrapperBlock(state);
   let supervisor;
   if (cls.mode === "aerial_running") {
     supervisor = state.installed && state.loaded ? "service-managed" : "foreground";
@@ -939,7 +1066,7 @@ export async function serviceStatus({ run = defaultRunCommand, healthFetch } = {
     platform: process.platform,
     supported: true,
     config: { host: config.host, port: config.port },
-    service: { platform: process.platform, ...state },
+    service: { platform: process.platform, ...state, wrapper },
     health,
     logs: logsBlock(),
     auth: authBlock(),
@@ -956,6 +1083,8 @@ export const _internal = {
   aerialLogPath,
   stdioLogPath,
   parseWrapperLogValues,
+  parseWrapperPaths,
+  wrapperBlock,
   buildSchtasksArgs,
   quoteSchtasksTR,
   classifyHealth

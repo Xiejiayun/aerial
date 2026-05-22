@@ -9,6 +9,7 @@ process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_GITHUB_TOKEN = "github-test-token";
 
 const { proxyModels, proxyResponses, proxyMessages, proxyChatCompletions } = await import("../src/copilot.js");
+const { clearModelCatalogCacheForTests } = await import("../src/model-catalog.js");
 const { ensureApiKey } = await import("../src/config.js");
 ensureApiKey();
 
@@ -18,6 +19,7 @@ const originalError = console.error;
 test.afterEach(() => {
   globalThis.fetch = originalFetch;
   console.error = originalError;
+  clearModelCatalogCacheForTests();
 });
 
 function waitFor(predicate) {
@@ -571,4 +573,34 @@ test("proxyResponses can apply configured default cache retention", async () => 
     if (previous === undefined) delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
     else process.env.AERIAL_PROMPT_CACHE_RETENTION = previous;
   }
+});
+
+test("proxyMessages catalog fetch is cached across sequential Claude Opus 4.7 requests", async () => {
+  let modelsCalls = 0;
+  const forwarded = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    if (u.endsWith("/models")) {
+      modelsCalls += 1;
+      return Response.json({ data: [anthropicEffortModel("claude-opus-4.7-cache-target")] });
+    }
+    forwarded.push(JSON.parse(Buffer.from(init.body).toString("utf8")));
+    return Response.json({ ok: true });
+  };
+  const makeRequest = () => new Request("http://127.0.0.1/v1/messages", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-opus-4.7",
+      messages: [{ role: "user", content: "hello" }],
+      output_config: { effort: "xhigh" },
+      max_tokens: 8
+    })
+  });
+  await proxyMessages(makeRequest());
+  await proxyMessages(makeRequest());
+  assert.equal(modelsCalls, 1, "two sequential Claude Opus 4.7 effort requests must share catalog cache");
+  assert.equal(forwarded.length, 2);
+  for (const body of forwarded) assert.equal(body.model, "claude-opus-4.7-cache-target");
 });

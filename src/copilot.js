@@ -4,6 +4,12 @@ import { loadConfig } from "./config.js";
 import { getCopilotToken } from "./auth.js";
 import { logEvent } from "./log.js";
 import { isResponsesWebSocketOptIn, proxyResponsesWebSocket, shouldUseResponsesWebSocket } from "./responses-websocket.js";
+import {
+  fetchModelsCatalog as fetchModelsCatalogShared,
+  findCompatibleModel as findCompatibleModelShared,
+  canonicalClaudeFamily,
+  tokenFingerprintOf
+} from "./model-catalog.js";
 
 function upstreamHeaders(token, extra = {}) {
   const config = loadConfig();
@@ -174,51 +180,22 @@ function withDefaultAnthropicCache(payload) {
   return next;
 }
 
-function canonicalClaudeOpus47Family(model) {
-  return /^claude-opus-4[.-]7(?:-|$)/.test(model) ? "claude-opus-4.7" : undefined;
-}
-
-function modelHasMessagesRoute(model) {
-  const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
-  const routes = Array.isArray(model?.aerial?.routes) ? model.aerial.routes : [];
-  return endpoints.includes("/v1/messages") || routes.includes("messages");
-}
-
-function supportedReasoningEfforts(model) {
-  const supports = model?.capabilities?.supports;
-  const values = supports?.reasoning_effort ?? supports?.reasoning_efforts;
-  if (Array.isArray(values)) return values.map(String);
-  if (typeof values === "string") return [values];
-  return [];
-}
-
-function modelSupportsAdaptiveThinking(model) {
-  const supports = model?.capabilities?.supports;
-  return supports?.adaptive_thinking === true || supports?.thinking?.adaptive === true;
-}
-
-function findAnthropicEffortModel(modelId, effort, models) {
-  if (!Array.isArray(models)) return undefined;
-  const family = canonicalClaudeOpus47Family(modelId);
-  if (!family) return undefined;
-  const candidates = models.filter((model) => {
-    const id = typeof model?.id === "string" ? model.id : "";
-    return canonicalClaudeOpus47Family(id) === family &&
-      modelHasMessagesRoute(model) &&
-      modelSupportsAdaptiveThinking(model) &&
-      supportedReasoningEfforts(model).includes(effort);
-  });
-  return candidates.find((model) => model.id === modelId) || candidates[0];
-}
-
 function withSupportedAnthropicEffort(payload, models) {
   const effort = payload?.output_config?.effort;
   if (effort === undefined) return payload;
   const model = typeof payload?.model === "string" ? payload.model : "";
-  if (!canonicalClaudeOpus47Family(model)) return payload;
+  const family = canonicalClaudeFamily(model);
+  if (!family) return payload;
   const nextEffort = effort === "max" ? "xhigh" : effort;
   if (!["low", "medium", "high", "xhigh"].includes(nextEffort)) return payload;
-  const routed = findAnthropicEffortModel(model, nextEffort, models);
+  const routed = findCompatibleModelShared({
+    models,
+    family,
+    route: "/v1/messages",
+    adaptiveThinking: true,
+    effort: nextEffort,
+    preferredId: model
+  });
   const nextModel = routed?.id || model;
   if (model === nextModel && effort === nextEffort) return payload;
   logEvent("anthropic_effort_route", { model, effort, routedModel: nextModel, routedEffort: nextEffort });
@@ -258,13 +235,26 @@ function withSupportedAnthropicThinking(payload) {
 function shouldLoadAnthropicCatalog(payload) {
   const effort = payload?.output_config?.effort;
   const model = typeof payload?.model === "string" ? payload.model : "";
-  return effort !== undefined && Boolean(canonicalClaudeOpus47Family(model));
+  return effort !== undefined && Boolean(canonicalClaudeFamily(model));
+}
+
+async function fetchModelsCatalogForCopilot() {
+  const token = await getCopilotToken();
+  return fetchModelsCatalogShared({
+    tokenFingerprint: tokenFingerprintOf(token),
+    fetchImpl: async () => {
+      const response = await fetch(`${COPILOT_API_ORIGIN}/models`, { method: "GET", headers: upstreamHeaders(token) });
+      if (!response.ok) return undefined;
+      const payload = await response.json().catch(() => ({}));
+      return Array.isArray(payload?.data) ? payload.data : undefined;
+    }
+  });
 }
 
 async function withAnthropicDefaults(payload) {
   const next = withSupportedAnthropicThinking(withDefaultAnthropicCache(payload));
   const models = shouldLoadAnthropicCatalog(next)
-    ? await fetchModelsCatalog().catch(() => undefined)
+    ? await fetchModelsCatalogForCopilot().catch(() => undefined)
     : undefined;
   return withSupportedAnthropicEffort(next, models);
 }
@@ -480,11 +470,7 @@ async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride } = {
 }
 
 async function fetchModelsCatalog() {
-  const token = await getCopilotToken();
-  const response = await fetch(`${COPILOT_API_ORIGIN}/models`, { method: "GET", headers: upstreamHeaders(token) });
-  if (!response.ok) return undefined;
-  const payload = await response.json().catch(() => ({}));
-  return Array.isArray(payload.data) ? payload.data : undefined;
+  return fetchModelsCatalogForCopilot();
 }
 
 function responseModelFromCatalog(modelId, models) {

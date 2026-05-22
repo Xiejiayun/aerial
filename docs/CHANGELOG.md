@@ -4,6 +4,27 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-05-22
+
+### Added
+
+- `aerial doctor` now emits a structured `aerial.doctor.v1` diagnostic report with fail/warn/info checks, machine-readable repair commands, and the current status blocks, giving users a single local troubleshooting entry point without contacting Copilot upstream.
+- `aerial service status --json` now includes additive `service.wrapper` diagnostics for installed services, including wrapper node/CLI paths, existence checks, log-config parseability, and stale reason enums.
+- Added a token-fingerprint-keyed model catalog cache used by Claude Opus 4.7 effort routing, avoiding an extra `/models` request on every compatible Claude request while keeping failures uncached.
+
+### Changed
+
+- Codex setup now uses the shorter local provider display name `Aerial`.
+
+### Fixed
+
+- Service diagnostics now detect stale generated wrappers when the embedded Node path, CLI path, or log rotation config is missing or unparseable, while preserving `status.ok` unless the service is otherwise unhealthy.
+- Claude Opus 4.7 effort routing now shares a small catalog compatibility helper so same-family, `/v1/messages`, adaptive-thinking, and requested-effort checks are centralized and covered by focused tests.
+
+### Notes
+
+- Setup wizard improvements for interactive model and effort selection are intentionally kept for the next release track instead of being mixed into this hardening release.
+
 ## [0.1.8] - 2026-05-22
 
 ### Fixed
@@ -84,6 +105,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.1.9]: https://github.com/Xiejiayun/aerial/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/Xiejiayun/aerial/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Xiejiayun/aerial/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Xiejiayun/aerial/compare/v0.1.5...v0.1.6

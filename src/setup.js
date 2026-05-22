@@ -89,7 +89,7 @@ export function setupCodex({ model, authCommand = DEFAULT_CODEX_AUTH } = {}) {
   content = setTomlString(content, "model_provider", "aerial");
   content = setTomlString(content, "model", selectedModel);
   content = upsertTomlSection(content, "model_providers.aerial", {
-    name: "Aerial Copilot Local",
+    name: "Aerial",
     base_url: `http://${config.host}:${config.port}/v1`,
     wire_api: "responses"
   });

@@ -5,7 +5,7 @@ import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { setupClaude, setupCodex, setupStatus, restoreClient, restoreAllClients } from "./setup.js";
 import { serviceInstall, serviceStart, serviceStop, serviceRestart, serviceUninstall, serviceStatus } from "./service.js";
-import { doctor } from "./doctor.js";
+import { doctor, renderDoctorText } from "./doctor.js";
 import { runProbe, formatProbeReport } from "./probe.js";
 import { chooseSetupModel, formatModelChoices } from "./model-selection.js";
 import { printVersion } from "./version.js";
@@ -449,11 +449,10 @@ async function main() {
   }
 
   if (command === "doctor") {
-    const result = doctor();
-    for (const check of result.checks) {
-      console.log(`${check.ok ? "OK" : "FAIL"} ${check.name}: ${check.detail}`);
-    }
-    process.exitCode = result.ok ? 0 : 1;
+    const report = await doctor();
+    if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
+    else console.log(renderDoctorText(report));
+    process.exitCode = report.ok ? 0 : 1;
     return;
   }
 

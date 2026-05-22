@@ -850,3 +850,140 @@ test("parseWrapperLogValues returns null on missing/garbled wrapper and parsed v
   fs.writeFileSync(sh, "#!/bin/sh\nMAX_BYTES=notanumber\nBACKUPS=4");
   assert.equal(_internal.parseWrapperLogValues(sh), null, "non-numeric values return null");
 });
+
+function writeInstalledArtifacts({ nodePath, cliPath, maxBytes = 4194304, backups = 5, omitWrapper = false, garbledLogConfig = false } = {}) {
+  if (process.platform === "darwin") {
+    fs.mkdirSync(path.dirname(_internal.plistPath()), { recursive: true });
+    fs.writeFileSync(_internal.plistPath(), "<placeholder/>");
+    if (!omitWrapper) {
+      const wf = _internal.darwinWrapperPath();
+      fs.mkdirSync(path.dirname(wf), { recursive: true });
+      if (garbledLogConfig) {
+        fs.writeFileSync(wf, `#!/bin/sh\nNODE_BIN='${nodePath}'\nCLI_ENTRY='${cliPath}'\nMAX_BYTES=notanumber\nBACKUPS=4\nexec node\n`);
+      } else {
+        fs.writeFileSync(wf, renderDarwinWrapper({ nodePath, cliPath, host: "127.0.0.1", port: 18181, stdioLog: "/tmp/x.log", aerialLog: "/tmp/y.log", maxBytes, backups }));
+      }
+    }
+  } else if (process.platform === "win32") {
+    if (!omitWrapper) {
+      const wf = _internal.winWrapperPath();
+      fs.mkdirSync(path.dirname(wf), { recursive: true });
+      if (garbledLogConfig) {
+        fs.writeFileSync(wf, `$ErrorActionPreference='Stop'\n$node = '${nodePath}'\n$cli  = '${cliPath}'\n$maxBytes = notanumber\n$backups = 4\n& node\n`);
+      } else {
+        fs.writeFileSync(wf, renderWindowsWrapper({ nodePath, cliPath, host: "127.0.0.1", port: 18181, stdioLog: "C:\\tmp\\x.log", aerialLog: "C:\\tmp\\y.log", maxBytes, backups }));
+      }
+    }
+  }
+}
+
+function installedQueryRun() {
+  const run = makeRunner();
+  if (process.platform === "darwin") {
+    run.queue.push({ status: 1, stdout: "", stderr: "" });
+  } else if (process.platform === "win32") {
+    run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Ready", stderr: "" });
+  }
+  return run;
+}
+
+test("serviceStatus wrapper block: not installed -> stale=false, staleReasons=[]", async () => {
+  cleanupServiceArtifacts();
+  const run = makeRunner();
+  if (process.platform === "darwin") run.queue.push({ status: 1, stdout: "", stderr: "Could not find" });
+  else if (process.platform === "win32") run.queue.push({ status: 1, stdout: "", stderr: "" });
+  const s = await serviceStatus({ run, healthFetch: absentHealth() });
+  assert.equal(s.service.installed, false);
+  assert.deepEqual(s.service.wrapper.staleReasons, []);
+  assert.equal(s.service.wrapper.stale, false);
+});
+
+test("serviceStatus wrapper block: installed but wrapper file missing -> wrapper_missing", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  writeInstalledArtifacts({ nodePath: process.execPath, cliPath: "/tmp/cli.js", omitWrapper: true });
+  const s = await serviceStatus({ run: installedQueryRun(), healthFetch: absentHealth() });
+  assert.equal(s.service.installed, true);
+  assert.equal(s.service.wrapper.stale, true);
+  assert.deepEqual(s.service.wrapper.staleReasons, ["wrapper_missing"]);
+  assert.equal(s.service.wrapper.nodeExists, undefined);
+  assert.equal(s.service.wrapper.cliExists, undefined);
+  cleanupServiceArtifacts();
+});
+
+test("serviceStatus wrapper block: wrapper node path missing -> wrapper_node_missing", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  const missingNode = process.platform === "win32" ? "C:\\nope\\node.exe" : "/nope/node";
+  writeInstalledArtifacts({ nodePath: missingNode, cliPath: process.execPath });
+  const s = await serviceStatus({ run: installedQueryRun(), healthFetch: absentHealth() });
+  assert.equal(s.service.wrapper.nodeExists, false);
+  assert.equal(s.service.wrapper.cliExists, true);
+  assert.equal(s.service.wrapper.stale, true);
+  assert.ok(s.service.wrapper.staleReasons.includes("wrapper_node_missing"));
+  assert.ok(!s.service.wrapper.staleReasons.includes("wrapper_cli_missing"));
+  cleanupServiceArtifacts();
+});
+
+test("serviceStatus wrapper block: wrapper cli path missing -> wrapper_cli_missing", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  const missingCli = process.platform === "win32" ? "C:\\nope\\cli.js" : "/nope/cli.js";
+  writeInstalledArtifacts({ nodePath: process.execPath, cliPath: missingCli });
+  const s = await serviceStatus({ run: installedQueryRun(), healthFetch: absentHealth() });
+  assert.equal(s.service.wrapper.nodeExists, true);
+  assert.equal(s.service.wrapper.cliExists, false);
+  assert.equal(s.service.wrapper.stale, true);
+  assert.ok(s.service.wrapper.staleReasons.includes("wrapper_cli_missing"));
+  cleanupServiceArtifacts();
+});
+
+test("serviceStatus wrapper block: unparseable log config -> wrapper_log_config_unparseable", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  writeInstalledArtifacts({ nodePath: process.execPath, cliPath: process.execPath, garbledLogConfig: true });
+  const s = await serviceStatus({ run: installedQueryRun(), healthFetch: absentHealth() });
+  assert.equal(s.service.wrapper.logConfigParseable, false);
+  assert.ok(s.service.wrapper.staleReasons.includes("wrapper_log_config_unparseable"));
+  cleanupServiceArtifacts();
+});
+
+test("serviceStatus wrapper block: existsSync only, no executable bit assumption on Windows", { skip: process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  const fake = path.join(temp, "fake-node-no-x.exe");
+  fs.writeFileSync(fake, "");
+  writeInstalledArtifacts({ nodePath: fake, cliPath: process.execPath });
+  const s = await serviceStatus({ run: installedQueryRun(), healthFetch: absentHealth() });
+  assert.equal(s.service.wrapper.nodeExists, true, "Windows: fs.existsSync must say true regardless of executable bit");
+  assert.ok(!s.service.wrapper.staleReasons.includes("wrapper_node_missing"));
+  cleanupServiceArtifacts();
+});
+
+test("serviceStatus wrapper block: fully healthy installed wrapper -> stale=false", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  writeInstalledArtifacts({ nodePath: process.execPath, cliPath: process.execPath });
+  const s = await serviceStatus({ run: installedQueryRun(), healthFetch: absentHealth() });
+  assert.equal(s.service.installed, true);
+  assert.equal(s.service.wrapper.stale, false);
+  assert.deepEqual(s.service.wrapper.staleReasons, []);
+  assert.equal(s.service.wrapper.nodeExists, true);
+  assert.equal(s.service.wrapper.cliExists, true);
+  assert.equal(s.service.wrapper.logConfigParseable, true);
+  cleanupServiceArtifacts();
+});
+
+test("parseWrapperPaths round-trips single-quote and space in node/cli paths", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  const tricky = path.join(temp, "O'Connor dir");
+  fs.mkdirSync(tricky, { recursive: true });
+  const trickyNode = path.join(tricky, process.platform === "win32" ? "node.exe" : "node");
+  const trickyCli = path.join(tricky, "cli.js");
+  fs.writeFileSync(trickyNode, "");
+  fs.writeFileSync(trickyCli, "");
+  writeInstalledArtifacts({ nodePath: trickyNode, cliPath: trickyCli });
+  const wrapperFile = process.platform === "darwin" ? _internal.darwinWrapperPath() : _internal.winWrapperPath();
+  const parsed = _internal.parseWrapperPaths(wrapperFile);
+  assert.equal(parsed.node, trickyNode, "node path must round-trip through escaped wrapper");
+  assert.equal(parsed.cli, trickyCli, "cli path must round-trip through escaped wrapper");
+  const s = await serviceStatus({ run: installedQueryRun(), healthFetch: absentHealth() });
+  assert.equal(s.service.wrapper.nodeExists, true, "wrapper with quoted path must not falsely report node missing");
+  assert.equal(s.service.wrapper.cliExists, true, "wrapper with quoted path must not falsely report cli missing");
+  assert.deepEqual(s.service.wrapper.staleReasons, []);
+  cleanupServiceArtifacts();
+});
