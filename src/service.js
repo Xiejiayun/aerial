@@ -15,6 +15,7 @@ const DEFAULT_WRAPPER_LOG_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_WRAPPER_LOG_BACKUPS = 3;
 const HEALTH_TIMEOUT_MS = 1500;
 const HEALTH_START_TIMEOUT_MS = 5000;
+const HEALTH_POLL_INTERVAL_MS = 250;
 
 function wrapperLogConfig() {
   const out = { maxBytes: DEFAULT_WRAPPER_LOG_MAX_BYTES, backups: DEFAULT_WRAPPER_LOG_BACKUPS };
@@ -339,6 +340,53 @@ function classifyHealth(probe) {
   return { mode: "aerial_running", body: probe.body };
 }
 
+async function pollForAerialUp(host, port, healthFetch, deadlineMs = HEALTH_START_TIMEOUT_MS) {
+  const fetcher = healthFetch || defaultHealthFetch;
+  const start = Date.now();
+  let lastProbe;
+  let lastCls;
+  let attempts = 0;
+  while (Date.now() - start < deadlineMs) {
+    attempts += 1;
+    lastProbe = await fetcher(host, port);
+    lastCls = classifyHealth(lastProbe);
+    if (lastCls.mode === "aerial_running" || lastCls.mode === "port_conflict") {
+      return { cls: lastCls, probe: lastProbe, attempts, elapsedMs: Date.now() - start };
+    }
+    await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
+  }
+  return { cls: lastCls || { mode: "absent" }, probe: lastProbe, attempts, elapsedMs: Date.now() - start };
+}
+
+function readWrapperNodePath(wrapperFile) {
+  if (!wrapperFile) return undefined;
+  try {
+    if (!fs.existsSync(wrapperFile)) return undefined;
+    const data = fs.readFileSync(wrapperFile, "utf8");
+    if (wrapperFile.endsWith(".sh")) {
+      const m = data.match(/^NODE_BIN='([^']*)'/m);
+      return m ? m[1] : undefined;
+    }
+    if (wrapperFile.endsWith(".ps1")) {
+      const m = data.match(/^\$node\s*=\s*'([^']*)'/m);
+      return m ? m[1] : undefined;
+    }
+  } catch {}
+  return undefined;
+}
+
+function healthFailedDiagnostics({ wrapper, probe, attempts, elapsedMs }) {
+  const out = {
+    stdioLog: stdioLogPath(),
+    aerialLog: aerialLogPath(),
+    wrapperNode: readWrapperNodePath(wrapper),
+    health: { attempts, elapsedMs }
+  };
+  if (probe && probe.error) out.health.lastError = probe.error;
+  if (probe && probe.status !== undefined) out.health.lastStatus = probe.status;
+  return out;
+}
+
 function authFileStatus(file) {
   if (!fs.existsSync(file)) return { file, state: "missing" };
   try {
@@ -461,11 +509,12 @@ function tokenWarning() {
       if (data && data.trim()) return undefined;
     } catch {}
   }
-  return {
-    level: "warning",
-    code: "github_token_missing",
-    message: "GitHub token is not configured. Service will start, but proxy requests return 503 until you run `aerial login`."
-  };
+  const envToken = process.env.AERIAL_GITHUB_TOKEN;
+  const envOnly = envToken && envToken.trim();
+  const message = envOnly
+    ? "AERIAL_GITHUB_TOKEN is set in this shell only; the background service does not inherit it. Run `aerial login` to persist a service-readable GitHub token, otherwise proxy requests return 503."
+    : "GitHub token is not configured. Service will start, but proxy requests return 503 until you run `aerial login`.";
+  return { level: "warning", code: "github_token_missing", message };
 }
 
 function darwinWriteDefinition() {
@@ -534,7 +583,7 @@ async function describeRunning(ctx, host, port, healthFetch) {
   return { cls, probe, supervisor };
 }
 
-export async function serviceInstall({ run = defaultRunCommand, healthFetch } = {}) {
+export async function serviceInstall({ run = defaultRunCommand, healthFetch, healthDeadlineMs } = {}) {
   if (isUnsupportedPlatform()) throw unsupportedError("install");
   const ctx = { run };
   const config = loadConfig();
@@ -634,12 +683,34 @@ export async function serviceInstall({ run = defaultRunCommand, healthFetch } = 
       if (!ok) result.reason = "run_failed";
     }
   }
+  if (result.ok) {
+    if (process.env.AERIAL_SERVICE_DRYRUN === "1") {
+      result.health = { ok: true, attempts: 0, elapsedMs: 0, dryRun: true };
+    } else {
+      const poll = await pollForAerialUp(config.host, config.port, healthFetch, healthDeadlineMs);
+      if (poll.cls.mode === "aerial_running") {
+        result.health = { ok: true, attempts: poll.attempts, elapsedMs: poll.elapsedMs };
+      } else if (poll.cls.mode === "port_conflict") {
+        result.ok = false;
+        result.reason = "port_conflict";
+        result.message = `After install, port ${config.port} is responding as a non-Aerial process: ${poll.cls.reason}. Free the port and rerun.`;
+        result.diagnostics = healthFailedDiagnostics({ wrapper: result.wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs });
+      } else {
+        result.ok = false;
+        result.reason = "health_check_failed";
+        result.definitionWritten = true;
+        result.startAttempted = true;
+        result.message = `Service definition was written and start was triggered, but /health did not become Aerial within ${poll.elapsedMs}ms (${poll.attempts} attempts). Inspect logs and rerun \`aerial service status --json\`.`;
+        result.diagnostics = healthFailedDiagnostics({ wrapper: result.wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs });
+      }
+    }
+  }
   result.warning = tokenWarning();
-  logEvent("service_install", { platform: process.platform, ok: result.ok });
+  logEvent("service_install", { platform: process.platform, ok: result.ok, reason: result.reason });
   return result;
 }
 
-export async function serviceStart({ run = defaultRunCommand, healthFetch } = {}) {
+export async function serviceStart({ run = defaultRunCommand, healthFetch, healthDeadlineMs } = {}) {
   if (isUnsupportedPlatform()) throw unsupportedError("start");
   const ctx = { run };
   const config = loadConfig();
@@ -687,16 +758,50 @@ export async function serviceStart({ run = defaultRunCommand, healthFetch } = {}
   } else {
     r = ctx.run("schtasks.exe", buildSchtasksArgs("run"));
   }
-  const ok = r.status === 0;
-  logEvent("service_start", { platform: process.platform, status: r.status });
-  return {
-    ok,
+  const triggerOk = r.status === 0;
+  const base = {
+    ok: triggerOk,
     action: "start",
     platform: process.platform,
     status: r.status,
     stderr: r.stderr,
     warning: tokenWarning(),
-    ...(ok ? {} : { reason: process.platform === "darwin" ? "bootstrap_failed" : "run_failed" })
+    ...(triggerOk ? {} : { reason: process.platform === "darwin" ? "bootstrap_failed" : "run_failed" })
+  };
+  if (!triggerOk) {
+    logEvent("service_start", { platform: process.platform, status: r.status, reason: base.reason });
+    return base;
+  }
+  if (process.env.AERIAL_SERVICE_DRYRUN === "1") {
+    base.health = { ok: true, attempts: 0, elapsedMs: 0, dryRun: true };
+    logEvent("service_start", { platform: process.platform, status: r.status, ok: true, dryRun: true });
+    return base;
+  }
+  const poll = await pollForAerialUp(config.host, config.port, healthFetch, healthDeadlineMs);
+  if (poll.cls.mode === "aerial_running") {
+    base.health = { ok: true, attempts: poll.attempts, elapsedMs: poll.elapsedMs };
+    logEvent("service_start", { platform: process.platform, status: r.status, ok: true });
+    return base;
+  }
+  const wrapper = process.platform === "darwin" ? darwinWrapperPath() : winWrapperPath();
+  if (poll.cls.mode === "port_conflict") {
+    logEvent("service_start", { platform: process.platform, ok: false, reason: "port_conflict" });
+    return {
+      ...base,
+      ok: false,
+      reason: "port_conflict",
+      message: `After start, port ${config.port} is responding as a non-Aerial process: ${poll.cls.reason}. Free the port and rerun.`,
+      diagnostics: healthFailedDiagnostics({ wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs })
+    };
+  }
+  logEvent("service_start", { platform: process.platform, ok: false, reason: "health_check_failed" });
+  return {
+    ...base,
+    ok: false,
+    reason: "health_check_failed",
+    startAttempted: true,
+    message: `Start was triggered, but /health did not become Aerial within ${poll.elapsedMs}ms (${poll.attempts} attempts). Inspect logs and rerun \`aerial service status --json\`.`,
+    diagnostics: healthFailedDiagnostics({ wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs })
   };
 }
 

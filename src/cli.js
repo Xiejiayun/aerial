@@ -314,6 +314,17 @@ async function main() {
         if (r.bootstrap?.stderr) console.log(`  bootstrap stderr: ${r.bootstrap.stderr.trim()}`);
         if (r.create?.stderr) console.log(`  schtasks stderr: ${r.create.stderr.trim()}`);
         if (r.run?.stderr) console.log(`  schtasks /Run stderr: ${r.run.stderr.trim()}`);
+        if (r.diagnostics) {
+          if (r.diagnostics.stdioLog) console.log(`  stdio log: ${r.diagnostics.stdioLog}`);
+          if (r.diagnostics.aerialLog) console.log(`  aerial log: ${r.diagnostics.aerialLog}`);
+          if (r.diagnostics.wrapperNode) console.log(`  wrapper node: ${r.diagnostics.wrapperNode}`);
+          if (r.diagnostics.health) {
+            const h = r.diagnostics.health;
+            const tail = h.lastError ? `, last error: ${h.lastError}` : (h.lastStatus !== undefined ? `, last status: ${h.lastStatus}` : "");
+            console.log(`  health probe: ${h.attempts} attempts over ${h.elapsedMs}ms${tail}`);
+          }
+          console.log(`  Run: aerial service status --json`);
+        }
         if (r.warning) console.log(`  WARNING: ${r.warning.message}`);
         process.exitCode = r.ok ? 0 : 1;
       } catch (err) {
@@ -329,6 +340,17 @@ async function main() {
         else if (r.ok) console.log(`Service start: ok (${r.platform})`);
         else console.log(`Service start: FAILED (${r.reason || `status=${r.status}`})${r.message ? ": " + r.message : ""}`);
         if (r.stderr) console.log(`  ${r.stderr.trim()}`);
+        if (r.diagnostics) {
+          if (r.diagnostics.stdioLog) console.log(`  stdio log: ${r.diagnostics.stdioLog}`);
+          if (r.diagnostics.aerialLog) console.log(`  aerial log: ${r.diagnostics.aerialLog}`);
+          if (r.diagnostics.wrapperNode) console.log(`  wrapper node: ${r.diagnostics.wrapperNode}`);
+          if (r.diagnostics.health) {
+            const h = r.diagnostics.health;
+            const tail = h.lastError ? `, last error: ${h.lastError}` : (h.lastStatus !== undefined ? `, last status: ${h.lastStatus}` : "");
+            console.log(`  health probe: ${h.attempts} attempts over ${h.elapsedMs}ms${tail}`);
+          }
+          console.log(`  Run: aerial service status --json`);
+        }
         if (r.warning) console.log(`  WARNING: ${r.warning.message}`);
         process.exitCode = r.ok ? 0 : 1;
       } catch (err) {

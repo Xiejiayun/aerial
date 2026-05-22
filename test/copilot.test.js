@@ -354,7 +354,80 @@ test("proxyMessages preserves client Anthropic cache_control", async () => {
   assert.deepEqual(forwarded.system, [{ type: "text", text: "Long stable project context", cache_control: { type: "ephemeral" } }]);
 });
 
-test("proxyMessages routes Claude Opus 4.7 effort to matching model variant", async () => {
+test("proxyMessages maps legacy enabled thinking to adaptive thinking plus effort", async () => {
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true });
+  };
+
+  const request = new Request("http://127.0.0.1/v1/messages", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-opus-4.7",
+      max_tokens: 32,
+      thinking: { type: "enabled", budget_tokens: 32000 },
+      messages: [{ role: "user", content: "hello" }]
+    })
+  });
+  const response = await proxyMessages(request);
+  assert.equal(response.status, 200);
+  assert.deepEqual(forwarded.thinking, { type: "adaptive" });
+  assert.equal(forwarded.output_config.effort, "high");
+  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+});
+
+test("proxyMessages preserves existing output_config effort when mapping legacy thinking", async () => {
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true });
+  };
+
+  const request = new Request("http://127.0.0.1/v1/messages", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-opus-4.7",
+      max_tokens: 32,
+      thinking: { type: { enabled: true } },
+      output_config: { effort: "xhigh" },
+      messages: [{ role: "user", content: "hello" }]
+    })
+  });
+  const response = await proxyMessages(request);
+  assert.equal(response.status, 200);
+  assert.deepEqual(forwarded.thinking, { type: "adaptive" });
+  assert.equal(forwarded.output_config.effort, "xhigh");
+  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+});
+
+test("proxyMessages leaves adaptive thinking unchanged", async () => {
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true });
+  };
+
+  const request = new Request("http://127.0.0.1/v1/messages", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4.6",
+      max_tokens: 32,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "medium" },
+      messages: [{ role: "user", content: "hello" }]
+    })
+  });
+  const response = await proxyMessages(request);
+  assert.equal(response.status, 200);
+  assert.deepEqual(forwarded.thinking, { type: "adaptive" });
+  assert.equal(forwarded.output_config.effort, "medium");
+});
+
+test("proxyMessages routes Claude Opus 4.7 non-medium effort to 1m internal model", async () => {
   let forwarded;
   globalThis.fetch = async (_url, init) => {
     forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
@@ -374,11 +447,11 @@ test("proxyMessages routes Claude Opus 4.7 effort to matching model variant", as
   });
   const response = await proxyMessages(request);
   assert.equal(response.status, 200);
-  assert.equal(forwarded.model, "claude-opus-4.7-xhigh");
+  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
   assert.equal(forwarded.output_config.effort, "xhigh");
 });
 
-test("proxyMessages maps max effort to the highest supported Claude Opus 4.7 variant", async () => {
+test("proxyMessages maps max effort to xhigh on the 1m internal Claude Opus 4.7 model", async () => {
   let forwarded;
   globalThis.fetch = async (_url, init) => {
     forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
@@ -398,11 +471,11 @@ test("proxyMessages maps max effort to the highest supported Claude Opus 4.7 var
   });
   const response = await proxyMessages(request);
   assert.equal(response.status, 200);
-  assert.equal(forwarded.model, "claude-opus-4.7-xhigh");
+  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
   assert.equal(forwarded.output_config.effort, "xhigh");
 });
 
-test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to supported variants", async () => {
+test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to 1m internal model", async () => {
   let forwarded;
   globalThis.fetch = async (_url, init) => {
     forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
@@ -422,8 +495,31 @@ test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to supported varia
   });
   const response = await proxyMessages(request);
   assert.equal(response.status, 200);
-  assert.equal(forwarded.model, "claude-opus-4.7-xhigh");
+  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
   assert.equal(forwarded.output_config.effort, "xhigh");
+});
+
+test("proxyMessages normalizes legacy Claude Opus 4.7 effort model suffixes", async () => {
+  let forwarded;
+  globalThis.fetch = async (_url, init) => {
+    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    return Response.json({ ok: true });
+  };
+
+  const request = new Request("http://127.0.0.1/v1/messages", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-opus-4.7-high",
+      max_tokens: 32,
+      output_config: { effort: "high" },
+      messages: [{ role: "user", content: "hello" }]
+    })
+  });
+  const response = await proxyMessages(request);
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+  assert.equal(forwarded.output_config.effort, "high");
 });
 
 test("proxyResponses can apply configured default cache retention", async () => {

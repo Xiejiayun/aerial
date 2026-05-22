@@ -4,6 +4,16 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-05-22
+
+### Fixed
+
+- Claude Code requests that still send Anthropic's legacy `thinking: { type: "enabled" }` schema are now translated to `thinking: { type: "adaptive" }` with `output_config.effort`, preventing the Claude Opus 4.7 `"thinking.type.enabled" is not supported` error.
+- Claude Opus 4.7 effort routing now uses the currently available `claude-opus-4.7-1m-internal` model for non-medium effort requests, and normalizes older `claude-opus-4.7-high` / `claude-opus-4.7-xhigh` IDs to that model while preserving `output_config.effort`.
+- `aerial service install` and `aerial service start` now poll `/health` after the platform service manager reports success. If the background process does not become a healthy Aerial proxy, the command returns a diagnostic `health_check_failed` result instead of reporting a false success.
+- Service install/start failure output now includes log paths, wrapper node path, health probe summary, and a next diagnostic command (`aerial service status --json`) without exposing token or key values.
+- The service install GitHub-token warning now distinguishes an env-only `AERIAL_GITHUB_TOKEN`, clarifying that background services do not inherit shell-scoped environment variables and that `aerial login` persists a service-readable token.
+
 ## [0.1.6] - 2026-05-22
 
 ### Added
@@ -67,6 +77,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.1.7]: https://github.com/Xiejiayun/aerial/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Xiejiayun/aerial/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Xiejiayun/aerial/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Xiejiayun/aerial/compare/v0.1.3...v0.1.4

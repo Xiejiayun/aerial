@@ -179,23 +179,50 @@ function withSupportedAnthropicEffort(payload) {
   if (effort === undefined) return payload;
   const model = typeof payload?.model === "string" ? payload.model : "";
   if (!/^claude-opus-4[.-]7(?:-|$)/.test(model)) return payload;
-  const routes = {
-    low: "claude-opus-4.7-1m-internal",
-    medium: "claude-opus-4.7",
-    high: "claude-opus-4.7-high",
-    xhigh: "claude-opus-4.7-xhigh",
-    max: "claude-opus-4.7-xhigh"
-  };
-  const nextModel = routes[effort];
   const nextEffort = effort === "max" ? "xhigh" : effort;
-  if (!nextModel) return payload;
+  if (!["low", "medium", "high", "xhigh"].includes(nextEffort)) return payload;
+  const baseModel = /^claude-opus-4[.-]7$/.test(model);
+  const legacyEffortModel = /^claude-opus-4[.-]7-(?:high|xhigh)$/.test(model);
+  const nextModel = legacyEffortModel || (baseModel && nextEffort !== "medium")
+    ? "claude-opus-4.7-1m-internal"
+    : model;
   if (model === nextModel && effort === nextEffort) return payload;
   logEvent("anthropic_effort_route", { model, effort, routedModel: nextModel, routedEffort: nextEffort });
   return { ...payload, model: nextModel, output_config: { ...payload.output_config, effort: nextEffort } };
 }
 
+function legacyThinkingEffort(thinking) {
+  if (typeof thinking?.effort === "string" && thinking.effort.trim()) return thinking.effort.trim();
+  const budget = Number(thinking?.budget_tokens);
+  if (!Number.isFinite(budget) || budget <= 0) return "medium";
+  if (budget <= 4096) return "low";
+  if (budget <= 16000) return "medium";
+  if (budget <= 64000) return "high";
+  return "xhigh";
+}
+
+function isLegacyThinkingEnabled(thinking) {
+  if (!thinking || typeof thinking !== "object" || Array.isArray(thinking)) return false;
+  if (thinking.type === "enabled") return true;
+  return Boolean(thinking.type && typeof thinking.type === "object" && thinking.type.enabled);
+}
+
+function withSupportedAnthropicThinking(payload) {
+  if (!isLegacyThinkingEnabled(payload?.thinking)) return payload;
+  const outputConfig = payload?.output_config && typeof payload.output_config === "object" && !Array.isArray(payload.output_config)
+    ? payload.output_config
+    : {};
+  const effort = outputConfig.effort ?? legacyThinkingEffort(payload.thinking);
+  logEvent("anthropic_thinking_route", { model: payload.model, routedType: "adaptive", routedEffort: effort });
+  return {
+    ...payload,
+    thinking: { type: "adaptive" },
+    output_config: { ...outputConfig, effort }
+  };
+}
+
 function withAnthropicDefaults(payload) {
-  return withSupportedAnthropicEffort(withDefaultAnthropicCache(payload));
+  return withSupportedAnthropicEffort(withSupportedAnthropicThinking(withDefaultAnthropicCache(payload)));
 }
 
 function parseJsonBody(body, contentType) {
