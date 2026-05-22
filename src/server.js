@@ -2,10 +2,51 @@ import http from "node:http";
 import { DEFAULT_HOST, DEFAULT_PORT } from "./constants.js";
 import { loadConfig, validateLocalAuth } from "./config.js";
 import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses, localCountTokens } from "./copilot.js";
+import { readGitHubToken } from "./auth.js";
 import { logEvent } from "./log.js";
 
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+function aerialLoginRequired() {
+  return json(401, {
+    error: {
+      type: "authentication_error",
+      message: "GitHub login required. Run aerial login.",
+      aerial: { status: "login_required" }
+    }
+  });
+}
+
+async function modelsRouteOrUpstreamAuthFailed(fetchRequest) {
+  if (!readGitHubToken()) return aerialLoginRequired();
+  let response;
+  try {
+    response = await proxyModels(fetchRequest);
+  } catch (err) {
+    const status = err?.aerialUpstreamStatus;
+    if (status === 401 || status === 403) {
+      return json(status, {
+        error: {
+          type: "authentication_error",
+          message: "GitHub login was rejected by Copilot. Run aerial login --force.",
+          aerial: { status: "upstream_auth_failed", upstream_status: status }
+        }
+      });
+    }
+    throw err;
+  }
+  if (response.status === 401 || response.status === 403) {
+    return json(response.status, {
+      error: {
+        type: "authentication_error",
+        message: "GitHub login was rejected by Copilot. Run aerial login --force.",
+        aerial: { status: "upstream_auth_failed", upstream_status: response.status }
+      }
+    });
+  }
+  return response;
 }
 
 function nodeRequestToFetch(req, body, signal) {
@@ -24,12 +65,23 @@ async function handle(fetchRequest, runtime = {}) {
   if (fetchRequest.method === "GET" && url.pathname === "/health") {
     return Response.json({ ok: true, service: "aerial", host: runtime.host || config.host, port: runtime.port || config.port });
   }
+  if (fetchRequest.method === "GET" && url.pathname === "/") {
+    return Response.json({
+      service: "aerial",
+      ok: true,
+      message: "Aerial is running. This is a local-only Copilot proxy; inference routes require the local Aerial API key.",
+      endpoints: { health: "/health", models: "/v1/models" },
+      next_steps: ["Open /health for an unauthenticated check", "Run `aerial status` for a full diagnostic"]
+    });
+  }
+  if (fetchRequest.method === "GET" && url.pathname === "/v1/models") {
+    return modelsRouteOrUpstreamAuthFailed(fetchRequest);
+  }
 
   if (!validateLocalAuth(Object.fromEntries(fetchRequest.headers), config)) {
     return json(401, { error: { type: "authentication_error", message: "Invalid or missing Aerial API key" } });
   }
 
-  if (fetchRequest.method === "GET" && url.pathname === "/v1/models") return proxyModels(fetchRequest);
   if (fetchRequest.method === "POST" && url.pathname === "/v1/responses") return proxyResponses(fetchRequest);
   if (fetchRequest.method === "POST" && url.pathname === "/v1/messages") return proxyMessages(fetchRequest);
   if (fetchRequest.method === "POST" && url.pathname === "/v1/messages/count_tokens") return localCountTokens(fetchRequest);

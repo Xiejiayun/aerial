@@ -4,6 +4,7 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig } from "./config.js";
 import { apiKeyPath, githubTokenPath } from "./paths.js";
+import { gitHubTokenSource } from "./auth.js";
 import { logEvent } from "./log.js";
 
 const BACKUP_PREFIX = ".aerial-backup-";
@@ -15,6 +16,7 @@ const DEFAULT_CODEX_AUTH = Object.freeze({
   timeout_ms: 5000,
   refresh_interval_ms: 0
 });
+const DEFAULT_CLAUDE_API_KEY_HELPER = "aerial key print";
 
 function backupIfExists(file) {
   if (!fs.existsSync(file)) return undefined;
@@ -76,7 +78,10 @@ function claudeEnvForAerial(currentEnv, config) {
 export function setupCodex({ model, authCommand = DEFAULT_CODEX_AUTH } = {}) {
   ensureApiKey();
   const config = loadConfig();
-  const selectedModel = model || config.defaultModel || "gpt-4.1";
+  const selectedModel = model || config.defaultModel;
+  if (!selectedModel) {
+    throw new Error("setupCodex requires a model id; pass --model or let `aerial setup codex` select one from live Copilot models.");
+  }
   const file = path.join(os.homedir(), ".codex", "config.toml");
   ensureParent(file);
   const backup = backupIfExists(file);
@@ -100,7 +105,7 @@ export function setupCodex({ model, authCommand = DEFAULT_CODEX_AUTH } = {}) {
   return { file, backup, model: selectedModel, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
-export function setupClaude({ model } = {}) {
+export function setupClaude({ model, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPER } = {}) {
   ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel;
@@ -111,13 +116,13 @@ export function setupClaude({ model } = {}) {
   const current = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
   const next = {
     ...current,
-    apiKeyHelper: "aerial key print",
+    apiKeyHelper,
     env: claudeEnvForAerial(current.env, config)
   };
   if (selectedModel) next.model = selectedModel;
   fs.writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   logEvent("setup_write", { target: "claude", file, backup, model: selectedModel });
-  return { file, backup, model: selectedModel };
+  return { file, backup, model: selectedModel, apiKeyHelper };
 }
 
 function codexConfigFile() {
@@ -199,7 +204,7 @@ export function codexStatus() {
 }
 
 function claudeStateFromDoc(doc, expectedBaseUrl) {
-  const helperIsAerial = doc?.apiKeyHelper === "aerial key print";
+  const helperIsAerial = typeof doc?.apiKeyHelper === "string" && /\bkey\s+print\b/.test(doc.apiKeyHelper);
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
   const baseUrlMatches = baseUrl === expectedBaseUrl;
   const baseUrlAerialShape = typeof baseUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+/.test(baseUrl);
@@ -238,7 +243,10 @@ export function setupStatus() {
     config: { host: config.host, port: config.port },
     auth: {
       api_key: { file: apiKeyFile, exists: fs.existsSync(apiKeyFile) },
-      github_token: { file: githubTokenFile, exists: fs.existsSync(githubTokenFile) }
+      github_token: (() => {
+        const source = gitHubTokenSource();
+        return { file: githubTokenFile, exists: source !== "missing", source };
+      })()
     },
     clients: {
       codex: codexStatus(),

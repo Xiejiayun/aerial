@@ -20,7 +20,7 @@ test("key generate does not print the raw local key", () => {
 
 test("setup codex configures command-backed auth without requiring AERIAL_API_KEY in the environment", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-codex-auth-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "codex"], {
+  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-codex-test"], {
     cwd: path.resolve(import.meta.dirname, ".."),
     encoding: "utf8",
     env: {
@@ -38,6 +38,7 @@ test("setup codex configures command-backed auth without requiring AERIAL_API_KE
   const content = fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
   assert.match(content, /\[model_providers\.aerial\.auth\]/);
   assert.match(content, /args = \[.*"key", "print"\]/);
+  assert.match(content, /model = "gpt-codex-test"/);
   assert.doesNotMatch(content, /env_key = "AERIAL_API_KEY"/);
 });
 
@@ -87,4 +88,6 @@ test("setup codex and setup claude keep separate model choices", () => {
   const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.match(codex, /model = "gpt-codex-test"/);
   assert.equal(claude.model, "claude-messages-test");
+  assert.match(claude.apiKeyHelper, /key" "print"/);
+  assert.doesNotMatch(claude.apiKeyHelper, /^aerial key print$/);
 });

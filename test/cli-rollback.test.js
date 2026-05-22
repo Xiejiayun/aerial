@@ -44,6 +44,41 @@ test("aerial setup status --json exits 0 and emits parseable schema", () => {
   assert.ok(doc.clients.claude);
   assert.ok(doc.auth.api_key);
   assert.ok(doc.auth.github_token);
+  assert.ok(["missing", "file", "env"].includes(doc.auth.github_token.source), `unexpected github_token.source=${doc.auth.github_token.source}`);
+  assert.equal(doc.auth.github_token.exists, doc.auth.github_token.source !== "missing");
+});
+
+test("aerial status --json exits non-zero when setup/service is incomplete and emits aggregate schema", () => {
+  const home = mkHome("status-json-aggregate");
+  const r = runCli(["status", "--json"], home, { AERIAL_GITHUB_TOKEN: "" });
+  assert.equal(r.status, 1);
+  const doc = JSON.parse(r.stdout);
+  assert.equal(doc.schema, "aerial.status.v1");
+  assert.ok(doc.setup);
+  assert.ok(doc.service);
+  assert.ok(Array.isArray(doc.nextSteps));
+  assert.ok(Array.isArray(doc.hints));
+  assert.equal(doc.ok, false);
+  assert.equal(doc.setup.auth.github_token.source, "missing");
+  assert.ok(doc.nextSteps.some((s) => /aerial login/.test(s)));
+});
+
+test("aerial status --json with env-only GitHub token surfaces hint and does not flip ok=false on that basis", () => {
+  const home = mkHome("status-json-env-hint");
+  const r = runCli(["status", "--json"], home, { AERIAL_GITHUB_TOKEN: "github-env-token" });
+  const doc = JSON.parse(r.stdout);
+  assert.equal(doc.setup.auth.github_token.source, "env");
+  assert.equal(doc.setup.auth.github_token.exists, true);
+  assert.ok(doc.hints.some((h) => /AERIAL_GITHUB_TOKEN/.test(h)));
+  assert.ok(!doc.nextSteps.some((s) => /aerial login/.test(s)));
+});
+
+test("aerial status --json with whitespace AERIAL_GITHUB_TOKEN treats login as missing", () => {
+  const home = mkHome("status-json-env-whitespace");
+  const r = runCli(["status", "--json"], home, { AERIAL_GITHUB_TOKEN: "   " });
+  const doc = JSON.parse(r.stdout);
+  assert.equal(doc.setup.auth.github_token.source, "missing");
+  assert.equal(doc.setup.auth.github_token.exists, false);
 });
 
 test("aerial setup restore codex without --latest exits 1", () => {
@@ -169,4 +204,40 @@ test("aerial setup restore codex --latest exits 1 when backup is corrupt and lea
   assert.equal(fs.readFileSync(codexFile, "utf8"), liveContent);
   const preRestore = fs.readdirSync(path.dirname(codexFile)).filter((n) => n.includes(".aerial-pre-restore-"));
   assert.deepEqual(preRestore, []);
+});
+
+test("aerial login fast-path: file token present exits 0 with --force hint", () => {
+  const home = mkHome("login-file-fast");
+  const cfgDir = path.join(home, "config");
+  fs.mkdirSync(cfgDir, { recursive: true });
+  fs.writeFileSync(path.join(cfgDir, "github_token"), "ghp_existing_file_token\n");
+  const r = runCli(["login"], home, { AERIAL_GITHUB_TOKEN: "" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /GitHub login already exists \(not verified\)/);
+  assert.match(r.stdout, /--force/);
+});
+
+test("aerial login fast-path: env token present exits 0 with env-specific copy", () => {
+  const home = mkHome("login-env-fast");
+  const r = runCli(["login"], home, { AERIAL_GITHUB_TOKEN: "ghp_env_token" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /AERIAL_GITHUB_TOKEN/);
+  assert.match(r.stdout, /not verified/);
+});
+
+test("aerial login --force with AERIAL_GITHUB_TOKEN set exits 1 and tells user to unset", () => {
+  const home = mkHome("login-force-env-refuse");
+  const r = runCli(["login", "--force"], home, { AERIAL_GITHUB_TOKEN: "ghp_env_token" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /unset/);
+  assert.match(r.stderr, /AERIAL_GITHUB_TOKEN/);
+});
+
+test("aerial login with whitespace-only AERIAL_GITHUB_TOKEN and no file token falls through past fast-paths (does not hit network in test mode)", () => {
+  const home = mkHome("login-whitespace-env");
+  const r = runCli(["login"], home, { AERIAL_GITHUB_TOKEN: "   ", AERIAL_TEST_LOGIN_NO_NETWORK: "1" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /already exists/);
+  assert.doesNotMatch(r.stdout, /AERIAL_GITHUB_TOKEN.*not verified/);
+  assert.match(r.stdout, /skipping GitHub device flow/);
 });

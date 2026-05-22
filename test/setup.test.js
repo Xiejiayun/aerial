@@ -64,9 +64,9 @@ test("setupClaude merges gateway settings", () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4.7-xhigh"
     }
   }), "utf8");
-  const result = setupClaude({ model: "claude-test" });
+  const result = setupClaude({ model: "claude-test", apiKeyHelper: "\"/usr/local/bin/node\" \"/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli.js\" \"key\" \"print\"" });
   const settings = JSON.parse(fs.readFileSync(result.file, "utf8"));
-  assert.equal(settings.apiKeyHelper, "aerial key print");
+  assert.equal(settings.apiKeyHelper, "\"/usr/local/bin/node\" \"/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli.js\" \"key\" \"print\"");
   assert.equal(settings.model, "claude-test");
   assert.equal(settings.env.EXISTING, "1");
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:18181");
@@ -75,4 +75,5 @@ test("setupClaude merges gateway settings", () => {
   assert.equal(settings.env.ANTHROPIC_MODEL, undefined);
   assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined);
   assert.equal(result.model, "claude-test");
+  assert.match(result.apiKeyHelper, /key" "print/);
 });

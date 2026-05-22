@@ -1,6 +1,6 @@
 {
   "name": "@jiayunxie/aerial",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Local-only GitHub Copilot proxy for Codex CLI and Claude Code.",
   "type": "module",
   "private": false,

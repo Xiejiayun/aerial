@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
-import { startDeviceFlow, pollDeviceFlow } from "./auth.js";
+import { startDeviceFlow, pollDeviceFlow, readGitHubToken, gitHubTokenSource } from "./auth.js";
 import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { setupClaude, setupCodex, setupStatus, restoreClient, restoreAllClients } from "./setup.js";
 import { serviceInstall, serviceStart, serviceStop, serviceRestart, serviceUninstall, serviceStatus } from "./service.js";
 import { doctor } from "./doctor.js";
 import { runProbe, formatProbeReport } from "./probe.js";
+import { chooseSetupModel, formatModelChoices } from "./model-selection.js";
 import { printVersion } from "./version.js";
+import { computeAppStatus } from "./app-status.js";
 
 const CLI_ENTRY = fileURLToPath(import.meta.url);
 
@@ -20,36 +22,35 @@ function codexAuthCommand() {
   };
 }
 
+function quoteCommandPart(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+function claudeApiKeyHelper() {
+  return [process.execPath, CLI_ENTRY, "key", "print"].map(quoteCommandPart).join(" ");
+}
+
 function printHelp() {
   console.log(`Aerial local Copilot proxy
 
 Usage:
   aerial --version
   aerial login
-  aerial key generate
-  aerial key print
-  aerial start [--host 127.0.0.1] [--port 18181]
   aerial setup codex [--model <id>]
   aerial setup claude [--model <id>]
+  aerial service install
+  aerial status [--json]
+
+Diagnostics and rollback:
   aerial setup status [--json]
   aerial setup restore <codex|claude|all> --latest
-  aerial service install
-  aerial service start
-  aerial service stop
-  aerial service restart
   aerial service status [--json]
-  aerial service uninstall
   aerial disable
   aerial doctor
   aerial probe [--live] [--json]
 
-MVP routes:
-  GET  /health
-  GET  /v1/models
-  POST /v1/responses
-  POST /v1/messages
-  POST /v1/messages/count_tokens
-  POST /v1/chat/completions`);
+Debug:
+  aerial start [--host 127.0.0.1] [--port 18181]`);
 }
 
 function argValue(args, name) {
@@ -57,13 +58,96 @@ function argValue(args, name) {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
+async function selectSetupModel(target, route, args) {
+  const selected = await chooseSetupModel({ target, route, explicitModel: argValue(args, "--model") });
+  if (!selected.displayed) {
+    for (const line of formatModelChoices({ target, route, choices: selected.choices, selectedModel: selected.model, source: selected.source, recommended: selected.recommended })) {
+      console.log(line);
+    }
+  } else {
+    console.log(`Selected ${target} model: ${selected.model}`);
+  }
+  return selected.model;
+}
+
+function printSetupSummary(status) {
+  console.log("clients:");
+  for (const client of Object.values(status.clients)) {
+    const model = client.model ? ` model=${client.model}` : "";
+    console.log(`  ${client.target}: ${client.state}${model}`);
+  }
+  console.log(`api key: ${status.auth.api_key.exists ? "present" : "missing"}`);
+  const ghSource = status.auth.github_token.source;
+  const ghText = ghSource === "missing" ? "missing" : `present (${ghSource})`;
+  console.log(`github login: ${ghText}`);
+}
+
+function printServiceSummary(status) {
+  console.log(`service: ${status.summary}`);
+  if (status.supported === false) {
+    console.log(`platform: ${status.platform} (service unsupported)`);
+    return;
+  }
+  const health = status.health?.aerial ? `ok (${status.health.supervisor})`
+    : status.health?.portConflict ? `port conflict (${status.health.conflictReason})`
+    : status.health?.ok ? "ok"
+    : `unreachable (${status.health?.error || `http ${status.health?.status}`})`;
+  console.log(`health: ${health}`);
+}
+
+async function appStatus({ json = false } = {}) {
+  const setup = setupStatus();
+  const service = await serviceStatus();
+  const status = computeAppStatus(setup, service);
+  if (json) {
+    console.log(JSON.stringify(status, null, 2));
+    return status;
+  }
+  console.log("Aerial status");
+  printSetupSummary(setup);
+  printServiceSummary(service);
+  if (status.nextSteps.length) {
+    console.log("next:");
+    for (const step of status.nextSteps) console.log(`  - ${step}`);
+  }
+  if (status.hints.length) {
+    console.log("hints:");
+    for (const hint of status.hints) console.log(`  - ${hint}`);
+  }
+  return status;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const [command, subcommand, ...rest] = args;
   if (!command || command === "--help" || command === "-h") return printHelp();
   if (command === "--version") return printVersion();
+  if (command === "status") {
+    const status = await appStatus({ json: args.includes("--json") });
+    process.exitCode = status.ok ? 0 : 1;
+    return;
+  }
 
   if (command === "login") {
+    const loginArgs = args.slice(1);
+    const force = loginArgs.includes("--force");
+    const source = gitHubTokenSource();
+    if (force && source === "env") {
+      console.error("AERIAL_GITHUB_TOKEN is set; unset it before running `aerial login --force`, otherwise the env value will continue to shadow any new file token.");
+      process.exit(1);
+    }
+    if (!force && source === "env") {
+      console.log("GitHub login is provided by AERIAL_GITHUB_TOKEN (not verified). To use a different account, unset it or run with a different environment.");
+      return;
+    }
+    if (!force && source === "file") {
+      console.log("GitHub login already exists (not verified). To sign in again, run aerial login --force.");
+      return;
+    }
+    if (process.env.AERIAL_TEST_LOGIN_NO_NETWORK === "1") {
+      console.log("AERIAL_TEST_LOGIN_NO_NETWORK=1 set; skipping GitHub device flow (test mode).");
+      return;
+    }
     const flow = await startDeviceFlow();
     console.log(`Open: ${flow.verification_uri}`);
     console.log(`Code: ${flow.user_code}`);
@@ -102,16 +186,20 @@ async function main() {
 
   if (command === "setup") {
     if (subcommand === "codex") {
-      const result = setupCodex({ model: argValue(rest, "--model"), authCommand: codexAuthCommand() });
+      const model = await selectSetupModel("Codex", "responses", rest);
+      const result = setupCodex({ model, authCommand: codexAuthCommand() });
       console.log(`Updated Codex config: ${result.file}`);
+      console.log(`Configured Codex model: ${result.model}`);
       if (result.backup) console.log(`Backup: ${result.backup}`);
       console.log("Configured Codex to read the local Aerial key automatically.");
       return;
     }
     if (subcommand === "claude") {
-      const result = setupClaude({ model: argValue(rest, "--model") });
+      const model = await selectSetupModel("Claude Code", "messages", rest);
+      const result = setupClaude({ model, apiKeyHelper: claudeApiKeyHelper() });
       console.log(`Updated Claude settings: ${result.file}`);
       if (result.model) console.log(`Configured Claude default model: ${result.model}`);
+      console.log("Configured Claude Code to read the local Aerial key automatically.");
       if (result.backup) console.log(`Backup: ${result.backup}`);
       return;
     }
@@ -126,7 +214,12 @@ async function main() {
       }
       console.log(`Aerial: http://${status.config.host}:${status.config.port}  (platform: ${status.platform})`);
       console.log(`API key file:    ${status.auth.api_key.file}  (${status.auth.api_key.exists ? "present" : "missing"})`);
-      console.log(`GitHub token:    ${status.auth.github_token.file}  (${status.auth.github_token.exists ? "present" : "missing"})`);
+      const ghSourceText = status.auth.github_token.source === "missing"
+        ? `(missing)`
+        : status.auth.github_token.source === "env"
+          ? `(present, source=env; file path ${status.auth.github_token.file} is not consulted while AERIAL_GITHUB_TOKEN is set)`
+          : `${status.auth.github_token.file}  (present, source=file)`;
+      console.log(`GitHub token:    ${ghSourceText}`);
       for (const cs of Object.values(status.clients)) {
         const head = `${cs.target.padEnd(7)} state=${cs.state}`;
         console.log(`${head}  file=${cs.file}`);

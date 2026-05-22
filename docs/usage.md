@@ -23,12 +23,13 @@ node src/cli.js --help
 ## 2. Configure Local Clients
 
 ```bash
+aerial login
 aerial setup codex
 # optional, if you use Claude Code too:
 aerial setup claude
 ```
 
-Aerial creates a local API key, stores it privately, and configures the selected clients to use it. There is intentionally no `aerial setup all` setup shortcut: Codex and Claude Code can need different model IDs, so setup stays client-specific. If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
+Aerial creates a local API key, stores it privately, asks you to choose from compatible Copilot models, and configures the selected clients to use it. Run `aerial login` before setup so model discovery can read your Copilot model list. There is intentionally no `aerial setup all` setup shortcut: Codex and Claude Code can need different model IDs, so setup stays client-specific. If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
 
 ## 3. Login To GitHub
 
@@ -52,7 +53,7 @@ Default URL: `http://127.0.0.1:18181`. `aerial service install` is the daily-use
 aerial setup codex
 ```
 
-The setup command backs up and merges `~/.codex/config.toml`, then configures Codex to fetch the local Aerial key through a command-backed provider auth helper:
+The setup command backs up and merges `~/.codex/config.toml`, asks you to choose a model whose Aerial routes include `responses`, then configures Codex to fetch the local Aerial key through a command-backed provider auth helper:
 
 ```toml
 [model_providers.aerial]
@@ -70,7 +71,7 @@ The local key is generated and stored by Aerial automatically. Users do not need
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-If you need to pin a model, first run `aerial probe` or call `/v1/models`, choose a model whose Aerial routes include `responses`, then run `aerial setup codex --model <responses-model-id>`.
+To skip the prompt, pass `--model <responses-model-id>`.
 
 ## 6. Configure Claude Code
 
@@ -78,20 +79,49 @@ If you need to pin a model, first run `aerial probe` or call `/v1/models`, choos
 aerial setup claude
 ```
 
-The setup command backs up and merges `~/.claude/settings.json`, using `apiKeyHelper = "aerial key print"` and `ANTHROPIC_BASE_URL=http://127.0.0.1:18181`. When you pass `--model` or set Aerial's `defaultModel`, it also writes Claude Code's default `model` to that Aerial-routed model.
+The setup command backs up and merges `~/.claude/settings.json`, asks you to choose a model whose Aerial routes include `messages`, then writes an absolute `apiKeyHelper` command and `ANTHROPIC_BASE_URL=http://127.0.0.1:18181`. The helper lets Claude Code read the local Aerial key automatically without relying on a shell `AERIAL_API_KEY` export or a refreshed `PATH`.
 
 If Claude Code was previously pointed at another Anthropic-compatible gateway, setup removes stale `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_*_MODEL` entries from the managed `env` block.
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-If you need to pin a model, first run `aerial probe` or call `/v1/models`, choose a model whose Aerial routes include `messages`, then run `aerial setup claude --model <messages-model-id>`.
+To skip the prompt, pass `--model <messages-model-id>`.
 
 ## 7. Verify
 
 ```bash
+aerial status
 aerial doctor
 aerial probe
 ```
+
+`aerial status` is the top-level daily check. It combines setup state, local auth files, service state, and health into one short report. Use `--json` for a machine-readable `aerial.status.v1` document.
+
+`aerial status --json` top-level fields: `schema`, `ok`, `setup`, `service`, `nextSteps`, `hints`. `nextSteps` lists actions you must take to reach `ok: true` (login / setup / service install / recover local key). `hints` lists non-blocking advisories that you should still pay attention to, such as `AERIAL_GITHUB_TOKEN` being set for the current shell only (the background service may not see it after reboot). Example:
+
+```json
+{
+  "schema": "aerial.status.v1",
+  "ok": false,
+  "nextSteps": ["run: aerial setup codex or aerial setup claude"],
+  "hints": ["AERIAL_GITHUB_TOKEN is set for this process only; run aerial login without that env var to persist a service-readable login."],
+  "setup": { "...": "aerial.setup-status.v1 fields here" },
+  "service": { "...": "aerial.service-status.v1 fields here" }
+}
+```
+
+### Local HTTP endpoints
+
+| Request | Local Aerial API key | Behavior |
+| --- | --- | --- |
+| `GET /` | not required | 200 + friendly status JSON pointing at `/health` and `aerial status`; no secrets in body |
+| `GET /health` | not required | 200 + minimal `{ ok, service, host, port }` |
+| `GET /v1/models` (with GitHub login) | not required | 200 + Copilot model list with Aerial route annotations |
+| `GET /v1/models` (no GitHub login) | not required | 401 + `error.aerial.status = "login_required"` |
+| `GET /v1/models` (GitHub login rejected by Copilot) | not required | 401/403 + `error.aerial.status = "upstream_auth_failed"` and `upstream_status` |
+| `POST /v1/responses`, `/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions` | required | 401 if key missing/invalid; otherwise proxied to Copilot |
+
+None of these endpoints emit `WWW-Authenticate` or open CORS (`Access-Control-Allow-Origin: *`). The `login_required` and `upstream_auth_failed` JSON shapes never include tokens, keys, or filesystem paths.
 
 Each model returned by `/v1/models` includes an `aerial` field that tells you whether the MVP can route it:
 
@@ -131,7 +161,7 @@ aerial disable
   "config": { "host": "127.0.0.1", "port": 18181 },
   "auth": {
     "api_key":      { "file": "/Users/you/Library/Application Support/aerial/api_key", "exists": true },
-    "github_token": { "file": "/Users/you/Library/Application Support/aerial/github_token", "exists": false }
+    "github_token": { "file": "/Users/you/Library/Application Support/aerial/github_token", "exists": true, "source": "file" }
   },
   "clients": {
     "codex": {
@@ -139,7 +169,7 @@ aerial disable
       "state": "aerial",
       "file": "/Users/you/.codex/config.toml",
       "backups": ["/Users/you/.codex/config.toml.aerial-backup-2026-05-20T10-00-00-000Z"],
-      "model": "gpt-4.1",
+      "model": "gpt-5.5",
       "baseUrl": "http://127.0.0.1:18181/v1"
     },
     "claude": {
@@ -154,7 +184,9 @@ aerial disable
 }
 ```
 
-Stability rules for `aerial.setup-status.v1`: new fields may be added at any level in future Aerial releases — consumers must ignore unknown keys. Existing fields will not be removed or repurposed without bumping the `schema` value. Field types remain constant within a schema version.
+`auth.github_token.source` is one of `"missing"`, `"file"`, or `"env"`. `exists` is derived: `source !== "missing"` ("the current process can read a GitHub token"). `source = "env"` means the token came from `AERIAL_GITHUB_TOKEN`, which the background service generally cannot see — run `aerial login` without that env var to persist a service-readable login. To detect a persisted file login specifically, read `source === "file"`.
+
+Stability rules for `aerial.setup-status.v1`: new fields may be added at any level in future Aerial releases — consumers must ignore unknown keys. Existing fields will not be removed or repurposed without bumping the `schema` value. Field types remain constant within a schema version. Note: in 0.1.6, `auth.github_token.exists` reflects "process-readable" (file or env), not strictly "token file present". Downstream consumers that need the old file-only semantics should read `auth.github_token.source === "file"`.
 
 `aerial setup restore <codex|claude|all> --latest` restores the most recent `*.aerial-backup-<ISO>` snapshot for the named client. Before overwriting, it takes a `*.aerial-pre-restore-<ISO>` snapshot of the current file so the restore itself is reversible. With `all`, both clients are restored best-effort and the command exits non-zero if any individual restore failed. If there is no backup to restore, the command prints a note and exits 0.
 
@@ -191,7 +223,7 @@ Wrapper env values are baked in at install time. If you set `AERIAL_LOG_MAX_BYTE
 
 `aerial service start` enforces a similar shape: it refuses with `reason=not_installed` and exit 1 if the unit/task does not exist; it refuses with `reason=port_conflict` and exit 1 if a non-Aerial process owns the port; it refuses with `reason=foreground_running` and exit 1 if Aerial is already running in the foreground (not via the service manager); it returns idempotent success with `note=already running (service-managed)` if the service is already up; otherwise it starts the service. `aerial service stop` is idempotent (exit 0 + `note` when nothing is installed or nothing is running). `aerial service uninstall` is idempotent on the "no service installed" branch, but does NOT swallow real teardown failures: on macOS, if the service is loaded and `launchctl bootout` returns non-zero, the plist and wrapper are preserved and the command exits 1 with `reason=bootout_failed`; on Windows, if `schtasks /Delete` returns non-zero, the wrapper is preserved and the command exits 1 with `reason=delete_failed`. In both cases the message includes a retry pointer. `aerial service restart` blocks the start step when the stop step fails: if `stop` returns `ok=false`, the response includes `reason=stop_failed` and `start` is not attempted. `aerial disable` follows the same contract: it restores client configs first, then calls `serviceUninstall`. Only an `unsupported platform` exception is treated as a silent skip (Linux); any supported-platform uninstall failure (`ok=false` or non-`unsupported-platform` throw) propagates as exit 1 with a retry pointer at `aerial service uninstall`.
 
-If GitHub login is not yet configured, install and start still succeed (when reachable) and emit a structured warning pointing at `aerial login`; proxy requests return 503 until you log in. After rotating the local API key or moving the config directory, restart the service with `aerial service restart` so the new credentials are picked up.
+If GitHub login is not yet configured, install and start still succeed (when reachable) and emit a structured warning pointing at `aerial login`; inference proxy requests return 503 until you log in, while `GET /v1/models` returns 401 with `error.aerial.status = "login_required"`. After rotating the local API key or moving the config directory, restart the service with `aerial service restart` so the new credentials are picked up.
 
 `aerial service status` reports a single aggregated view:
 
@@ -321,7 +353,7 @@ Best practice: put stable system/project/tool context first, put changing user i
 
 - `503 Missing GitHub token`: run `aerial login`.
 - `401 Invalid or missing Aerial API key`: run `aerial setup codex` or `aerial setup claude` for the client you use, then restart the client terminal or VS Code.
-- Claude Code cannot read key: ensure `aerial` is on `PATH`; it uses `aerial key print` as its helper.
+- Claude Code cannot read key: rerun `aerial setup claude` so the settings file gets a fresh absolute API-key helper command.
 - Upstream compatibility error: run `aerial doctor`, then retry with a model returned by `/v1/models`.
 - `Unsupported parameter: max_tokens`: Aerial normalizes Chat Completions `max_tokens` into `max_completion_tokens` before forwarding to newer OpenAI models.
 - Cache hit stays zero: ensure the stable prefix is long enough, unchanged, and placed before variable content. For Responses/Chat, try a stable `prompt_cache_key`; for Messages, keep stable content in `system` or put manual `cache_control` on the stable content block.

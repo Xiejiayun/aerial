@@ -48,9 +48,20 @@ export async function pollDeviceFlow(deviceCode, intervalSeconds) {
 }
 
 export function readGitHubToken() {
-  if (process.env.AERIAL_GITHUB_TOKEN) return process.env.AERIAL_GITHUB_TOKEN;
+  const envToken = process.env.AERIAL_GITHUB_TOKEN?.trim();
+  if (envToken) return envToken;
   if (!fs.existsSync(githubTokenPath())) return undefined;
-  return fs.readFileSync(githubTokenPath(), "utf8").trim();
+  const fileToken = fs.readFileSync(githubTokenPath(), "utf8").trim();
+  return fileToken || undefined;
+}
+
+export function gitHubTokenSource() {
+  if (process.env.AERIAL_GITHUB_TOKEN?.trim()) return "env";
+  if (fs.existsSync(githubTokenPath())) {
+    const fileToken = fs.readFileSync(githubTokenPath(), "utf8").trim();
+    if (fileToken) return "file";
+  }
+  return "missing";
 }
 
 function jwtExpirySeconds(token) {
@@ -71,7 +82,11 @@ export async function exchangeCopilotToken(githubToken = readGitHubToken()) {
       "user-agent": "Aerial/0.1"
     }
   });
-  if (!response.ok) throw new Error(`Copilot token exchange failed: ${response.status} ${await response.text()}`);
+  if (!response.ok) {
+    const err = new Error(`Copilot token exchange failed: ${response.status} ${await response.text()}`);
+    err.aerialUpstreamStatus = response.status;
+    throw err;
+  }
   const payload = await response.json();
   const token = payload.token;
   if (!token) throw new Error("Copilot token exchange response did not include token");
@@ -89,4 +104,9 @@ export async function getCopilotToken({ force = false } = {}) {
     });
   }
   return refreshPromise;
+}
+
+export function _resetCopilotTokenCacheForTests() {
+  cachedCopilotToken = undefined;
+  refreshPromise = undefined;
 }

@@ -4,6 +4,29 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-05-22
+
+### Added
+
+- `aerial setup codex` and `aerial setup claude` now discover the live Copilot model list when `--model` is omitted, show client-compatible choices, and select from the appropriate route (`responses` for Codex, `messages` for Claude Code).
+- Added top-level `aerial status` / `aerial status --json` as a single daily summary for setup, auth, service, and health.
+- `GET /` on the local proxy now returns an unauthenticated friendly status payload pointing at `/health` and `aerial status`, instead of the `authentication_error` users used to see when opening `http://127.0.0.1:18181/` in a browser. POST inference routes still require the Aerial API key.
+- `GET /v1/models` is now reachable without the local Aerial API key so users can inspect the model catalog from a browser or unauthenticated `curl`. POST inference routes (`/v1/responses`, `/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`) still require the key.
+- Setup model selection picks a route-aware recommended default by ranking `gpt-N.M` versions descending and preferring stable IDs (no `-preview`, `-codex`, `-mini`, `-nano`, or `-turbo` suffix). When no stable model is available the highest-versioned suffix variant is offered with `source: "recommended_fallback"`. `--model <id>` always overrides the recommendation.
+- `aerial login` now reuses an existing GitHub token instead of always launching the device flow. If a non-empty token is already present (file or `AERIAL_GITHUB_TOKEN` env), `aerial login` exits 0 with a hint that the login is not verified and pointing at `--force` to sign in again. `aerial login --force` re-runs the device flow, unless `AERIAL_GITHUB_TOKEN` is set, in which case the env value would shadow any new file token and the command exits 1 asking the user to unset it first.
+- `GET /v1/models` without a GitHub token now returns HTTP 401 with `error.aerial.status = "login_required"` from the server route layer, before contacting Copilot. When a GitHub token is present but Copilot upstream rejects it, the route returns the upstream 401/403 with `error.aerial.status = "upstream_auth_failed"` and `upstream_status`, and a message suggesting `aerial login --force`. Neither response carries `WWW-Authenticate` nor open-CORS headers, and no token/key/path is leaked.
+- `aerial setup status` / `aerial status` JSON now exposes `auth.github_token.source` (`"missing" | "file" | "env"`) so consumers can distinguish a persisted file login from a process-scoped `AERIAL_GITHUB_TOKEN`. The legacy `auth.github_token.exists` field is now a derived `source !== "missing"`.
+- `aerial status --json` adds a top-level `hints: []` array for non-blocking advisories. `nextSteps` remains reserved for actions that must be taken to reach `ok: true`. An env-only GitHub login surfaces a hint that `AERIAL_GITHUB_TOKEN` is process-scoped and the background service may not see it.
+
+### Changed
+
+- Rewrote the npm README around the shortest working path: `aerial login`, client-specific setup, `aerial service install`, and `aerial status`.
+- Hid local key management commands from the normal help/readme path; they remain available for internal helpers and advanced troubleshooting.
+- Claude Code setup now writes an absolute API-key helper command, avoiding reliance on `aerial` being visible on `PATH` when Claude Code starts.
+- `aerial status` `ok` now also requires at least one client (Codex or Claude) to route through Aerial. A healthy local service with no client configured no longer reports `ok: true`; the next step is `aerial setup codex` or `aerial setup claude`. When the local Aerial API key is missing, the next step points at `aerial setup ...` (which re-creates the key), not the hidden `key generate` command.
+- `aerial status` text output now shows `github login: present (file)`, `present (env)`, or `missing` instead of a boolean, and adds a `hints:` section below `next:` when there are non-blocking advisories.
+- `readGitHubToken()` now trims `AERIAL_GITHUB_TOKEN` (matching the existing file-token trim). A whitespace-only env value no longer shadows a persisted file token, fixing a class of "I ran aerial login but the server still says missing GitHub token" loops.
+
 ## [0.1.5] - 2026-05-22
 
 ### Changed
@@ -44,6 +67,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.1.6]: https://github.com/Xiejiayun/aerial/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Xiejiayun/aerial/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Xiejiayun/aerial/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Xiejiayun/aerial/compare/v0.1.2...v0.1.3
