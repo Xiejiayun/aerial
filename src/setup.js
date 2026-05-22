@@ -1,16 +1,20 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig } from "./config.js";
 import { apiKeyPath, githubTokenPath } from "./paths.js";
 import { logEvent } from "./log.js";
 
-const AERIAL_ENV_KEY = "AERIAL_API_KEY";
 const BACKUP_PREFIX = ".aerial-backup-";
 const PRE_RESTORE_PREFIX = ".aerial-pre-restore-";
 const ISO_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
+const DEFAULT_CODEX_AUTH = Object.freeze({
+  command: "aerial",
+  args: ["key", "print"],
+  timeout_ms: 5000,
+  refresh_interval_ms: 0
+});
 
 function backupIfExists(file) {
   if (!fs.existsSync(file)) return undefined;
@@ -23,15 +27,21 @@ function ensureParent(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
 }
 
+function tomlValue(value) {
+  if (Array.isArray(value)) return `[${value.map(tomlValue).join(", ")}]`;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(String(value));
+}
+
 function setTomlString(content, key, value) {
-  const line = `${key} = "${value}"`;
+  const line = `${key} = ${tomlValue(value)}`;
   const re = new RegExp(`^${key}\\s*=.*$`, "m");
   return re.test(content) ? content.replace(re, line) : `${content.trimEnd()}\n${line}\n`;
 }
 
 function upsertTomlSection(content, section, values) {
   const heading = `[${section}]`;
-  const lines = Object.entries(values).map(([key, value]) => `${key} = "${value}"`).join("\n");
+  const lines = Object.entries(values).map(([key, value]) => `${key} = ${tomlValue(value)}`).join("\n");
   const block = `${heading}\n${lines}\n`;
   const source = content.split(/\r?\n/);
   const start = source.findIndex((line) => line.trim() === heading);
@@ -45,25 +55,6 @@ function upsertTomlSection(content, section, values) {
   }
   source.splice(start, end - start, ...block.trimEnd().split("\n"));
   return `${source.join("\n").trimEnd()}\n`;
-}
-
-function persistUserEnv(name, value) {
-  process.env[name] = value;
-  if (process.env.AERIAL_SKIP_ENV_PERSIST === "1") return { persisted: false, reason: "skipped" };
-  if (process.platform === "win32") {
-    const escaped = String(value).replace(/'/g, "''");
-    const command = `[Environment]::SetEnvironmentVariable('${name}', '${escaped}', 'User')`;
-    const { status, error } = spawnSync("powershell.exe", ["-NoProfile", "-Command", command], { stdio: "ignore" });
-    if (status === 0) return { persisted: true, target: "user" };
-    return { persisted: false, reason: error?.message || `powershell exited ${status}` };
-  }
-  return { persisted: false, reason: "unsupported_platform" };
-}
-
-function ensureClientApiKeyEnv() {
-  const result = ensureApiKey();
-  if (!result.apiKey) return { ...result, env: { name: AERIAL_ENV_KEY, persisted: false, reason: "raw_key_unavailable" } };
-  return { ...result, env: { name: AERIAL_ENV_KEY, ...persistUserEnv(AERIAL_ENV_KEY, result.apiKey) } };
 }
 
 function claudeEnvForAerial(currentEnv, config) {
@@ -82,8 +73,8 @@ function claudeEnvForAerial(currentEnv, config) {
   };
 }
 
-export function setupCodex({ model } = {}) {
-  const apiKey = ensureClientApiKeyEnv();
+export function setupCodex({ model, authCommand = DEFAULT_CODEX_AUTH } = {}) {
+  ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel || "gpt-4.1";
   const file = path.join(os.homedir(), ".codex", "config.toml");
@@ -95,13 +86,18 @@ export function setupCodex({ model } = {}) {
   content = upsertTomlSection(content, "model_providers.aerial", {
     name: "Aerial Copilot Local",
     base_url: `http://${config.host}:${config.port}/v1`,
-    wire_api: "responses",
-    env_key: AERIAL_ENV_KEY
+    wire_api: "responses"
+  });
+  content = upsertTomlSection(content, "model_providers.aerial.auth", {
+    command: authCommand.command,
+    args: authCommand.args || [],
+    timeout_ms: authCommand.timeout_ms || DEFAULT_CODEX_AUTH.timeout_ms,
+    refresh_interval_ms: authCommand.refresh_interval_ms ?? DEFAULT_CODEX_AUTH.refresh_interval_ms
   });
   content = upsertTomlSection(content, "profiles.aerial", { model_provider: "aerial", model: selectedModel });
   fs.writeFileSync(file, content, "utf8");
-  logEvent("setup_write", { target: "codex", file, backup, env: apiKey.env });
-  return { file, backup, model: selectedModel, env: apiKey.env };
+  logEvent("setup_write", { target: "codex", file, backup, auth: "command" });
+  return { file, backup, model: selectedModel, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
 export function setupClaude({ model } = {}) {
@@ -161,9 +157,13 @@ function backupPathsFor(file) {
 function codexStateFromDoc(doc, expectedBaseUrl) {
   const providerSection = doc && typeof doc === "object" ? doc.model_providers?.aerial : undefined;
   const providerSet = doc?.model_provider === "aerial";
+  const authArgs = Array.isArray(providerSection?.auth?.args) ? providerSection.auth.args : [];
+  const authLooksAerial = typeof providerSection?.auth?.command === "string"
+    && providerSection.auth.command.trim()
+    && authArgs.slice(-2).join(" ") === "key print";
   const providerShapeComplete = providerSection
     && providerSection.wire_api === "responses"
-    && providerSection.env_key === AERIAL_ENV_KEY
+    && (authLooksAerial || providerSection.env_key === "AERIAL_API_KEY")
     && typeof providerSection.base_url === "string";
   const providerBaseMatches = providerSection?.base_url === expectedBaseUrl;
   if (!providerSection && !providerSet) return "not-aerial";

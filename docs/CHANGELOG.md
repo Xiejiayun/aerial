@@ -4,6 +4,13 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-05-22
+
+### Fixed
+
+- Codex setup no longer depends on users exporting `AERIAL_API_KEY`. `aerial setup codex` now writes Codex's command-backed provider auth block, which calls the installed Aerial CLI to print the local key on demand. This keeps the key in Aerial's private storage and avoids the macOS `Missing environment variable: AERIAL_API_KEY` failure mode after setup.
+- Setup output and docs now describe automatic local-key wiring instead of asking users to generate, copy, or persist an environment variable.
+
 ## [0.1.3] - 2026-05-21
 
 ### Added
@@ -30,4 +37,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.1.4]: https://github.com/Xiejiayun/aerial/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Xiejiayun/aerial/compare/v0.1.2...v0.1.3

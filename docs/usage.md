@@ -26,7 +26,7 @@ node src/cli.js --help
 aerial setup all --model <model-id>
 ```
 
-Aerial creates a local API key, stores it privately, and configures supported clients to use it. On Windows, restart the terminal or VS Code after first setup so newly persisted user environment variables are visible to Codex.
+Aerial creates a local API key, stores it privately, and configures supported clients to use it. If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
 
 ## 3. Login To GitHub
 
@@ -50,7 +50,21 @@ Default URL: `http://127.0.0.1:18181`.
 aerial setup codex --model <model-id>
 ```
 
-The setup command backs up and merges `~/.codex/config.toml`, then persists the local key for new user sessions when the platform supports it.
+The setup command backs up and merges `~/.codex/config.toml`, then configures Codex to fetch the local Aerial key through a command-backed provider auth helper:
+
+```toml
+[model_providers.aerial]
+base_url = "http://127.0.0.1:18181/v1"
+wire_api = "responses"
+
+[model_providers.aerial.auth]
+command = "<node>"
+args = ["<aerial-cli.js>", "key", "print"]
+timeout_ms = 5000
+refresh_interval_ms = 0
+```
+
+The local key is generated and stored by Aerial automatically. Users do not need to run `aerial key generate`, copy a key into `~/.codex/config.toml`, or export `AERIAL_API_KEY`.
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 

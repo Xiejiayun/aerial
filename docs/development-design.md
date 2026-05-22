@@ -18,7 +18,7 @@ This section records what is confirmed by official documentation and what is onl
 | GitHub Copilot REST API | Official REST docs cover Copilot management, content exclusion, custom agents, metrics, usage metrics, and user management. They do not document chat/completions/messages/responses inference routes. | Treat `api.githubcopilot.com` inference routes as an observed compatibility target, not a public stable API. Keep this code isolated and easy to change. |
 | GitHub Models inference | Official. GitHub Models exposes `https://models.github.ai/inference/chat/completions` and org-attributed variants with `models: read`. | This is separate from Copilot. It can be a future official-only alternative, but it is not the same upstream as Raven's Copilot proxy path. |
 | Codex CLI install | Official OpenAI Codex repo documents `npm install -g @openai/codex` and `brew install --cask codex`. | npm is suitable for early distribution. Homebrew can follow when service management is stable. |
-| Codex CLI provider config | The OpenAI Codex repo source confirms `~/.codex/config.toml`, `[model_providers.<id>]`, `base_url`, `env_key`, `wire_api = "responses"`, and `[profiles.<id>]`. Source also shows `wire_api = "chat"` is no longer supported. | Aerial should configure Codex through a custom Responses provider, not through Chat Completions. |
+| Codex CLI provider config | The OpenAI Codex repo source confirms `~/.codex/config.toml`, `[model_providers.<id>]`, `base_url`, command-backed `[model_providers.<id>.auth]`, `wire_api = "responses"`, and `[profiles.<id>]`. Source also shows `wire_api = "chat"` is no longer supported. | Aerial should configure Codex through a custom Responses provider, not through Chat Completions. |
 | Claude Code gateway config | Official Claude Code docs support `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, settings `env`, and `apiKeyHelper`. The LLM gateway docs require Anthropic Messages routes `/v1/messages` and `/v1/messages/count_tokens`, and forwarding `anthropic-beta` and `anthropic-version`. | Aerial should expose an Anthropic-compatible gateway for Claude Code and support both bearer and `x-api-key` local auth. |
 | Claude Code model config | Official docs support model aliases, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and gateway model discovery through `/v1/models` when enabled. | Do not hardcode Copilot model IDs. Query live models and let setup choose from available IDs. |
 
@@ -256,7 +256,7 @@ Confirmed by the OpenAI Codex repo source:
 
 - Custom providers live under `[model_providers.<id>]` in `~/.codex/config.toml`.
 - `base_url` points at the provider base URL.
-- `env_key` names the environment variable used as a bearer token.
+- `[model_providers.<id>.auth]` can run a command that prints the bearer token. Aerial uses this path so users do not need to manually export `AERIAL_API_KEY`.
 - `wire_api = "responses"` is the supported wire API.
 - `wire_api = "chat"` is explicitly rejected in current source.
 - Profiles live under `[profiles.<id>]` and can select `model_provider` and `model`.
@@ -271,7 +271,12 @@ model = "<available-copilot-model-id>"
 name = "Aerial Copilot Local"
 base_url = "http://127.0.0.1:18181/v1"
 wire_api = "responses"
-env_key = "AERIAL_API_KEY"
+
+[model_providers.aerial.auth]
+command = "<node>"
+args = ["<aerial-cli.js>", "key", "print"]
+timeout_ms = 5000
+refresh_interval_ms = 0
 
 [profiles.aerial]
 model_provider = "aerial"

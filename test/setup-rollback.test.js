@@ -49,6 +49,23 @@ const AERIAL_CODEX = [
   'name = "Aerial Copilot Local"',
   'base_url = "http://127.0.0.1:18181/v1"',
   'wire_api = "responses"',
+  "",
+  "[model_providers.aerial.auth]",
+  'command = "aerial"',
+  'args = ["key", "print"]',
+  "timeout_ms = 5000",
+  "refresh_interval_ms = 0",
+  ""
+].join("\n");
+
+const LEGACY_ENV_KEY_CODEX = [
+  'model_provider = "aerial"',
+  'model = "gpt-4.1"',
+  "",
+  "[model_providers.aerial]",
+  'name = "Aerial Copilot Local"',
+  'base_url = "http://127.0.0.1:18181/v1"',
+  'wire_api = "responses"',
   'env_key = "AERIAL_API_KEY"',
   ""
 ].join("\n");
@@ -118,6 +135,13 @@ test("codexStatus returns not-aerial when no aerial signature", () => {
 
 test("codexStatus returns aerial when fully configured", () => {
   writeFile(codexFile, AERIAL_CODEX);
+  const s = codexStatus();
+  assert.equal(s.state, "aerial");
+  assert.equal(s.model, "gpt-4.1");
+});
+
+test("codexStatus accepts legacy AERIAL_API_KEY env_key configs for migration", () => {
+  writeFile(codexFile, LEGACY_ENV_KEY_CODEX);
   const s = codexStatus();
   assert.equal(s.state, "aerial");
   assert.equal(s.model, "gpt-4.1");

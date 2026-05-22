@@ -91,7 +91,7 @@ Configure your local clients. This also creates Aerial's local API key and wires
 aerial setup all --model <available-copilot-model-id>
 ```
 
-On Windows, newly persisted user environment variables are visible to new terminals and newly launched apps. Restart your terminal or VS Code after the first setup if Codex was already open.
+If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
 
 Log in to GitHub with device flow:
 
@@ -125,10 +125,15 @@ This updates `~/.codex/config.toml` and creates a timestamped backup first. If y
 [model_providers.aerial]
 base_url = "http://127.0.0.1:18181/v1"
 wire_api = "responses"
-env_key = "AERIAL_API_KEY"
+
+[model_providers.aerial.auth]
+command = "<node>"
+args = ["<aerial-cli.js>", "key", "print"]
+timeout_ms = 5000
+refresh_interval_ms = 0
 ```
 
-Aerial creates the key automatically and persists `AERIAL_API_KEY` for new user sessions when the platform supports it.
+Aerial creates and stores the local key automatically. Codex reads it through the configured helper command, so users do not need to run `aerial key generate`, copy a key, or export `AERIAL_API_KEY`.
 
 ## Claude Code Setup
 

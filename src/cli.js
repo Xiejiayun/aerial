@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fileURLToPath } from "node:url";
 import { startDeviceFlow, pollDeviceFlow } from "./auth.js";
 import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
 import { startServer } from "./server.js";
@@ -7,6 +8,17 @@ import { serviceInstall, serviceStart, serviceStop, serviceRestart, serviceUnins
 import { doctor } from "./doctor.js";
 import { runProbe, formatProbeReport } from "./probe.js";
 import { printVersion } from "./version.js";
+
+const CLI_ENTRY = fileURLToPath(import.meta.url);
+
+function codexAuthCommand() {
+  return {
+    command: process.execPath,
+    args: [CLI_ENTRY, "key", "print"],
+    timeout_ms: 5000,
+    refresh_interval_ms: 0
+  };
+}
 
 function printHelp() {
   console.log(`Aerial local Copilot proxy
@@ -91,11 +103,10 @@ async function main() {
 
   if (command === "setup") {
     if (subcommand === "codex") {
-      const result = setupCodex({ model: argValue(rest, "--model") });
+      const result = setupCodex({ model: argValue(rest, "--model"), authCommand: codexAuthCommand() });
       console.log(`Updated Codex config: ${result.file}`);
       if (result.backup) console.log(`Backup: ${result.backup}`);
-      if (result.env?.persisted) console.log(`Configured ${result.env.name} for new user sessions.`);
-      else if (result.env?.reason) console.log(`Note: ${result.env.name} is available in this process, but was not persisted (${result.env.reason}).`);
+      console.log("Configured Codex to read the local Aerial key automatically.");
       return;
     }
     if (subcommand === "claude") {
@@ -107,11 +118,10 @@ async function main() {
     }
     if (subcommand === "all") {
       const model = argValue(rest, "--model");
-      const codex = setupCodex({ model });
+      const codex = setupCodex({ model, authCommand: codexAuthCommand() });
       const claude = setupClaude({ model });
       console.log(`Updated Codex config: ${codex.file}`);
-      if (codex.env?.persisted) console.log(`Configured ${codex.env.name} for new user sessions.`);
-      else if (codex.env?.reason) console.log(`Note: ${codex.env.name} is available in this process, but was not persisted (${codex.env.reason}).`);
+      console.log("Configured Codex to read the local Aerial key automatically.");
       console.log(`Updated Claude settings: ${claude.file}`);
       if (claude.model) console.log(`Configured Claude default model: ${claude.model}`);
       return;

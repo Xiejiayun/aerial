@@ -23,10 +23,32 @@ test("setupCodex writes responses provider without deleting existing content", (
   const content = fs.readFileSync(result.file, "utf8");
   assert.match(content, /approval_policy = "never"/);
   assert.match(content, /wire_api = "responses"/);
-  assert.match(content, /env_key = "AERIAL_API_KEY"/);
+  assert.match(content, /\[model_providers\.aerial\.auth\]/);
+  assert.match(content, /command = "aerial"/);
+  assert.match(content, /args = \["key", "print"\]/);
+  assert.doesNotMatch(content, /env_key = "AERIAL_API_KEY"/);
   assert.ok(result.backup);
-  assert.equal(result.env.name, "AERIAL_API_KEY");
-  assert.equal(result.env.reason, "skipped");
+  assert.equal(result.auth.type, "command");
+  assert.equal(result.auth.command, "aerial");
+});
+
+test("setupCodex can write an absolute command-backed auth helper for CLI installs", () => {
+  const codexDir = path.join(temp, ".codex");
+  fs.mkdirSync(codexDir, { recursive: true });
+  fs.writeFileSync(path.join(codexDir, "config.toml"), "", "utf8");
+  const result = setupCodex({
+    model: "copilot-test",
+    authCommand: {
+      command: "/usr/local/bin/node",
+      args: ["/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli.js", "key", "print"],
+      timeout_ms: 5000,
+      refresh_interval_ms: 0
+    }
+  });
+  const content = fs.readFileSync(result.file, "utf8");
+  assert.match(content, /command = "\/usr\/local\/bin\/node"/);
+  assert.match(content, /args = \["\/usr\/local\/lib\/node_modules\/@jiayunxie\/aerial\/src\/cli\.js", "key", "print"\]/);
+  assert.match(content, /refresh_interval_ms = 0/);
 });
 
 test("setupClaude merges gateway settings", () => {
