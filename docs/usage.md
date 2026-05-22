@@ -23,10 +23,12 @@ node src/cli.js --help
 ## 2. Configure Local Clients
 
 ```bash
-aerial setup all --model <model-id>
+aerial setup codex
+# optional, if you use Claude Code too:
+aerial setup claude
 ```
 
-Aerial creates a local API key, stores it privately, and configures supported clients to use it. If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
+Aerial creates a local API key, stores it privately, and configures the selected clients to use it. There is intentionally no `aerial setup all` setup shortcut: Codex and Claude Code can need different model IDs, so setup stays client-specific. If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
 
 ## 3. Login To GitHub
 
@@ -39,15 +41,15 @@ Open the printed URL, enter the user code, and authorize the GitHub OAuth device
 ## 4. Start Server
 
 ```bash
-aerial start
+aerial service install
 ```
 
-Default URL: `http://127.0.0.1:18181`.
+Default URL: `http://127.0.0.1:18181`. `aerial service install` is the daily-use path on macOS and Windows because it installs and starts the local background service. Use `aerial start` only when you want a foreground debug process in the current terminal.
 
 ## 5. Configure Codex CLI
 
 ```bash
-aerial setup codex --model <model-id>
+aerial setup codex
 ```
 
 The setup command backs up and merges `~/.codex/config.toml`, then configures Codex to fetch the local Aerial key through a command-backed provider auth helper:
@@ -68,10 +70,12 @@ The local key is generated and stored by Aerial automatically. Users do not need
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
+If you need to pin a model, first run `aerial probe` or call `/v1/models`, choose a model whose Aerial routes include `responses`, then run `aerial setup codex --model <responses-model-id>`.
+
 ## 6. Configure Claude Code
 
 ```bash
-aerial setup claude --model <model-id>
+aerial setup claude
 ```
 
 The setup command backs up and merges `~/.claude/settings.json`, using `apiKeyHelper = "aerial key print"` and `ANTHROPIC_BASE_URL=http://127.0.0.1:18181`. When you pass `--model` or set Aerial's `defaultModel`, it also writes Claude Code's default `model` to that Aerial-routed model.
@@ -79,6 +83,8 @@ The setup command backs up and merges `~/.claude/settings.json`, using `apiKeyHe
 If Claude Code was previously pointed at another Anthropic-compatible gateway, setup removes stale `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_*_MODEL` entries from the managed `env` block.
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
+
+If you need to pin a model, first run `aerial probe` or call `/v1/models`, choose a model whose Aerial routes include `messages`, then run `aerial setup claude --model <messages-model-id>`.
 
 ## 7. Verify
 
@@ -314,7 +320,7 @@ Best practice: put stable system/project/tool context first, put changing user i
 ## Troubleshooting
 
 - `503 Missing GitHub token`: run `aerial login`.
-- `401 Invalid or missing Aerial API key`: run `aerial setup all`, then restart the client terminal or VS Code.
+- `401 Invalid or missing Aerial API key`: run `aerial setup codex` or `aerial setup claude` for the client you use, then restart the client terminal or VS Code.
 - Claude Code cannot read key: ensure `aerial` is on `PATH`; it uses `aerial key print` as its helper.
 - Upstream compatibility error: run `aerial doctor`, then retry with a model returned by `/v1/models`.
 - `Unsupported parameter: max_tokens`: Aerial normalizes Chat Completions `max_tokens` into `max_completion_tokens` before forwarding to newer OpenAI models.

@@ -4,6 +4,13 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-05-22
+
+### Changed
+
+- Removed `aerial setup all` as a client setup shortcut. Users now configure Codex and Claude Code explicitly with `aerial setup codex` and `aerial setup claude`, which avoids implying that one model ID is valid for both clients.
+- Updated README and usage docs so the happy path no longer asks users to provide `--model` during first run. Explicit model pinning remains available through each client-specific setup command.
+
 ## [0.1.4] - 2026-05-22
 
 ### Fixed
@@ -37,5 +44,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.1.5]: https://github.com/Xiejiayun/aerial/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Xiejiayun/aerial/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Xiejiayun/aerial/compare/v0.1.2...v0.1.3

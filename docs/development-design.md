@@ -43,7 +43,7 @@ Why it fits:
 - It means an antenna or something over the air.
 - It is short enough for a CLI binary: `aerial`.
 - It hints at signal relay without using a branded character name.
-- It works well in commands: `aerial login`, `aerial start`, `aerial setup all`.
+- It works well in commands: `aerial login`, `aerial start`, `aerial setup codex`.
 
 Other candidates:
 
@@ -179,7 +179,6 @@ aerial service uninstall
 aerial setup claude
 aerial setup codex
 aerial setup gemini
-aerial setup all
 aerial doctor
 aerial disable
 ```
@@ -470,13 +469,13 @@ Exit criteria:
 - Implement `aerial service install` and `aerial service uninstall`.
 - Support macOS user LaunchAgent.
 - Support Linux user `systemd` unit.
-- Implement `setup all`.
+- Keep setup commands client-specific so Codex and Claude Code can use different model IDs.
 - Implement `disable` rollback.
 - Add shell profile export mode as an alternative to config edits.
 
 Exit criteria:
 
-- A fresh machine can run `aerial login && aerial setup all && aerial service install` and use supported CLIs after restart.
+- A fresh machine can run `aerial login && aerial setup codex && aerial service install` and use Codex after restart; Claude Code users can add `aerial setup claude`.
 
 ### Phase 4 - OpenAI Chat Fallback
 

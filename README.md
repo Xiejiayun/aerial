@@ -25,9 +25,8 @@ aerial login
 aerial key generate
 aerial key print
 aerial start
-aerial setup codex
-aerial setup claude --model <available-copilot-model-id>
-aerial setup all
+aerial setup codex [--model <responses-model-id>]
+aerial setup claude [--model <messages-model-id>]
 aerial setup status
 aerial setup restore <codex|claude|all> --latest
 aerial service install
@@ -85,10 +84,12 @@ node src/cli.js --help
 
 ## First Run
 
-Configure your local clients. This also creates Aerial's local API key and wires it into supported clients:
+Configure the local client you use. These commands also create Aerial's local API key and wire it into the selected client:
 
 ```bash
-aerial setup all --model <available-copilot-model-id>
+aerial setup codex
+# optional, if you use Claude Code too:
+aerial setup claude
 ```
 
 If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
@@ -99,10 +100,10 @@ Log in to GitHub with device flow:
 aerial login
 ```
 
-Start the local server:
+Install and start the background service:
 
 ```bash
-aerial start
+aerial service install
 ```
 
 Check health:
@@ -116,7 +117,7 @@ curl http://127.0.0.1:18181/health
 Aerial configures Codex through the Responses wire API provider path:
 
 ```bash
-aerial setup codex --model <available-copilot-model-id>
+aerial setup codex
 ```
 
 This updates `~/.codex/config.toml` and creates a timestamped backup first. If you only want to inspect the exact change, set `HOME`/`USERPROFILE` to a temporary directory before running setup. The inserted provider uses:
@@ -158,6 +159,8 @@ This updates `~/.claude/settings.json` and creates a timestamped backup first. I
 
 The `model` field is written when you pass `--model` or set Aerial's `defaultModel`; otherwise Aerial leaves any existing Claude Code model choice alone while still switching the gateway to the local Aerial endpoint.
 
+If you need explicit models, pass `--model <responses-model-id>` to `aerial setup codex` and `--model <messages-model-id>` to `aerial setup claude`. Aerial intentionally does not provide `aerial setup all` as a setup shortcut because Codex and Claude Code may need different model IDs.
+
 `aerial key print` prints the locally stored Aerial API key for Claude Code's helper flow. Users normally do not need to call it directly.
 
 When switching from another Anthropic-compatible gateway, setup removes stale `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_*_MODEL` entries from Claude Code's managed `env` block so `apiKeyHelper` and the Aerial gateway are the active route.
@@ -186,7 +189,7 @@ Aerial is for personal local use only.
 - Copilot inference routes are an observed compatibility target, not a public stable GitHub REST API.
 - `/v1/messages/count_tokens` is a local estimate, not upstream tokenization.
 - Bundled service management is implemented for macOS (launchd) and Windows (Task Scheduler). On Linux, run `aerial start` directly or wrap it in your own init system.
-- Model choice is not automated; query `/v1/models` and select an available model explicitly.
+- For explicit model overrides, query `/v1/models`, choose a `responses` model for Codex and a `messages` model for Claude Code, then rerun the client-specific setup command with `--model`.
 - Chat Completions requests normalize `max_tokens` to `max_completion_tokens` for newer OpenAI models that reject the older field.
 - Prompt caching is upstream-managed: Aerial does not store prompt bodies locally, and it preserves or injects cache protocol fields before forwarding.
 

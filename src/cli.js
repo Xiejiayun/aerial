@@ -31,7 +31,6 @@ Usage:
   aerial start [--host 127.0.0.1] [--port 18181]
   aerial setup codex [--model <id>]
   aerial setup claude [--model <id>]
-  aerial setup all [--model <id>]
   aerial setup status [--json]
   aerial setup restore <codex|claude|all> --latest
   aerial service install
@@ -117,14 +116,7 @@ async function main() {
       return;
     }
     if (subcommand === "all") {
-      const model = argValue(rest, "--model");
-      const codex = setupCodex({ model, authCommand: codexAuthCommand() });
-      const claude = setupClaude({ model });
-      console.log(`Updated Codex config: ${codex.file}`);
-      console.log("Configured Codex to read the local Aerial key automatically.");
-      console.log(`Updated Claude settings: ${claude.file}`);
-      if (claude.model) console.log(`Configured Claude default model: ${claude.model}`);
-      return;
+      throw new Error("aerial setup all has been removed. Run `aerial setup codex` and/or `aerial setup claude` instead.");
     }
     if (subcommand === "status") {
       const status = setupStatus();
