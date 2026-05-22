@@ -4,6 +4,13 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-05-22
+
+### Fixed
+
+- Claude Opus 4.7 effort routing now resolves compatible models from the live `/v1/models` catalog instead of hardcoding `claude-opus-4.7-1m-internal`. Aerial only rewrites the model when a same-family `/v1/messages` model advertises adaptive thinking and the requested reasoning effort; otherwise it leaves the model ID unchanged and lets Copilot return the authoritative upstream error.
+- Legacy Claude Opus 4.7 aliases such as `claude-opus-4.7-high` and hyphenated `claude-opus-4-7` are now mapped through the same catalog-based resolver, so future Copilot model changes do not require another hardcoded suffix table.
+
 ## [0.1.7] - 2026-05-22
 
 ### Fixed
@@ -77,6 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.1.8]: https://github.com/Xiejiayun/aerial/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Xiejiayun/aerial/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Xiejiayun/aerial/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Xiejiayun/aerial/compare/v0.1.4...v0.1.5

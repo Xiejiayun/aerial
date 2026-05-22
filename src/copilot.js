@@ -174,18 +174,52 @@ function withDefaultAnthropicCache(payload) {
   return next;
 }
 
-function withSupportedAnthropicEffort(payload) {
+function canonicalClaudeOpus47Family(model) {
+  return /^claude-opus-4[.-]7(?:-|$)/.test(model) ? "claude-opus-4.7" : undefined;
+}
+
+function modelHasMessagesRoute(model) {
+  const endpoints = Array.isArray(model?.supported_endpoints) ? model.supported_endpoints : [];
+  const routes = Array.isArray(model?.aerial?.routes) ? model.aerial.routes : [];
+  return endpoints.includes("/v1/messages") || routes.includes("messages");
+}
+
+function supportedReasoningEfforts(model) {
+  const supports = model?.capabilities?.supports;
+  const values = supports?.reasoning_effort ?? supports?.reasoning_efforts;
+  if (Array.isArray(values)) return values.map(String);
+  if (typeof values === "string") return [values];
+  return [];
+}
+
+function modelSupportsAdaptiveThinking(model) {
+  const supports = model?.capabilities?.supports;
+  return supports?.adaptive_thinking === true || supports?.thinking?.adaptive === true;
+}
+
+function findAnthropicEffortModel(modelId, effort, models) {
+  if (!Array.isArray(models)) return undefined;
+  const family = canonicalClaudeOpus47Family(modelId);
+  if (!family) return undefined;
+  const candidates = models.filter((model) => {
+    const id = typeof model?.id === "string" ? model.id : "";
+    return canonicalClaudeOpus47Family(id) === family &&
+      modelHasMessagesRoute(model) &&
+      modelSupportsAdaptiveThinking(model) &&
+      supportedReasoningEfforts(model).includes(effort);
+  });
+  return candidates.find((model) => model.id === modelId) || candidates[0];
+}
+
+function withSupportedAnthropicEffort(payload, models) {
   const effort = payload?.output_config?.effort;
   if (effort === undefined) return payload;
   const model = typeof payload?.model === "string" ? payload.model : "";
-  if (!/^claude-opus-4[.-]7(?:-|$)/.test(model)) return payload;
+  if (!canonicalClaudeOpus47Family(model)) return payload;
   const nextEffort = effort === "max" ? "xhigh" : effort;
   if (!["low", "medium", "high", "xhigh"].includes(nextEffort)) return payload;
-  const baseModel = /^claude-opus-4[.-]7$/.test(model);
-  const legacyEffortModel = /^claude-opus-4[.-]7-(?:high|xhigh)$/.test(model);
-  const nextModel = legacyEffortModel || (baseModel && nextEffort !== "medium")
-    ? "claude-opus-4.7-1m-internal"
-    : model;
+  const routed = findAnthropicEffortModel(model, nextEffort, models);
+  const nextModel = routed?.id || model;
   if (model === nextModel && effort === nextEffort) return payload;
   logEvent("anthropic_effort_route", { model, effort, routedModel: nextModel, routedEffort: nextEffort });
   return { ...payload, model: nextModel, output_config: { ...payload.output_config, effort: nextEffort } };
@@ -221,8 +255,18 @@ function withSupportedAnthropicThinking(payload) {
   };
 }
 
-function withAnthropicDefaults(payload) {
-  return withSupportedAnthropicEffort(withSupportedAnthropicThinking(withDefaultAnthropicCache(payload)));
+function shouldLoadAnthropicCatalog(payload) {
+  const effort = payload?.output_config?.effort;
+  const model = typeof payload?.model === "string" ? payload.model : "";
+  return effort !== undefined && Boolean(canonicalClaudeOpus47Family(model));
+}
+
+async function withAnthropicDefaults(payload) {
+  const next = withSupportedAnthropicThinking(withDefaultAnthropicCache(payload));
+  const models = shouldLoadAnthropicCatalog(next)
+    ? await fetchModelsCatalog().catch(() => undefined)
+    : undefined;
+  return withSupportedAnthropicEffort(next, models);
 }
 
 function parseJsonBody(body, contentType) {
@@ -407,7 +451,7 @@ function wrapResponseWithCacheObserver(upstream, route, requestCache) {
 
 async function requestWithJsonBody(request, transform) {
   const payload = await request.json();
-  const nextPayload = transform(payload);
+  const nextPayload = await transform(payload);
   return new Request(request.url, {
     method: request.method,
     headers: request.headers,
@@ -435,7 +479,7 @@ async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride } = {
   return wrapResponseWithCacheObserver(upstream, path, requestCache);
 }
 
-async function fetchModelsForResponseSelection() {
+async function fetchModelsCatalog() {
   const token = await getCopilotToken();
   const response = await fetch(`${COPILOT_API_ORIGIN}/models`, { method: "GET", headers: upstreamHeaders(token) });
   if (!response.ok) return undefined;
@@ -461,7 +505,7 @@ export async function proxyResponses(request) {
   // per-request /models lookup to avoid an extra upstream call and let the
   // shared HTTP path handle cache_request logging via proxyFetch.
   if (payload?.stream && isResponsesWebSocketOptIn()) {
-    const models = await fetchModelsForResponseSelection().catch(() => undefined);
+    const models = await fetchModelsCatalog().catch(() => undefined);
     const model = models ? responseModelFromCatalog(payload.model, models) : undefined;
     if (shouldUseResponsesWebSocket(payload, model)) {
       const requestCache = cacheRequestFields(payload);

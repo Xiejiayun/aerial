@@ -32,6 +32,26 @@ function waitFor(predicate) {
   });
 }
 
+function anthropicEffortModel(id, efforts = ["low", "medium", "high", "xhigh"]) {
+  return {
+    id,
+    supported_endpoints: ["/v1/messages"],
+    capabilities: { supports: { adaptive_thinking: true, reasoning_effort: efforts } }
+  };
+}
+
+function mockMessagesFetch({ models = [] } = {}) {
+  const forwarded = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    if (u.endsWith("/models")) return Response.json({ data: models });
+    forwarded.push(JSON.parse(Buffer.from(init.body).toString("utf8")));
+    return Response.json({ ok: true });
+  };
+  return { forwarded };
+}
+
 test("proxyModels annotates Aerial route support", async () => {
   let calls = 0;
   globalThis.fetch = async () => Response.json({
@@ -355,11 +375,7 @@ test("proxyMessages preserves client Anthropic cache_control", async () => {
 });
 
 test("proxyMessages maps legacy enabled thinking to adaptive thinking plus effort", async () => {
-  let forwarded;
-  globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
-    return Response.json({ ok: true });
-  };
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
 
   const request = new Request("http://127.0.0.1/v1/messages", {
     method: "POST",
@@ -372,18 +388,15 @@ test("proxyMessages maps legacy enabled thinking to adaptive thinking plus effor
     })
   });
   const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
   assert.equal(response.status, 200);
   assert.deepEqual(forwarded.thinking, { type: "adaptive" });
   assert.equal(forwarded.output_config.effort, "high");
-  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+  assert.equal(forwarded.model, "claude-opus-4.7-thinking-current");
 });
 
 test("proxyMessages preserves existing output_config effort when mapping legacy thinking", async () => {
-  let forwarded;
-  globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
-    return Response.json({ ok: true });
-  };
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
 
   const request = new Request("http://127.0.0.1/v1/messages", {
     method: "POST",
@@ -397,10 +410,11 @@ test("proxyMessages preserves existing output_config effort when mapping legacy 
     })
   });
   const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
   assert.equal(response.status, 200);
   assert.deepEqual(forwarded.thinking, { type: "adaptive" });
   assert.equal(forwarded.output_config.effort, "xhigh");
-  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+  assert.equal(forwarded.model, "claude-opus-4.7-thinking-current");
 });
 
 test("proxyMessages leaves adaptive thinking unchanged", async () => {
@@ -427,12 +441,8 @@ test("proxyMessages leaves adaptive thinking unchanged", async () => {
   assert.equal(forwarded.output_config.effort, "medium");
 });
 
-test("proxyMessages routes Claude Opus 4.7 non-medium effort to 1m internal model", async () => {
-  let forwarded;
-  globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
-    return Response.json({ ok: true });
-  };
+test("proxyMessages routes Claude Opus 4.7 non-medium effort to live catalog model", async () => {
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
   const request = new Request("http://127.0.0.1/v1/messages", {
     method: "POST",
@@ -446,17 +456,14 @@ test("proxyMessages routes Claude Opus 4.7 non-medium effort to 1m internal mode
     })
   });
   const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
   assert.equal(response.status, 200);
-  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+  assert.equal(forwarded.model, "claude-opus-4.7-effort-2026");
   assert.equal(forwarded.output_config.effort, "xhigh");
 });
 
-test("proxyMessages maps max effort to xhigh on the 1m internal Claude Opus 4.7 model", async () => {
-  let forwarded;
-  globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
-    return Response.json({ ok: true });
-  };
+test("proxyMessages maps max effort to xhigh on a live catalog Claude Opus 4.7 model", async () => {
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
   const request = new Request("http://127.0.0.1/v1/messages", {
     method: "POST",
@@ -470,17 +477,14 @@ test("proxyMessages maps max effort to xhigh on the 1m internal Claude Opus 4.7 
     })
   });
   const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
   assert.equal(response.status, 200);
-  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+  assert.equal(forwarded.model, "claude-opus-4.7-effort-2026");
   assert.equal(forwarded.output_config.effort, "xhigh");
 });
 
-test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to 1m internal model", async () => {
-  let forwarded;
-  globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
-    return Response.json({ ok: true });
-  };
+test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to live catalog model", async () => {
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
   const request = new Request("http://127.0.0.1/v1/messages", {
     method: "POST",
@@ -494,17 +498,14 @@ test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to 1m internal mod
     })
   });
   const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
   assert.equal(response.status, 200);
-  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+  assert.equal(forwarded.model, "claude-opus-4.7-effort-2026");
   assert.equal(forwarded.output_config.effort, "xhigh");
 });
 
 test("proxyMessages normalizes legacy Claude Opus 4.7 effort model suffixes", async () => {
-  let forwarded;
-  globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
-    return Response.json({ ok: true });
-  };
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
   const request = new Request("http://127.0.0.1/v1/messages", {
     method: "POST",
@@ -517,8 +518,34 @@ test("proxyMessages normalizes legacy Claude Opus 4.7 effort model suffixes", as
     })
   });
   const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
   assert.equal(response.status, 200);
-  assert.equal(forwarded.model, "claude-opus-4.7-1m-internal");
+  assert.equal(forwarded.model, "claude-opus-4.7-effort-2026");
+  assert.equal(forwarded.output_config.effort, "high");
+});
+
+test("proxyMessages leaves model unchanged when live catalog has no compatible Claude effort model", async () => {
+  const capture = mockMessagesFetch({
+    models: [
+      { id: "claude-opus-4.7-effortless", supported_endpoints: ["/v1/messages"], capabilities: { supports: { adaptive_thinking: true, reasoning_effort: ["medium"] } } }
+    ]
+  });
+
+  const request = new Request("http://127.0.0.1/v1/messages", {
+    method: "POST",
+    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-opus-4.7",
+      max_tokens: 32,
+      thinking: { type: "enabled", budget_tokens: 32000 },
+      messages: [{ role: "user", content: "hello" }]
+    })
+  });
+  const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.model, "claude-opus-4.7");
+  assert.deepEqual(forwarded.thinking, { type: "adaptive" });
   assert.equal(forwarded.output_config.effort, "high");
 });
 
