@@ -63,6 +63,37 @@ test("loadConfig preserves valid stored defaultEffort", () => {
   assert.equal(loadConfig().defaultEffort, "xhigh");
 });
 
+test("loadConfig defaults upstream proxy mode to disabled", () => {
+  saveConfig({ ...loadConfig(), upstreamProxyMode: undefined, upstreamProxyEndpoint: undefined });
+  const reloaded = loadConfig();
+  assert.equal(reloaded.upstreamProxyMode, "disabled");
+  assert.equal(reloaded.upstreamProxyEndpoint, undefined);
+});
+
+test("loadConfig normalizes valid upstream proxy endpoints and drops invalid ones", () => {
+  saveConfig({
+    ...loadConfig(),
+    upstreamProxyMode: "auto",
+    upstreamProxyEndpoint: "socks://127.0.0.1:1086/",
+    upstreamProxySource: "manual"
+  });
+  const normalized = loadConfig();
+  assert.equal(normalized.upstreamProxyMode, "auto");
+  assert.equal(normalized.upstreamProxyEndpoint, "socks5://127.0.0.1:1086");
+  assert.equal(normalized.upstreamProxySource, "manual");
+
+  saveConfig({
+    ...loadConfig(),
+    upstreamProxyMode: "auto",
+    upstreamProxyEndpoint: "file:///tmp/not-a-proxy",
+    upstreamProxySource: "manual"
+  });
+  const invalid = loadConfig();
+  assert.equal(invalid.upstreamProxyMode, "disabled");
+  assert.equal(invalid.upstreamProxyEndpoint, undefined);
+  assert.equal(invalid.upstreamProxySource, undefined);
+});
+
 test("loadConfig falls back to defaults when config.json is not valid JSON", async () => {
   fs.writeFileSync(configPath(), "{bad json", "utf8");
   const { readConfigFileStatus } = await import("../src/config.js");

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { COPILOT_TOKEN_URL, GITHUB_CLIENT_ID } from "./constants.js";
 import { githubTokenPath, writePrivateFile } from "./paths.js";
 import { logEvent } from "./log.js";
+import { upstreamFetch } from "./upstream-fetch.js";
 
 let cachedCopilotToken;
 let refreshPromise;
@@ -12,7 +13,7 @@ function formBody(values) {
 
 export async function startDeviceFlow() {
   logEvent("login_start");
-  const response = await fetch("https://github.com/login/device/code", {
+  const response = await upstreamFetch("https://github.com/login/device/code", {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
     body: formBody({ client_id: GITHUB_CLIENT_ID, scope: "read:user copilot" })
@@ -25,7 +26,7 @@ export async function pollDeviceFlow(deviceCode, intervalSeconds) {
   let interval = Math.max(Number(intervalSeconds || 5), 1);
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, interval * 1000));
-    const response = await fetch("https://github.com/login/oauth/access_token", {
+    const response = await upstreamFetch("https://github.com/login/oauth/access_token", {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
       body: formBody({ client_id: GITHUB_CLIENT_ID, device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" })
@@ -75,7 +76,7 @@ function jwtExpirySeconds(token) {
 
 export async function exchangeCopilotToken(githubToken = readGitHubToken()) {
   if (!githubToken) throw new Error("Missing GitHub token. Run: aerial login");
-  const response = await fetch(COPILOT_TOKEN_URL, {
+  const response = await upstreamFetch(COPILOT_TOKEN_URL, {
     headers: {
       authorization: `Bearer ${githubToken}`,
       accept: "application/json",

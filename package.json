@@ -1,7 +1,7 @@
 {
   "name": "@jiayunxie/aerial",
-  "version": "0.1.11",
-  "description": "Local-only GitHub Copilot proxy for Codex CLI and Claude Code.",
+  "version": "0.2.1",
+  "description": "Local GitHub Copilot proxy for Codex CLI and Claude Code with smart HTTP(S)/SOCKS5 upstream proxy support.",
   "type": "module",
   "private": false,
   "homepage": "https://github.com/Xiejiayun/aerial#readme",
@@ -16,7 +16,11 @@
     "copilot",
     "codex",
     "claude-code",
-    "local-proxy"
+    "local-proxy",
+    "upstream-proxy",
+    "socks5",
+    "shadowsocks",
+    "restricted-network"
   ],
   "files": [
     "src",
@@ -34,7 +38,7 @@
     "prepublishOnly": "npm test"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "license": "MIT",
   "publishConfig": {
@@ -42,6 +46,7 @@
   },
   "dependencies": {
     "smol-toml": "^1.6.1",
+    "socks": "^2.8.9",
     "undici": "^7.25.0"
   }
 }

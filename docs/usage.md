@@ -39,6 +39,26 @@ aerial login
 
 Open the printed URL, enter the user code, and authorize the GitHub OAuth device flow. Aerial saves the GitHub access token locally and exchanges it for short-lived Copilot JWTs when proxy requests arrive.
 
+## 3.5 Upstream Proxy Mode
+
+```bash
+aerial proxy status
+aerial proxy enable
+aerial proxy disable
+```
+
+Aerial's local server always listens on `127.0.0.1:18181`, but its own GitHub and Copilot upstream traffic can optionally go through a local HTTP(S) or SOCKS5 proxy. This helps in restricted regions where direct Copilot egress may return a smaller model catalog or omit Claude-compatible `/v1/messages` routes.
+
+`aerial proxy enable` auto-discovers candidates from `AERIAL_UPSTREAM_PROXY`, standard proxy environment variables, macOS `scutil --proxy`, PAC files, common local SOCKS5 ports such as `1086` and `1080`, and common local HTTP proxy ports such as `1087` and `7890`. It validates that a candidate can reach GitHub and return GitHub's `/rate_limit` JSON before saving `upstreamProxyMode=auto` and the selected endpoint in Aerial's config. If no candidate works, it exits non-zero and leaves the previous config unchanged. PAC files are read with a 1 MiB limit.
+
+SOCKS5 endpoints are first-class candidates. When Aerial selects `socks5://127.0.0.1:1086` from a Shadowsocks PAC file, the config stores that original endpoint; at runtime Aerial starts a loopback-only HTTP CONNECT bridge internally so GitHub/Copilot `fetch` and WebSocket traffic can use the same proxy dispatcher path as HTTP(S) proxies. Users do not need to discover or configure a separate HTTP bridge port.
+
+For explicit overrides, `AERIAL_UPSTREAM_PROXY` accepts bare `http://`, `https://`, `socks://`, `socks5://`, and `socks5h://` endpoints. Aerial intentionally ignores proxy URLs with path, query, or hash components, because upstream proxy dispatchers expect a host-level proxy endpoint.
+
+`aerial proxy status` prints the active mode, the direct or proxied egress IP/region, and the current Copilot route counts from `aerial probe` (`responses`, `responsesWebSocket`, `messages`, and `chat`). In disabled mode the endpoint is `direct`; in enabled mode the endpoint is the selected local proxy plus its discovery source. Use `--json` for the stable `aerial.proxy-status.v1` shape. If a proxy URL contains userinfo, status and enable diagnostics redact it before printing.
+
+`aerial proxy disable` switches back to direct upstream traffic and clears the saved proxy endpoint. Running Aerial processes read this config for each upstream request, so no service restart is required for proxy enable/disable.
+
 ## 4. Start Server
 
 ```bash
@@ -99,11 +119,14 @@ Non-Opus-4.7 Claude requests are not modified.
 
 ```bash
 aerial status
+aerial proxy status
 aerial doctor
 aerial probe
 ```
 
 `aerial status` is the top-level daily check. It combines setup state, local auth files, service state, and health into one short report. Use `--json` for a machine-readable `aerial.status.v1` document.
+
+`aerial proxy status` is the network-path check. Use it when Claude models disappear, when `/v1/messages` is `0`, or when you want to confirm whether direct or proxied egress is being used.
 
 `aerial status --json` top-level fields: `schema`, `ok`, `setup`, `service`, `nextSteps`, `hints`. `nextSteps` lists actions you must take to reach `ok: true` (login / setup / service install / recover local key). `hints` lists non-blocking advisories that you should still pay attention to, such as `AERIAL_GITHUB_TOKEN` being set for the current shell only (the background service may not see it after reboot). Example:
 
@@ -217,7 +240,7 @@ Aerial ships a thin platform wrapper around the user-mode service primitives pro
 - Windows: a Task Scheduler task named `AerialLocalProxy`, `/SC ONLOGON /RL LIMITED`, executes a PowerShell wrapper at `<config-dir>\bin\aerial-service.ps1` (default `%APPDATA%\aerial\bin\aerial-service.ps1`). The wrapper is regenerated on every `aerial service install`. The `/TR` argument is wrapped in escaped quotes so paths that contain spaces or non-ASCII characters work without manual quoting.
 - Linux: not implemented in this release. `aerial service install|start|stop|restart|uninstall` throws an unsupported-platform error and exits 1; `aerial service status --json` still emits a schema-valid document with `"supported": false` and exits 1. Run `aerial start` directly or wrap it in your own init system.
 
-Both wrappers do the same three things before exec-ing the proxy: (1) startup-rotate the captured stdio log (`aerial-stdio.log` → `.1` → `.2` → `.3`) if it has grown beyond the configured cap; (2) export `AERIAL_LOG_FILE=<config-dir>/logs/aerial.log`, plus `AERIAL_LOG_MAX_BYTES` and `AERIAL_LOG_BACKUPS` (default `5242880` / `3`, or whatever value was present in the installer's environment — see below), and — when `AERIAL_CONFIG_DIR` was set at install time — re-export `AERIAL_CONFIG_DIR` so the service sees the same config root as the installer; (3) `exec` `node src/cli.js start --host <host> --port <port>` with stdout and stderr appended to `aerial-stdio.log`. The structured event log is opt-in via `AERIAL_LOG_FILE`: when this env var is set (always set by the wrapper, never by foreground `aerial start`), structured events go to that file only; when unset, they go to stderr only. There is no double-write.
+Both wrappers do the same three things before exec-ing the proxy: (1) startup-rotate the captured stdio log (`aerial-stdio.log` → `.1` → `.2` → `.3`) if it has grown beyond the configured cap; (2) export `AERIAL_LOG_FILE=<config-dir>/logs/aerial.log`, plus `AERIAL_LOG_MAX_BYTES` and `AERIAL_LOG_BACKUPS` (default `5242880` / `3`, or whatever value was present in the installer's environment — see below), and — when `AERIAL_CONFIG_DIR` was set at install time — re-export `AERIAL_CONFIG_DIR` so the service sees the same config root as the installer; (3) `exec` `node src/cli.js start --host <host> --port <port>` with stdout and stderr appended to `aerial-stdio.log`. The service wrapper prefers a Node.js 24+ binary; on macOS, if the installer is running under an older Node and Codex's bundled Node 24+ exists at `/Applications/Codex.app/Contents/Resources/node`, Aerial uses that for the generated wrapper. Set `AERIAL_SERVICE_NODE` before `aerial service install` to override this selection explicitly. The structured event log is opt-in via `AERIAL_LOG_FILE`: when this env var is set (always set by the wrapper, never by foreground `aerial start`), structured events go to that file only; when unset, they go to stderr only. There is no double-write.
 
 Wrapper env values are baked in at install time. If you set `AERIAL_LOG_MAX_BYTES` and/or `AERIAL_LOG_BACKUPS` in the shell before running `aerial service install`, the generated wrapper hard-codes those values and the next start of the service inherits them. Changing the env in another shell after install has no effect on the already-installed wrapper. To apply new values to an already-managed service, rerun `aerial service install` (which always regenerates the definition, including the wrapper) and then `aerial service restart` to swap the running process onto the regenerated wrapper.
 

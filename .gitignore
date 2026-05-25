@@ -4,3 +4,4 @@ node_modules/
 *.log
 .live-aerial/
 *.tgz
+.claude/

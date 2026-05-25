@@ -1,5 +1,6 @@
 import { WebSocket } from "undici";
 import { COPILOT_API_ORIGIN } from "./constants.js";
+import { upstreamDispatcher } from "./upstream-fetch.js";
 
 const TERMINAL_RESPONSE_TYPES = new Set([
   "response.completed",
@@ -45,9 +46,10 @@ function isTerminalMessage(message) {
   }
 }
 
-function openWebSocket(headers) {
+async function openWebSocket(headers) {
+  const dispatcher = await upstreamDispatcher();
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(websocketUrl(), { headers });
+    const ws = new WebSocket(websocketUrl(), dispatcher ? { headers, dispatcher } : { headers });
     const cleanup = () => {
       ws.removeEventListener("open", onOpen);
       ws.removeEventListener("error", onError);

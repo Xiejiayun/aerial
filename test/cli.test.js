@@ -200,4 +200,5 @@ test("aerial --help lists max alias on setup codex and claude", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /setup codex.*--effort <low\|medium\|high\|xhigh\|max>/);
   assert.match(result.stdout, /setup claude.*--effort <low\|medium\|high\|xhigh\|max>/);
+  assert.match(result.stdout, /proxy status\|enable\|disable/);
 });

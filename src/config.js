@@ -3,6 +3,7 @@ import { CONFIG_VERSION, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_VERSIONS } from "./
 import { apiKeyPath, configPath, readJsonIfExists, writeJsonPrivate, writePrivateFile } from "./paths.js";
 import { hashApiKey, randomApiKey, verifyApiKey } from "./crypto.js";
 import { DEFAULT_EFFORT, normalizeEffort } from "./setup-selection.js";
+import { PROXY_MODE_AUTO, normalizeProxyEndpoint, normalizeProxyMode } from "./proxy-config.js";
 
 export function defaultConfig() {
   return {
@@ -15,6 +16,9 @@ export function defaultConfig() {
     logLevel: "info",
     promptCacheRetention: "in_memory",
     promptCacheKey: "auto",
+    upstreamProxyMode: "disabled",
+    upstreamProxyEndpoint: undefined,
+    upstreamProxySource: undefined,
     versions: DEFAULT_VERSIONS
   };
 }
@@ -42,7 +46,24 @@ export function loadConfig() {
   const promptCacheRetention = envRetention === undefined ? (loaded.promptCacheRetention ?? defaults.promptCacheRetention) : envRetention;
   const promptCacheKey = envCacheKey === undefined ? (loaded.promptCacheKey ?? defaults.promptCacheKey) : envCacheKey;
   const defaultEffort = normalizeEffort(loaded.defaultEffort) || DEFAULT_EFFORT;
-  return { ...defaults, ...loaded, defaultEffort, promptCacheRetention, promptCacheKey, versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) } };
+  const loadedProxyMode = normalizeProxyMode(loaded.upstreamProxyMode);
+  const loadedProxyEndpoint = normalizeProxyEndpoint(loaded.upstreamProxyEndpoint);
+  const upstreamProxyEndpoint = loadedProxyMode === PROXY_MODE_AUTO ? loadedProxyEndpoint : undefined;
+  const upstreamProxyMode = upstreamProxyEndpoint ? PROXY_MODE_AUTO : "disabled";
+  const upstreamProxySource = upstreamProxyEndpoint && typeof loaded.upstreamProxySource === "string"
+    ? loaded.upstreamProxySource
+    : undefined;
+  return {
+    ...defaults,
+    ...loaded,
+    defaultEffort,
+    promptCacheRetention,
+    promptCacheKey,
+    upstreamProxyMode,
+    upstreamProxyEndpoint,
+    upstreamProxySource,
+    versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) }
+  };
 }
 
 export function saveConfig(config) {

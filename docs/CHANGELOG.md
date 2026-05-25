@@ -4,12 +4,26 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.11] - 2026-05-25
+## [0.2.1] - 2026-05-26
+
+### Fixed
+
+- Redacted proxy URL userinfo from `aerial proxy status`, `aerial proxy enable --json`, and candidate diagnostics.
+- Added a 1 MiB PAC file read limit for proxy auto-discovery.
+- Added regression coverage for proxy enable failures preserving existing config, env proxy override precedence, and proxy validation failure paths.
+
+## [0.2.0] - 2026-05-26
 
 ### Added
 
 - `aerial doctor` now reports invalid `config.json` as a structured `config.file` failure with a concrete `aerial config reset` repair command instead of surfacing a raw JSON parse exception.
 - Added `aerial config reset` to rewrite the Aerial config file back to defaults when local configuration is corrupt.
+- Added `aerial proxy status|enable|disable` for smart upstream proxy discovery, validation, egress reporting, and Copilot route visibility checks on restricted networks.
+- Added first-class SOCKS5 upstream proxy support, including PAC-discovered Shadowsocks endpoints and an internal loopback CONNECT bridge for fetch and WebSocket traffic.
+
+### Changed
+
+- Raised the package Node requirement to Node.js 24+ and made generated service wrappers prefer a Node 24+ binary when available. This is a breaking runtime requirement change from the 0.1.x line.
 
 ### Fixed
 

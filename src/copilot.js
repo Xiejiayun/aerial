@@ -3,6 +3,7 @@ import { COPILOT_API_ORIGIN, DEFAULT_ANTHROPIC_VERSION } from "./constants.js";
 import { loadConfig } from "./config.js";
 import { getCopilotToken } from "./auth.js";
 import { logEvent } from "./log.js";
+import { upstreamFetch } from "./upstream-fetch.js";
 import { isResponsesWebSocketOptIn, proxyResponsesWebSocket, shouldUseResponsesWebSocket } from "./responses-websocket.js";
 import {
   fetchModelsCatalog as fetchModelsCatalogShared,
@@ -250,7 +251,7 @@ async function fetchModelsCatalogForCopilot() {
   return fetchModelsCatalogShared({
     tokenFingerprint: tokenFingerprintOf(token),
     fetchImpl: async () => {
-      const response = await fetch(`${COPILOT_API_ORIGIN}/models`, { method: "GET", headers: upstreamHeaders(token) });
+      const response = await upstreamFetch(`${COPILOT_API_ORIGIN}/models`, { method: "GET", headers: upstreamHeaders(token) });
       if (!response.ok) return undefined;
       const payload = await response.json().catch(() => ({}));
       return Array.isArray(payload?.data) ? payload.data : undefined;
@@ -479,10 +480,10 @@ async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride } = {
   const requestCache = cacheRequestFields(parseJsonBody(body, contentType));
   if (hasExplicitCacheRequest(requestCache)) logEvent("cache_request", { route: path, ...requestCache });
   const headers = upstreamHeaders(token, { accept, "content-type": contentType, ...extraHeaders });
-  let upstream = await fetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers, body });
+  let upstream = await upstreamFetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers, body });
   if (upstream.status === 401) {
     const refreshed = await getCopilotToken({ force: true });
-    upstream = await fetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers: upstreamHeaders(refreshed, { accept, "content-type": contentType, ...extraHeaders }), body });
+    upstream = await upstreamFetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers: upstreamHeaders(refreshed, { accept, "content-type": contentType, ...extraHeaders }), body });
   }
   if (path === "/models") {
     return new Response(upstream.body, { status: upstream.status, headers: copyResponseHeaders(upstream) });
