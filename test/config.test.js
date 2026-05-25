@@ -62,3 +62,15 @@ test("loadConfig preserves valid stored defaultEffort", () => {
   saveConfig({ ...loadConfig(), defaultEffort: "xhigh" });
   assert.equal(loadConfig().defaultEffort, "xhigh");
 });
+
+test("loadConfig falls back to defaults when config.json is not valid JSON", async () => {
+  fs.writeFileSync(configPath(), "{bad json", "utf8");
+  const { readConfigFileStatus } = await import("../src/config.js");
+  const status = readConfigFileStatus();
+  assert.equal(status.ok, false);
+  assert.match(status.error, /JSON/);
+  const reloaded = loadConfig();
+  assert.equal(reloaded.host, "127.0.0.1");
+  assert.equal(reloaded.port, 18181);
+  assert.equal(reloaded.defaultEffort, "medium");
+});

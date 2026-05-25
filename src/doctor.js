@@ -1,13 +1,31 @@
 import { setupStatus } from "./setup.js";
 import { serviceStatus } from "./service.js";
 import { computeAppStatus } from "./app-status.js";
+import { readConfigFileStatus } from "./config.js";
 
 const REPAIRS = Object.freeze({
+  CONFIG_RESET: Object.freeze({ command: "aerial", args: ["config", "reset"] }),
   LOGIN: Object.freeze({ command: "aerial", args: ["login"] }),
   SETUP_CODEX: Object.freeze({ command: "aerial", args: ["setup", "codex"] }),
   SERVICE_INSTALL: Object.freeze({ command: "aerial", args: ["service", "install"] }),
   SERVICE_STATUS_JSON: Object.freeze({ command: "aerial", args: ["service", "status", "--json"] })
 });
+
+function buildConfigChecks(configFile) {
+  if (!configFile.ok) {
+    return [{
+      id: "config.file",
+      ok: false,
+      severity: "fail",
+      message: `Aerial config file is not valid JSON: ${configFile.error}. Reset it to defaults, then rerun setup if needed.`,
+      repair: REPAIRS.CONFIG_RESET
+    }];
+  }
+  if (!configFile.exists) {
+    return [{ id: "config.file", ok: true, severity: "info", message: "Aerial config file has not been created yet." }];
+  }
+  return [{ id: "config.file", ok: true, severity: "info", message: "Aerial config file is valid JSON." }];
+}
 
 function buildAuthChecks(setup) {
   const checks = [];
@@ -142,10 +160,12 @@ function summarize(ok, checks) {
 }
 
 export async function doctor({ run, healthFetch, setup, service } = {}) {
+  const configFile = readConfigFileStatus();
   const setupOut = setup ?? setupStatus();
   const serviceOut = service ?? await serviceStatus({ ...(run ? { run } : {}), ...(healthFetch ? { healthFetch } : {}) });
   const app = computeAppStatus(setupOut, serviceOut);
   const checks = [
+    ...buildConfigChecks(configFile),
     ...buildAuthChecks(setupOut),
     ...buildClientChecks(setupOut),
     ...buildServiceChecks(serviceOut)

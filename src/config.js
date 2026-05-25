@@ -19,8 +19,23 @@ export function defaultConfig() {
   };
 }
 
+function objectConfig(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+export function readConfigFileStatus() {
+  const file = configPath();
+  if (!fs.existsSync(file)) return { file, exists: false, ok: true, value: undefined };
+  try {
+    return { file, exists: true, ok: true, value: readJsonIfExists(file) };
+  } catch (err) {
+    return { file, exists: true, ok: false, error: err.message };
+  }
+}
+
 export function loadConfig() {
-  const loaded = readJsonIfExists(configPath()) || {};
+  const status = readConfigFileStatus();
+  const loaded = status.ok ? objectConfig(status.value) : {};
   const envRetention = process.env.AERIAL_PROMPT_CACHE_RETENTION;
   const envCacheKey = process.env.AERIAL_PROMPT_CACHE_KEY;
   const defaults = defaultConfig();

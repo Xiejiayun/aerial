@@ -11,6 +11,7 @@ process.env.AERIAL_API_KEY = "aerial_test_key";
 
 const { createServer } = await import("../src/server.js");
 const { _resetCopilotTokenCacheForTests } = await import("../src/auth.js");
+const { ensureApiKey } = await import("../src/config.js");
 
 test.beforeEach(() => {
   _resetCopilotTokenCacheForTests();
@@ -20,6 +21,22 @@ async function listenOnRandomPort(server) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return server.address().port;
+}
+
+function readSocketData(socket, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    const timer = setTimeout(() => reject(new Error("timed out waiting for response")), timeoutMs);
+    socket.on("data", (chunk) => {
+      data += chunk.toString("utf8");
+      clearTimeout(timer);
+      resolve(data);
+    });
+    socket.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }
 
 test("server rejects websocket upgrade explicitly", async () => {
@@ -83,6 +100,56 @@ test("model routes under /v1 still require the Aerial API key after adding root 
     const body = await res.json();
     assert.equal(body.error.type, "authentication_error");
   } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("protected routes reject missing auth before reading the request body", async () => {
+  const server = createServer();
+  const port = await listenOnRandomPort(server);
+  const socket = net.createConnection({ host: "127.0.0.1", port });
+  try {
+    socket.write([
+      "POST /v1/responses HTTP/1.1",
+      `Host: 127.0.0.1:${port}`,
+      "Content-Type: application/json",
+      "Content-Length: 104857600",
+      "",
+      ""
+    ].join("\r\n"));
+
+    const data = await readSocketData(socket);
+    assert.match(data, /401 Unauthorized/);
+    assert.match(data, /Invalid or missing Aerial API key/);
+  } finally {
+    socket.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("protected routes reject oversized authenticated bodies", async () => {
+  ensureApiKey();
+  const server = createServer();
+  const port = await listenOnRandomPort(server);
+  const socket = net.createConnection({ host: "127.0.0.1", port });
+  try {
+    socket.write([
+      "POST /v1/responses HTTP/1.1",
+      `Host: 127.0.0.1:${port}`,
+      "Authorization: Bearer aerial_test_key",
+      "Content-Type: application/json",
+      "Content-Length: 33554433",
+      "",
+      ""
+    ].join("\r\n"));
+
+    const data = await readSocketData(socket);
+    assert.match(data, /413 Payload Too Large/);
+    assert.match(data, /request_entity_too_large/);
+  } finally {
+    socket.destroy();
     server.close();
     await once(server, "close");
   }

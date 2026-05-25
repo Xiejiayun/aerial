@@ -5,6 +5,8 @@ import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses, local
 import { readGitHubToken } from "./auth.js";
 import { logEvent } from "./log.js";
 
+const MAX_BODY_BYTES = 32 * 1024 * 1024;
+
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -53,9 +55,45 @@ function nodeRequestToFetch(req, body, signal) {
   return new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers: req.headers, body: body.length ? body : undefined, duplex: "half", signal });
 }
 
-async function readBody(req) {
+function nodeHeaderObject(headers) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) out[key] = value.join(", ");
+    else if (value !== undefined) out[key] = String(value);
+  }
+  return out;
+}
+
+function publicRoute(req) {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
+  return (req.method === "GET" && url.pathname === "/health")
+    || (req.method === "GET" && url.pathname === "/")
+    || (req.method === "GET" && url.pathname === "/v1/models");
+}
+
+function bodyTooLarge(limit) {
+  const err = new Error(`Request body too large. Limit is ${limit} bytes.`);
+  err.statusCode = 413;
+  return err;
+}
+
+function declaredContentLength(req) {
+  const raw = Array.isArray(req.headers["content-length"]) ? req.headers["content-length"][0] : req.headers["content-length"];
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+async function readBody(req, maxBytes = MAX_BODY_BYTES) {
+  const declared = declaredContentLength(req);
+  if (declared !== undefined && declared > maxBytes) throw bodyTooLarge(maxBytes);
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > maxBytes) throw bodyTooLarge(maxBytes);
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks);
 }
 
@@ -78,7 +116,7 @@ async function handle(fetchRequest, runtime = {}) {
     return modelsRouteOrUpstreamAuthFailed(fetchRequest);
   }
 
-  if (!validateLocalAuth(Object.fromEntries(fetchRequest.headers), config)) {
+  if (!runtime.localAuthValidated && !validateLocalAuth(Object.fromEntries(fetchRequest.headers), config)) {
     return json(401, { error: { type: "authentication_error", message: "Invalid or missing Aerial API key" } });
   }
 
@@ -118,9 +156,20 @@ export function createServer(runtime = {}) {
     res.on("close", () => controller.abort());
     try {
       logEvent("request_start", { method: req.method, path: req.url });
+      let localAuthValidated = false;
+      if (!publicRoute(req)) {
+        const config = loadConfig();
+        if (!validateLocalAuth(nodeHeaderObject(req.headers), config)) {
+          const fetchResponse = json(401, { error: { type: "authentication_error", message: "Invalid or missing Aerial API key" } });
+          await writeNodeResponse(res, fetchResponse, controller.signal);
+          logEvent("request_end", { method: req.method, path: req.url, status: fetchResponse.status, ms: Date.now() - started });
+          return;
+        }
+        localAuthValidated = true;
+      }
       const body = await readBody(req);
       const fetchRequest = nodeRequestToFetch(req, body, controller.signal);
-      const fetchResponse = await handle(fetchRequest, runtime);
+      const fetchResponse = await handle(fetchRequest, { ...runtime, localAuthValidated });
       await writeNodeResponse(res, fetchResponse, controller.signal);
       logEvent("request_end", { method: req.method, path: req.url, status: fetchResponse.status, ms: Date.now() - started });
     } catch (error) {
@@ -128,10 +177,11 @@ export function createServer(runtime = {}) {
         logEvent("request_aborted", { method: req.method, path: req.url, ms: Date.now() - started });
         return;
       }
-      logEvent("request_end", { method: req.method, path: req.url, status: 500, ms: Date.now() - started, error: error.message });
-      res.statusCode = error.message?.includes("Missing GitHub token") ? 503 : 500;
+      const status = error.statusCode || (error.message?.includes("Missing GitHub token") ? 503 : 500);
+      logEvent("request_end", { method: req.method, path: req.url, status, ms: Date.now() - started, error: error.message });
+      res.statusCode = status;
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ error: { type: "aerial_error", message: error.message } }));
+      res.end(JSON.stringify({ error: { type: status === 413 ? "request_entity_too_large" : "aerial_error", message: error.message } }));
     }
   });
 

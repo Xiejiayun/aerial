@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
 import { startDeviceFlow, pollDeviceFlow, readGitHubToken, gitHubTokenSource } from "./auth.js";
-import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
+import { defaultConfig, ensureApiKey, loadConfig, saveConfig } from "./config.js";
 import { configPath } from "./paths.js";
 import { startServer } from "./server.js";
 import { setupClaude, setupCodex, setupStatus, restoreClient, restoreAllClients } from "./setup.js";
@@ -68,6 +68,20 @@ function requiredArgValue(args, name) {
     throw new Error(`${name} requires a value.`);
   }
   return value;
+}
+
+function parseConfigPort(value) {
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) throw new Error("port must be an integer between 1 and 65535");
+  const port = Number(text);
+  if (port < 1 || port > 65535) throw new Error("port must be an integer between 1 and 65535");
+  return port;
+}
+
+function parseConfigHost(value) {
+  const host = String(value).trim().toLowerCase();
+  if (host === "127.0.0.1" || host === "localhost" || host === "::1") return host;
+  throw new Error("host must be a loopback address: 127.0.0.1, localhost, or ::1");
 }
 
 async function selectSetupOptions(target, route, args) {
@@ -524,6 +538,11 @@ async function main() {
   }
 
   if (command === "config") {
+    if (subcommand === "reset") {
+      saveConfig(defaultConfig());
+      console.log(`Reset Aerial config: ${configPath()}`);
+      return;
+    }
     const config = loadConfig();
     if (subcommand === "set") {
       const [key, value] = rest;
@@ -531,12 +550,22 @@ async function main() {
       if (!["host", "port", "defaultModel", "defaultEffort", "logLevel", "promptCacheRetention", "promptCacheKey"].includes(key)) throw new Error(`Unsupported config key: ${key}`);
       if (key === "promptCacheRetention" && !["in_memory", "24h", "off"].includes(value)) throw new Error("promptCacheRetention must be one of: in_memory, 24h, off");
       if (key === "promptCacheKey" && !value.trim()) throw new Error("promptCacheKey must be auto, off, or a non-empty string");
+      if (key === "host") {
+        config.host = parseConfigHost(value);
+        saveConfig(config);
+        return;
+      }
+      if (key === "port") {
+        config.port = parseConfigPort(value);
+        saveConfig(config);
+        return;
+      }
       if (key === "defaultEffort") {
         config.defaultEffort = assertValidEffort(value);
         saveConfig(config);
         return;
       }
-      config[key] = key === "port" ? Number(value) : value;
+      config[key] = value;
       saveConfig(config);
       return;
     }

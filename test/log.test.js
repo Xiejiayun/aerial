@@ -89,6 +89,35 @@ test("logEvent redacts authorization/token/apiKey/body fields when writing to fi
   assert.match(content, /"safe":"ok"/);
 });
 
+test("logEvent recursively redacts sensitive keys and token-shaped string values", () => {
+  reset();
+  const file = freshLogFile("redact-recursive");
+  process.env.AERIAL_LOG_FILE = file;
+  const circular = { label: "loop" };
+  circular.self = circular;
+  const localKey = "aerial_" + "abcdefghijklmnopqrstuvwxyzABCDEF";
+  logEvent("recursive_redact", {
+    nested: {
+      access_token: "ghs_abcdefghijklmnopqrstuvwxyz123456",
+      message: `upstream said Bearer ${localKey} and jwt abcdefghij.klmnopqrst.uvwxyzABCD`,
+      usage: { input_tokens: 11, output_tokens: 5 }
+    },
+    list: ["github_pat_abcdefghijklmnopqrstuvwxyz_1234567890"],
+    circular,
+    safe: "ok"
+  });
+  const content = fs.readFileSync(file, "utf8");
+  assert.ok(!content.includes("ghs_abcdefghijklmnopqrstuvwxyz123456"));
+  assert.ok(!content.includes(localKey));
+  assert.ok(!content.includes("github_pat_abcdefghijklmnopqrstuvwxyz_1234567890"));
+  assert.ok(!content.includes("abcdefghij.klmnopqrst.uvwxyzABCD"));
+  assert.match(content, /"message":"upstream said Bearer \[redacted\] and jwt \[redacted\]"/);
+  assert.match(content, /"input_tokens":11/);
+  assert.match(content, /"output_tokens":5/);
+  assert.match(content, /"safe":"ok"/);
+  assert.match(content, /\[redacted circular\]/);
+});
+
 test("logEvent rotates after primary log exceeds AERIAL_LOG_MAX_BYTES default 5 MiB", () => {
   reset();
   const file = freshLogFile("rotate-default");

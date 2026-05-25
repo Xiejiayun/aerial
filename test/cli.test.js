@@ -160,6 +160,52 @@ test("config set defaultEffort rejects invalid values", () => {
   assert.match(result.stderr, /Invalid --effort/);
 });
 
+test("config reset repairs an invalid config.json", () => {
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-config-reset-"));
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "config.json"), "{bad json", "utf8");
+  const result = spawnSync(process.execPath, ["src/cli.js", "config", "reset"], {
+    cwd: path.resolve(import.meta.dirname, ".."),
+    encoding: "utf8",
+    env: { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" }
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Reset Aerial config/);
+  const config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
+  assert.equal(config.host, "127.0.0.1");
+  assert.equal(config.port, 18181);
+});
+
+test("config set validates port before writing", () => {
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-port-config-"));
+  const baseEnv = { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" };
+  const valid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "port", "18182"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  assert.equal(valid.status, 0, valid.stderr);
+  let config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
+  assert.equal(config.port, 18182);
+
+  const invalid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "port", "NaN"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /port must be an integer/);
+  config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
+  assert.equal(config.port, 18182);
+});
+
+test("config set host only accepts loopback hosts", () => {
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-host-config-"));
+  const baseEnv = { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" };
+  const valid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "host", "localhost"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  assert.equal(valid.status, 0, valid.stderr);
+  let config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
+  assert.equal(config.host, "localhost");
+
+  const invalid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "host", "0.0.0.0"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /host must be a loopback address/);
+  config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
+  assert.equal(config.host, "localhost");
+});
+
 test("setup codex prints the full completion summary block", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-codex-summary-"));
   const result = spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-summary", "--effort", "high"], {

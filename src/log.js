@@ -4,17 +4,7 @@ import path from "node:path";
 const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_ROTATE_KEEP = 3;
 const MAX_LINE_BYTES = 64 * 1024;
-const REDACT_KEYS = new Set([
-  "authorization",
-  "token",
-  "apiKey",
-  "api_key",
-  "githubToken",
-  "github_token",
-  "body",
-  "password",
-  "secret"
-]);
+const MAX_REDACT_DEPTH = 8;
 
 const state = {
   fd: undefined,
@@ -151,19 +141,53 @@ function writeBuffer(buf) {
   }
 }
 
-function redact(fields) {
-  const out = {};
-  for (const [k, v] of Object.entries(fields)) {
-    if (REDACT_KEYS.has(k)) continue;
-    out[k] = v;
+function sensitiveKey(key) {
+  const normalized = String(key).toLowerCase().replace(/[_-]/g, "");
+  return normalized === "authorization"
+    || normalized === "token"
+    || (normalized.endsWith("token") && !normalized.endsWith("tokens"))
+    || normalized.includes("apikey")
+    || normalized.includes("secret")
+    || normalized.includes("password")
+    || normalized === "body"
+    || normalized.endsWith("body");
+}
+
+function scrubString(value) {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [redacted]")
+    .replace(/\bgithub_pat_[A-Za-z0-9_]+/g, "[redacted]")
+    .replace(/\bgh[opsru]_[A-Za-z0-9_]{20,}\b/g, "[redacted]")
+    .replace(/\baerial_[A-Za-z0-9_-]{16,}\b/g, "[redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, "[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[redacted]");
+}
+
+function scrub(value, seen = new WeakSet(), depth = 0) {
+  if (typeof value === "string") return scrubString(value);
+  if (value === null || typeof value !== "object") return value;
+  if (Buffer.isBuffer(value)) return "[redacted buffer]";
+  if (depth >= MAX_REDACT_DEPTH) return "[redacted depth]";
+  if (seen.has(value)) return "[redacted circular]";
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const out = value.map((item) => scrub(item, seen, depth + 1));
+    seen.delete(value);
+    return out;
   }
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (sensitiveKey(k)) continue;
+    out[k] = scrub(v, seen, depth + 1);
+  }
+  seen.delete(value);
   return out;
 }
 
 function lineFor(event, fields) {
-  const safe = redact(fields);
+  const safe = scrub(fields);
   const ts = new Date().toISOString();
-  const obj = { ts, event, ...safe };
+  const obj = { ts, event: scrubString(event), ...safe };
   const line = JSON.stringify(obj);
   const buf = Buffer.from(`${line}\n`, "utf8");
   if (buf.length <= MAX_LINE_BYTES) return buf;

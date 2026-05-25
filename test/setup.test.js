@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { parse as parseToml } from "smol-toml";
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-setup-test-"));
 process.env.AERIAL_CONFIG_DIR = path.join(temp, "config");
@@ -12,7 +13,7 @@ process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_SKIP_ENV_PERSIST = "1";
 
 const { ensureApiKey } = await import("../src/config.js");
-const { setupCodex, setupClaude, setupStatus } = await import("../src/setup.js");
+const { setupCodex, setupClaude, setupStatus, codexStatus } = await import("../src/setup.js");
 const { loadConfig, saveConfig } = await import("../src/config.js");
 ensureApiKey();
 
@@ -31,6 +32,26 @@ test("setupCodex writes responses provider without deleting existing content", (
   assert.ok(result.backup);
   assert.equal(result.auth.type, "command");
   assert.equal(result.auth.command, "aerial");
+});
+
+test("setupCodex writes root model keys before existing TOML sections", () => {
+  const codexDir = path.join(temp, ".codex");
+  fs.mkdirSync(codexDir, { recursive: true });
+  const file = path.join(codexDir, "config.toml");
+  fs.writeFileSync(file, [
+    "[profiles.work]",
+    "model = \"gpt-old\"",
+    "approval_policy = \"never\"",
+    ""
+  ].join("\n"), "utf8");
+
+  setupCodex({ model: "copilot-test" });
+  const content = fs.readFileSync(file, "utf8");
+  const doc = parseToml(content);
+  assert.equal(doc.model_provider, "aerial");
+  assert.equal(doc.model, "copilot-test");
+  assert.equal(doc.profiles.work.model, "gpt-old");
+  assert.equal(codexStatus().state, "aerial");
 });
 
 test("setupCodex can write an absolute command-backed auth helper for CLI installs", () => {

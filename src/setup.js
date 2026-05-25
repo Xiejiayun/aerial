@@ -36,10 +36,22 @@ function tomlValue(value) {
   return JSON.stringify(String(value));
 }
 
-function setTomlString(content, key, value) {
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function setTomlRootString(content, key, value) {
   const line = `${key} = ${tomlValue(value)}`;
-  const re = new RegExp(`^${key}\\s*=.*$`, "m");
-  return re.test(content) ? content.replace(re, line) : `${content.trimEnd()}\n${line}\n`;
+  const source = content.split(/\r?\n/);
+  const firstSection = source.findIndex((sourceLine) => /^\s*\[.*\]\s*(?:#.*)?$/.test(sourceLine));
+  const rootLines = firstSection === -1 ? source : source.slice(0, firstSection);
+  const restLines = firstSection === -1 ? [] : source.slice(firstSection);
+  const root = rootLines.join("\n");
+  const rest = restLines.join("\n");
+  const re = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=.*$`, "m");
+  const nextRoot = re.test(root) ? root.replace(re, line) : `${root.trimEnd()}${root.trimEnd() ? "\n" : ""}${line}`;
+  if (!rest) return `${nextRoot.trimEnd()}\n`;
+  return `${nextRoot.trimEnd()}\n${rest}`;
 }
 
 function upsertTomlSection(content, section, values) {
@@ -88,8 +100,8 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   ensureParent(file);
   const backup = backupIfExists(file);
   let content = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
-  content = setTomlString(content, "model_provider", "aerial");
-  content = setTomlString(content, "model", selectedModel);
+  content = setTomlRootString(content, "model_provider", "aerial");
+  content = setTomlRootString(content, "model", selectedModel);
   content = upsertTomlSection(content, "model_providers.aerial", {
     name: "Aerial",
     base_url: `http://${config.host}:${config.port}/v1`,
@@ -367,4 +379,3 @@ export function restoreAllClients(opts) {
   const ok = Object.values(results).every((r) => r.ok);
   return { ok, results };
 }
-

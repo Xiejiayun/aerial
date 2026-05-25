@@ -168,3 +168,33 @@ test("doctor.ok must align with status.ok: unsupported service is warn but app.o
   assert.equal(failures.length, 0, "no fail-severity checks in this scenario");
   assert.equal(report.ok, false, "doctor.ok must be false when status.ok is false even without fail-severity checks");
 });
+
+test("invalid config.json is reported as a structured doctor failure", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-doctor-bad-config-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-doctor-bad-home-"));
+  const restoreConfigDir = process.env.AERIAL_CONFIG_DIR;
+  const restoreHome = process.env.HOME;
+  const restoreUserprofile = process.env.USERPROFILE;
+  process.env.AERIAL_CONFIG_DIR = dir;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  fs.writeFileSync(path.join(dir, "config.json"), "{bad json", "utf8");
+  try {
+    const report = await doctor({
+      service: makeService({ installed: false, loaded: false, healthAerial: false })
+    });
+    const check = report.checks.find((c) => c.id === "config.file");
+    assert.ok(check, "expected config.file check");
+    assert.equal(check.severity, "fail");
+    assert.equal(check.ok, false);
+    assert.deepEqual(check.repair, { command: "aerial", args: ["config", "reset"] });
+    assert.match(renderDoctorText(report), /aerial config reset/);
+  } finally {
+    if (restoreConfigDir === undefined) delete process.env.AERIAL_CONFIG_DIR;
+    else process.env.AERIAL_CONFIG_DIR = restoreConfigDir;
+    if (restoreHome === undefined) delete process.env.HOME;
+    else process.env.HOME = restoreHome;
+    if (restoreUserprofile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = restoreUserprofile;
+  }
+});

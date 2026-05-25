@@ -4,6 +4,20 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-05-25
+
+### Added
+
+- `aerial doctor` now reports invalid `config.json` as a structured `config.file` failure with a concrete `aerial config reset` repair command instead of surfacing a raw JSON parse exception.
+- Added `aerial config reset` to rewrite the Aerial config file back to defaults when local configuration is corrupt.
+
+### Fixed
+
+- `aerial setup codex` now writes root-level `model_provider` and `model` keys before existing TOML sections, preventing existing `[profiles.*]` blocks from accidentally capturing Aerial's root Codex settings.
+- Protected inference routes now validate the local Aerial API key before reading request bodies, and oversized authenticated bodies are rejected with HTTP 413.
+- `aerial config set port` now rejects non-integer and out-of-range ports instead of writing invalid JSON values, and `aerial config set host` now accepts loopback hosts only.
+- Structured logs now recursively redact sensitive nested fields and scrub common token-shaped values inside strings before writing.
+
 ## [0.1.10] - 2026-05-22
 
 ### Added
@@ -117,6 +131,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.1.11]: https://github.com/Xiejiayun/aerial/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/Xiejiayun/aerial/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/Xiejiayun/aerial/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/Xiejiayun/aerial/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Xiejiayun/aerial/compare/v0.1.6...v0.1.7
