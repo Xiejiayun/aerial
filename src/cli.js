@@ -147,6 +147,59 @@ function printServiceSummary(status) {
   console.log(`health: ${health}`);
 }
 
+function printRestoreResults(results) {
+  for (const r of Object.values(results)) {
+    if (r.restored) {
+      console.log(`Restored ${r.target}: ${r.file} <- ${r.from}`);
+      if (r.snapshot) console.log(`  pre-restore snapshot: ${r.snapshot}`);
+    } else if (r.reason === "no_backup") {
+      console.log(`Restored ${r.target}: no backup to restore`);
+    } else if (r.error) {
+      console.log(`Restored ${r.target}: FAILED  ${r.error}`);
+    }
+  }
+}
+
+function printServiceDiagnostics(diagnostics) {
+  if (!diagnostics) return;
+  if (diagnostics.stdioLog) console.log(`  stdio log: ${diagnostics.stdioLog}`);
+  if (diagnostics.aerialLog) console.log(`  aerial log: ${diagnostics.aerialLog}`);
+  if (diagnostics.wrapperNode) console.log(`  wrapper node: ${diagnostics.wrapperNode}`);
+  if (diagnostics.health) {
+    const h = diagnostics.health;
+    const tail = h.lastError ? `, last error: ${h.lastError}` : (h.lastStatus !== undefined ? `, last status: ${h.lastStatus}` : "");
+    console.log(`  health probe: ${h.attempts} attempts over ${h.elapsedMs}ms${tail}`);
+  }
+  console.log(`  Run: aerial service status --json`);
+}
+
+function printServiceWarning(result) {
+  if (result.warning) console.log(`  WARNING: ${result.warning.message}`);
+}
+
+function printServiceUninstallResult(r, { prefix = "Service uninstall" } = {}) {
+  if (r.note === "no service installed") console.log(`${prefix}: no service installed`);
+  else if (r.ok) console.log(`${prefix}: ok (${r.platform})`);
+  else {
+    console.log(`${prefix}: FAILED (${r.reason || "see stderr"})`);
+    if (r.message) console.log(`  ${r.message}`);
+    else console.log(`  Retry with: aerial service uninstall`);
+  }
+  if (r.delete?.stderr) console.log(`  schtasks stderr: ${r.delete.stderr.trim()}`);
+  if (r.bootout?.stderr) console.log(`  bootout stderr: ${r.bootout.stderr.trim()}`);
+}
+
+async function runServiceCliAction(action, render) {
+  try {
+    const result = await action();
+    render(result);
+    process.exitCode = result.ok ? 0 : 1;
+  } catch (err) {
+    console.error(err.message);
+    process.exitCode = 1;
+  }
+}
+
 async function appStatus({ json = false } = {}) {
   const setup = setupStatus();
   const service = await serviceStatus();
@@ -307,16 +360,7 @@ async function main() {
       if (!rest.includes("--latest")) throw new Error("aerial setup restore: only --latest is supported in this release");
       if (which === "all") {
         const { ok, results } = restoreAllClients();
-        for (const r of Object.values(results)) {
-          if (r.restored) {
-            console.log(`Restored ${r.target}: ${r.file} <- ${r.from}`);
-            if (r.snapshot) console.log(`  pre-restore snapshot: ${r.snapshot}`);
-          } else if (r.reason === "no_backup") {
-            console.log(`Restored ${r.target}: no backup to restore`);
-          } else if (r.error) {
-            console.log(`Restored ${r.target}: FAILED  ${r.error}`);
-          }
-        }
+        printRestoreResults(results);
         process.exitCode = ok ? 0 : 1;
         return;
       }
@@ -334,16 +378,7 @@ async function main() {
 
   if (command === "disable") {
     const { ok: restoreOk, results } = restoreAllClients();
-    for (const r of Object.values(results)) {
-      if (r.restored) {
-        console.log(`Restored ${r.target}: ${r.file} <- ${r.from}`);
-        if (r.snapshot) console.log(`  pre-restore snapshot: ${r.snapshot}`);
-      } else if (r.reason === "no_backup") {
-        console.log(`Restored ${r.target}: no backup to restore`);
-      } else if (r.error) {
-        console.log(`Restored ${r.target}: FAILED  ${r.error}`);
-      }
-    }
+    printRestoreResults(results);
     if (!restoreOk) {
       console.log("service uninstall: skipped because client restore reported failures; resolve restore errors then rerun `aerial disable` or `aerial service uninstall`.");
       process.exitCode = 1;
@@ -351,15 +386,7 @@ async function main() {
     }
     try {
       const r = serviceUninstall();
-      if (r.note === "no service installed") console.log("service uninstall: no service installed");
-      else if (r.ok) console.log(`service uninstall: ok (${r.platform})`);
-      else {
-        console.log(`service uninstall: FAILED (${r.reason || "see stderr"})`);
-        if (r.message) console.log(`  ${r.message}`);
-        else console.log(`  Retry with: aerial service uninstall`);
-      }
-      if (r.bootout?.stderr) console.log(`  bootout stderr: ${r.bootout.stderr.trim()}`);
-      if (r.delete?.stderr) console.log(`  schtasks stderr: ${r.delete.stderr.trim()}`);
+      printServiceUninstallResult(r, { prefix: "service uninstall" });
       process.exitCode = r.ok ? 0 : 1;
     } catch (err) {
       if (/unsupported platform/.test(err.message)) {
@@ -376,8 +403,7 @@ async function main() {
 
   if (command === "service") {
     if (subcommand === "install") {
-      try {
-        const r = await serviceInstall();
+      await runServiceCliAction(serviceInstall, (r) => {
         if (r.ok && r.note) console.log(`Service install: ${r.note} (${r.platform}).`);
         else if (r.ok) console.log(`Service installed (${r.platform}).`);
         else console.log(`Service install: FAILED (${r.reason || "unknown"}): ${r.message || ""}`);
@@ -387,98 +413,44 @@ async function main() {
         if (r.bootstrap?.stderr) console.log(`  bootstrap stderr: ${r.bootstrap.stderr.trim()}`);
         if (r.create?.stderr) console.log(`  schtasks stderr: ${r.create.stderr.trim()}`);
         if (r.run?.stderr) console.log(`  schtasks /Run stderr: ${r.run.stderr.trim()}`);
-        if (r.diagnostics) {
-          if (r.diagnostics.stdioLog) console.log(`  stdio log: ${r.diagnostics.stdioLog}`);
-          if (r.diagnostics.aerialLog) console.log(`  aerial log: ${r.diagnostics.aerialLog}`);
-          if (r.diagnostics.wrapperNode) console.log(`  wrapper node: ${r.diagnostics.wrapperNode}`);
-          if (r.diagnostics.health) {
-            const h = r.diagnostics.health;
-            const tail = h.lastError ? `, last error: ${h.lastError}` : (h.lastStatus !== undefined ? `, last status: ${h.lastStatus}` : "");
-            console.log(`  health probe: ${h.attempts} attempts over ${h.elapsedMs}ms${tail}`);
-          }
-          console.log(`  Run: aerial service status --json`);
-        }
-        if (r.warning) console.log(`  WARNING: ${r.warning.message}`);
-        process.exitCode = r.ok ? 0 : 1;
-      } catch (err) {
-        console.error(err.message);
-        process.exitCode = 1;
-      }
+        printServiceDiagnostics(r.diagnostics);
+        printServiceWarning(r);
+      });
       return;
     }
     if (subcommand === "start") {
-      try {
-        const r = await serviceStart();
+      await runServiceCliAction(serviceStart, (r) => {
         if (r.ok && r.note) console.log(`Service start: ${r.note} (${r.platform})`);
         else if (r.ok) console.log(`Service start: ok (${r.platform})`);
         else console.log(`Service start: FAILED (${r.reason || `status=${r.status}`})${r.message ? ": " + r.message : ""}`);
         if (r.stderr) console.log(`  ${r.stderr.trim()}`);
-        if (r.diagnostics) {
-          if (r.diagnostics.stdioLog) console.log(`  stdio log: ${r.diagnostics.stdioLog}`);
-          if (r.diagnostics.aerialLog) console.log(`  aerial log: ${r.diagnostics.aerialLog}`);
-          if (r.diagnostics.wrapperNode) console.log(`  wrapper node: ${r.diagnostics.wrapperNode}`);
-          if (r.diagnostics.health) {
-            const h = r.diagnostics.health;
-            const tail = h.lastError ? `, last error: ${h.lastError}` : (h.lastStatus !== undefined ? `, last status: ${h.lastStatus}` : "");
-            console.log(`  health probe: ${h.attempts} attempts over ${h.elapsedMs}ms${tail}`);
-          }
-          console.log(`  Run: aerial service status --json`);
-        }
-        if (r.warning) console.log(`  WARNING: ${r.warning.message}`);
-        process.exitCode = r.ok ? 0 : 1;
-      } catch (err) {
-        console.error(err.message);
-        process.exitCode = 1;
-      }
+        printServiceDiagnostics(r.diagnostics);
+        printServiceWarning(r);
+      });
       return;
     }
     if (subcommand === "stop") {
-      try {
-        const r = serviceStop();
+      await runServiceCliAction(serviceStop, (r) => {
         if (r.note) console.log(`Service stop: ${r.note} (${r.platform})`);
         else if (r.ok) console.log(`Service stop: ok (${r.platform})`);
         else console.log(`Service stop: FAILED (status=${r.status})`);
         if (r.stderr) console.log(`  ${r.stderr.trim()}`);
-        process.exitCode = r.ok ? 0 : 1;
-      } catch (err) {
-        console.error(err.message);
-        process.exitCode = 1;
-      }
+      });
       return;
     }
     if (subcommand === "restart") {
-      try {
-        const r = await serviceRestart();
+      await runServiceCliAction(serviceRestart, (r) => {
         if (!r.ok && r.reason === "stop_failed") console.log(`Service restart: FAILED on stop; start not attempted`);
         else if (r.ok) console.log(`Service restart: ok`);
         else console.log(`Service restart: FAILED`);
         if (r.stop?.stderr) console.log(`  stop: ${r.stop.stderr.trim()}`);
         if (r.start?.stderr) console.log(`  start: ${r.start.stderr.trim()}`);
-        if (r.warning) console.log(`  WARNING: ${r.warning.message}`);
-        process.exitCode = r.ok ? 0 : 1;
-      } catch (err) {
-        console.error(err.message);
-        process.exitCode = 1;
-      }
+        printServiceWarning(r);
+      });
       return;
     }
     if (subcommand === "uninstall") {
-      try {
-        const r = serviceUninstall();
-        if (r.note === "no service installed") console.log("Service uninstall: no service installed");
-        else if (r.ok) console.log(`Service uninstall: ok (${r.platform})`);
-        else {
-          console.log(`Service uninstall: FAILED (${r.reason || "see stderr"})`);
-          if (r.message) console.log(`  ${r.message}`);
-          else console.log(`  Retry with: aerial service uninstall`);
-        }
-        if (r.delete?.stderr) console.log(`  schtasks stderr: ${r.delete.stderr.trim()}`);
-        if (r.bootout?.stderr) console.log(`  bootout stderr: ${r.bootout.stderr.trim()}`);
-        process.exitCode = r.ok ? 0 : 1;
-      } catch (err) {
-        console.error(err.message);
-        process.exitCode = 1;
-      }
+      await runServiceCliAction(serviceUninstall, printServiceUninstallResult);
       return;
     }
     if (subcommand === "status") {

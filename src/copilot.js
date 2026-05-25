@@ -124,9 +124,18 @@ function withDefaultPromptCache(payload) {
 
 function openAIEffortRoute(model, effort) {
   if (effort === undefined) return undefined;
-  if (/^gpt-5-mini(?:-|$)/.test(model) && ["xhigh", "max"].includes(effort)) return "high";
-  if (effort === "max") return "xhigh";
+  const normalized = normalizeProxyEffort(effort);
+  if (/^gpt-5-mini(?:-|$)/.test(model) && normalized === "xhigh") return "high";
+  if (normalized !== effort) return normalized;
   return undefined;
+}
+
+function objectOrEmpty(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeProxyEffort(effort) {
+  return effort === "max" ? "xhigh" : effort;
 }
 
 function withSupportedOpenAIEffort(payload) {
@@ -186,7 +195,7 @@ function withSupportedAnthropicEffort(payload, models) {
   const model = typeof payload?.model === "string" ? payload.model : "";
   const family = canonicalClaudeFamily(model);
   if (!family) return payload;
-  const nextEffort = effort === "max" ? "xhigh" : effort;
+  const nextEffort = normalizeProxyEffort(effort);
   if (!["low", "medium", "high", "xhigh"].includes(nextEffort)) return payload;
   const routed = findCompatibleModelShared({
     models,
@@ -220,9 +229,7 @@ function isLegacyThinkingEnabled(thinking) {
 
 function withSupportedAnthropicThinking(payload) {
   if (!isLegacyThinkingEnabled(payload?.thinking)) return payload;
-  const outputConfig = payload?.output_config && typeof payload.output_config === "object" && !Array.isArray(payload.output_config)
-    ? payload.output_config
-    : {};
+  const outputConfig = objectOrEmpty(payload?.output_config);
   const effort = outputConfig.effort ?? legacyThinkingEffort(payload.thinking);
   logEvent("anthropic_thinking_route", { model: payload.model, routedType: "adaptive", routedEffort: effort });
   return {
@@ -258,9 +265,7 @@ function withDefaultAnthropicEffort(payload) {
   if (!canonicalClaudeFamily(model)) return payload;
   const config = loadConfig();
   const effort = config.defaultEffort || "medium";
-  const outputConfig = payload?.output_config && typeof payload.output_config === "object" && !Array.isArray(payload.output_config)
-    ? payload.output_config
-    : {};
+  const outputConfig = objectOrEmpty(payload?.output_config);
   logEvent("anthropic_default_effort", { model, effort });
   return { ...payload, output_config: { ...outputConfig, effort } };
 }

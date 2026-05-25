@@ -1,34 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
-
-const repoRoot = path.resolve(import.meta.dirname, "..");
-const cliPath = path.join(repoRoot, "src", "cli.js");
-
-function mkHome(label) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `aerial-cli-rb-${label}-`));
-}
+import { cliEnv, mkHome, runCli as runCliProcess } from "./helpers.js";
 
 function runCli(args, home, extraEnv = {}) {
-  const env = {
-    ...process.env,
-    HOME: home,
-    USERPROFILE: home,
-    AERIAL_CONFIG_DIR: path.join(home, "config"),
+  const env = cliEnv(home, {
     AERIAL_LOG_DIR: path.join(home, "logs"),
     AERIAL_API_KEY: "aerial_test_key",
-    AERIAL_SKIP_ENV_PERSIST: "1",
     AERIAL_SERVICE_DRYRUN: "1",
     ...extraEnv
-  };
-  return spawnSync(process.execPath, [cliPath, ...args], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    env
   });
+  return runCliProcess(args, { env });
 }
 
 test("aerial setup status --json exits 0 and emits parseable schema", () => {

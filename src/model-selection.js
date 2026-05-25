@@ -1,30 +1,15 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { proxyModels } from "./copilot.js";
+import { readJsonSafely } from "./http-utils.js";
+import { modelsForRoute } from "./model-utils.js";
+import { parseNumberChoice } from "./prompt-utils.js";
 
 const MAX_LISTED_MODELS = 20;
 const GPT_VERSION_RE = /^gpt-(\d+)(?:\.(\d+))?/i;
 const STABLE_GPT_RE = /^gpt-\d+(?:\.\d+)?$/i;
 
-async function readJson(response) {
-  const text = await response.text();
-  if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { raw: text };
-  }
-}
-
-function modelRoutes(model) {
-  return Array.isArray(model?.aerial?.routes) ? model.aerial.routes : [];
-}
-
-export function modelsForRoute(models, route) {
-  return models
-    .filter((model) => typeof model?.id === "string" && modelRoutes(model).includes(route))
-    .map((model) => ({ id: model.id, routes: modelRoutes(model), notes: model.aerial?.notes || [] }));
-}
+export { modelsForRoute } from "./model-utils.js";
 
 function gptVersionScore(id) {
   const match = GPT_VERSION_RE.exec(id);
@@ -63,21 +48,13 @@ export function orderForPrompt(ranked, recommended) {
 
 export async function discoverModelsForRoute(route) {
   const response = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET" }));
-  const payload = await readJson(response);
+  const payload = await readJsonSafely(response);
   if (!response.ok) {
     const detail = payload.error || payload.raw || JSON.stringify(payload);
     throw new Error(`Could not load Copilot models (${response.status}): ${detail}`);
   }
   const models = Array.isArray(payload.data) ? payload.data : [];
   return modelsForRoute(models, route);
-}
-
-function parseChoice(value, max) {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return 1;
-  if (!/^\d+$/.test(trimmed)) return undefined;
-  const n = Number(trimmed);
-  return n >= 1 && n <= max ? n : undefined;
 }
 
 export async function chooseSetupModel({ target, route, explicitModel, prompt = input.isTTY }) {
@@ -109,7 +86,7 @@ export async function chooseSetupModel({ target, route, explicitModel, prompt = 
     if (choices.length > MAX_LISTED_MODELS) output.write(`  ... ${choices.length - MAX_LISTED_MODELS} more\n`);
     while (true) {
       const answer = await rl.question(`Choose ${target} model [1-${promptListed.length}, default 1 = ${recommended}]: `);
-      const selected = parseChoice(answer, promptListed.length);
+      const selected = parseNumberChoice(answer, { max: promptListed.length, defaultIndex: 1, oneBased: true });
       if (selected) return { model: promptListed[selected - 1].id, choices, source: "prompt", displayed: true, recommended };
       output.write(`Enter a number from 1 to ${promptListed.length}, or press Enter for 1.\n`);
     }
@@ -131,9 +108,7 @@ export function formatModelChoices({ target, route, choices, selectedModel, sour
     lines.push(`  ${index + 1}. ${choice.id}${suffix}`);
   }
   if (choices.length > MAX_LISTED_MODELS) lines.push(`  ... ${choices.length - MAX_LISTED_MODELS} more`);
-  if (source === "first_available") {
-    lines.push(`No interactive terminal detected; selected ${selectedModel}. Pass --model <id> to choose a different model.`);
-  } else if (source === "recommended_stable") {
+  if (source === "first_available" || source === "recommended_stable") {
     lines.push(`No interactive terminal detected; selected ${selectedModel}. Pass --model <id> to choose a different model.`);
   } else if (source === "recommended_fallback") {
     lines.push(`No stable gpt-N.M model available; selected ${selectedModel}. Pass --model <id> to override.`);

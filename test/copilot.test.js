@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { chatRequest, messagesRequest, parseForwardedJson, responsesRequest } from "./helpers.js";
 
 process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-copilot-test-"));
 process.env.AERIAL_API_KEY = "aerial_test_key";
@@ -48,7 +49,7 @@ function mockMessagesFetch({ models = [] } = {}) {
     const u = String(url);
     if (u.includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
     if (u.endsWith("/models")) return Response.json({ data: models });
-    forwarded.push(JSON.parse(Buffer.from(init.body).toString("utf8")));
+    forwarded.push(parseForwardedJson(init));
     return Response.json({ ok: true });
   };
   return { forwarded };
@@ -99,15 +100,11 @@ test("proxyModels does not mark ws-only models as HTTP responses-capable", async
 test("proxyChatCompletions maps max_tokens to max_completion_tokens", async () => {
   let forwarded;
   globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
-  const request = new Request("http://127.0.0.1/v1/chat/completions", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({ model: "gpt-5.4", messages: [], max_tokens: 12 })
-  });
+  const request = chatRequest({ model: "gpt-5.4", messages: [], max_tokens: 12 });
   const response = await proxyChatCompletions(request);
   assert.equal(response.status, 200);
   assert.equal(forwarded.max_tokens, undefined);
@@ -120,15 +117,11 @@ test("proxyResponses preserves client cache fields", async () => {
   console.error = (line) => logs.push(JSON.parse(line));
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith("/models")) return Response.json({ data: [] });
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true, usage: { input_tokens: 12, output_tokens: 3, input_tokens_details: { cached_tokens: 7 } } });
   };
 
-  const request = new Request("http://127.0.0.1/v1/responses", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({ model: "gpt-5.4", input: "hello", prompt_cache_retention: "24h", prompt_cache_key: "project-a" })
-  });
+  const request = responsesRequest({ model: "gpt-5.4", input: "hello", prompt_cache_retention: "24h", prompt_cache_key: "project-a" });
   const response = await proxyResponses(request);
   assert.equal(response.status, 200);
   assert.equal(forwarded.prompt_cache_retention, "24h");
@@ -151,11 +144,10 @@ test("proxyResponses observes cache usage from SSE responses", async () => {
     ].join(""), { headers: { "content-type": "text/event-stream" } });
   };
 
-  const request = new Request("http://127.0.0.1/v1/responses", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json", accept: "text/event-stream" },
-    body: JSON.stringify({ model: "gpt-5.4", input: "hello", prompt_cache_retention: "in_memory" })
-  });
+  const request = responsesRequest(
+    { model: "gpt-5.4", input: "hello", prompt_cache_retention: "in_memory" },
+    { headers: { accept: "text/event-stream" } }
+  );
   const response = await proxyResponses(request);
   assert.equal(response.status, 200);
   await response.text();
@@ -191,11 +183,10 @@ test("cache telemetry preserves upstream cancel on SSE responses", async () => {
     return new Response(upstreamBody, { headers: { "content-type": "text/event-stream" } });
   };
 
-  const request = new Request("http://127.0.0.1/v1/responses", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json", accept: "text/event-stream" },
-    body: JSON.stringify({ model: "gpt-5.4", input: "hello", prompt_cache_retention: "in_memory" })
-  });
+  const request = responsesRequest(
+    { model: "gpt-5.4", input: "hello", prompt_cache_retention: "in_memory" },
+    { headers: { accept: "text/event-stream" } }
+  );
   const response = await proxyResponses(request);
   assert.equal(response.status, 200);
 
@@ -220,16 +211,12 @@ test("proxyResponses injects default cache hints transparently", async () => {
   let forwarded;
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith("/models")) return Response.json({ data: [] });
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
   try {
-    const request = new Request("http://127.0.0.1/v1/responses", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({ model: "gpt-5.4-mini", input: "hello", metadata: { session_id: "session-a" } })
-    });
+    const request = responsesRequest({ model: "gpt-5.4-mini", input: "hello", metadata: { session_id: "session-a" } });
     const response = await proxyResponses(request);
     assert.equal(response.status, 200);
     assert.equal(forwarded.prompt_cache_retention, "in_memory");
@@ -250,16 +237,12 @@ test("proxyResponses respects cache opt-out", async () => {
   let forwarded;
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith("/models")) return Response.json({ data: [] });
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
   try {
-    const request = new Request("http://127.0.0.1/v1/responses", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({ model: "gpt-5.4-mini", input: "hello" })
-    });
+    const request = responsesRequest({ model: "gpt-5.4-mini", input: "hello" });
     const response = await proxyResponses(request);
     assert.equal(response.status, 200);
     assert.equal(forwarded.prompt_cache_retention, undefined);
@@ -276,15 +259,11 @@ test("proxyResponses maps OpenAI max effort to xhigh", async () => {
   let forwarded;
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith("/models")) return Response.json({ data: [] });
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
-  const request = new Request("http://127.0.0.1/v1/responses", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({ model: "gpt-5.5", input: "hello", reasoning: { effort: "max" } })
-  });
+  const request = responsesRequest({ model: "gpt-5.5", input: "hello", reasoning: { effort: "max" } });
   const response = await proxyResponses(request);
   assert.equal(response.status, 200);
   assert.equal(forwarded.reasoning.effort, "xhigh");
@@ -294,15 +273,11 @@ test("proxyResponses maps gpt-5-mini xhigh effort to high", async () => {
   let forwarded;
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith("/models")) return Response.json({ data: [] });
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
-  const request = new Request("http://127.0.0.1/v1/responses", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({ model: "gpt-5-mini", input: "hello", reasoning: { effort: "xhigh" } })
-  });
+  const request = responsesRequest({ model: "gpt-5-mini", input: "hello", reasoning: { effort: "xhigh" } });
   const response = await proxyResponses(request);
   assert.equal(response.status, 200);
   assert.equal(forwarded.reasoning.effort, "high");
@@ -311,15 +286,11 @@ test("proxyResponses maps gpt-5-mini xhigh effort to high", async () => {
 test("proxyChatCompletions maps flat OpenAI max effort to xhigh", async () => {
   let forwarded;
   globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
-  const request = new Request("http://127.0.0.1/v1/chat/completions", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "hello" }], reasoning_effort: "max" })
-  });
+  const request = chatRequest({ model: "gpt-5.5", messages: [{ role: "user", content: "hello" }], reasoning_effort: "max" });
   const response = await proxyChatCompletions(request);
   assert.equal(response.status, 200);
   assert.equal(forwarded.reasoning_effort, "xhigh");
@@ -330,20 +301,16 @@ test("proxyMessages injects Anthropic cache_control on system content", async ()
   delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
   let forwarded;
   globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true, usage: { cache_creation_input_tokens: 13, cache_read_input_tokens: 0 } });
   };
 
   try {
-    const request = new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4.6",
-        max_tokens: 32,
-        system: [{ type: "text", text: "Long stable project context" }],
-        messages: [{ role: "user", content: "hello" }]
-      })
+    const request = messagesRequest({
+      model: "claude-sonnet-4.6",
+      max_tokens: 32,
+      system: [{ type: "text", text: "Long stable project context" }],
+      messages: [{ role: "user", content: "hello" }]
     });
     const response = await proxyMessages(request);
     assert.equal(response.status, 200);
@@ -357,19 +324,15 @@ test("proxyMessages injects Anthropic cache_control on system content", async ()
 test("proxyMessages preserves client Anthropic cache_control", async () => {
   let forwarded;
   globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4.6",
-      max_tokens: 32,
-      system: [{ type: "text", text: "Long stable project context", cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-sonnet-4.6",
+    max_tokens: 32,
+    system: [{ type: "text", text: "Long stable project context", cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   assert.equal(response.status, 200);
@@ -379,15 +342,11 @@ test("proxyMessages preserves client Anthropic cache_control", async () => {
 test("proxyMessages maps legacy enabled thinking to adaptive thinking plus effort", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4.7",
-      max_tokens: 32,
-      thinking: { type: "enabled", budget_tokens: 32000 },
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-opus-4.7",
+    max_tokens: 32,
+    thinking: { type: "enabled", budget_tokens: 32000 },
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   const forwarded = capture.forwarded[0];
@@ -400,16 +359,12 @@ test("proxyMessages maps legacy enabled thinking to adaptive thinking plus effor
 test("proxyMessages preserves existing output_config effort when mapping legacy thinking", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4.7",
-      max_tokens: 32,
-      thinking: { type: { enabled: true } },
-      output_config: { effort: "xhigh" },
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-opus-4.7",
+    max_tokens: 32,
+    thinking: { type: { enabled: true } },
+    output_config: { effort: "xhigh" },
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   const forwarded = capture.forwarded[0];
@@ -422,20 +377,16 @@ test("proxyMessages preserves existing output_config effort when mapping legacy 
 test("proxyMessages leaves adaptive thinking unchanged", async () => {
   let forwarded;
   globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4.6",
-      max_tokens: 32,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-sonnet-4.6",
+    max_tokens: 32,
+    thinking: { type: "adaptive" },
+    output_config: { effort: "medium" },
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   assert.equal(response.status, 200);
@@ -446,16 +397,12 @@ test("proxyMessages leaves adaptive thinking unchanged", async () => {
 test("proxyMessages routes Claude Opus 4.7 non-medium effort to live catalog model", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4.7",
-      max_tokens: 32,
-      output_config: { effort: "xhigh" },
-      system: [{ type: "text", text: "Long stable project context" }],
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-opus-4.7",
+    max_tokens: 32,
+    output_config: { effort: "xhigh" },
+    system: [{ type: "text", text: "Long stable project context" }],
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   const forwarded = capture.forwarded[0];
@@ -467,16 +414,12 @@ test("proxyMessages routes Claude Opus 4.7 non-medium effort to live catalog mod
 test("proxyMessages maps max effort to xhigh on a live catalog Claude Opus 4.7 model", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4.7",
-      max_tokens: 32,
-      output_config: { effort: "max" },
-      system: [{ type: "text", text: "Long stable project context" }],
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-opus-4.7",
+    max_tokens: 32,
+    output_config: { effort: "max" },
+    system: [{ type: "text", text: "Long stable project context" }],
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   const forwarded = capture.forwarded[0];
@@ -488,16 +431,12 @@ test("proxyMessages maps max effort to xhigh on a live catalog Claude Opus 4.7 m
 test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to live catalog model", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4-7",
-      max_tokens: 32,
-      output_config: { effort: "xhigh" },
-      system: [{ type: "text", text: "Long stable project context" }],
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-opus-4-7",
+    max_tokens: 32,
+    output_config: { effort: "xhigh" },
+    system: [{ type: "text", text: "Long stable project context" }],
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   const forwarded = capture.forwarded[0];
@@ -509,15 +448,11 @@ test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to live catalog mo
 test("proxyMessages normalizes legacy Claude Opus 4.7 effort model suffixes", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4.7-high",
-      max_tokens: 32,
-      output_config: { effort: "high" },
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-opus-4.7-high",
+    max_tokens: 32,
+    output_config: { effort: "high" },
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   const forwarded = capture.forwarded[0];
@@ -533,15 +468,11 @@ test("proxyMessages leaves model unchanged when live catalog has no compatible C
     ]
   });
 
-  const request = new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4.7",
-      max_tokens: 32,
-      thinking: { type: "enabled", budget_tokens: 32000 },
-      messages: [{ role: "user", content: "hello" }]
-    })
+  const request = messagesRequest({
+    model: "claude-opus-4.7",
+    max_tokens: 32,
+    thinking: { type: "enabled", budget_tokens: 32000 },
+    messages: [{ role: "user", content: "hello" }]
   });
   const response = await proxyMessages(request);
   const forwarded = capture.forwarded[0];
@@ -556,16 +487,12 @@ test("proxyResponses can apply configured default cache retention", async () => 
   process.env.AERIAL_PROMPT_CACHE_RETENTION = "in_memory";
   let forwarded;
   globalThis.fetch = async (_url, init) => {
-    forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    forwarded = parseForwardedJson(init);
     return Response.json({ ok: true });
   };
 
   try {
-    const request = new Request("http://127.0.0.1/v1/responses", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({ model: "gpt-5.4-mini", input: "hello" })
-    });
+    const request = responsesRequest({ model: "gpt-5.4-mini", input: "hello" });
     const response = await proxyResponses(request);
     assert.equal(response.status, 200);
     assert.equal(forwarded.prompt_cache_retention, "in_memory");
@@ -585,18 +512,14 @@ test("proxyMessages catalog fetch is cached across sequential Claude Opus 4.7 re
       modelsCalls += 1;
       return Response.json({ data: [anthropicEffortModel("claude-opus-4.7-cache-target")] });
     }
-    forwarded.push(JSON.parse(Buffer.from(init.body).toString("utf8")));
+    forwarded.push(parseForwardedJson(init));
     return Response.json({ ok: true });
   };
-  const makeRequest = () => new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-opus-4.7",
-      messages: [{ role: "user", content: "hello" }],
-      output_config: { effort: "xhigh" },
-      max_tokens: 8
-    })
+  const makeRequest = () => messagesRequest({
+    model: "claude-opus-4.7",
+    messages: [{ role: "user", content: "hello" }],
+    output_config: { effort: "xhigh" },
+    max_tokens: 8
   });
   await proxyMessages(makeRequest());
   await proxyMessages(makeRequest());
@@ -616,14 +539,10 @@ function withDefaultEffort(value, fn) {
 test("proxyMessages injects Aerial defaultEffort when request has no effort/thinking signal", async () => {
   await withDefaultEffort("high", async () => {
     const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
-    const request = new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-opus-4.7",
-        max_tokens: 32,
-        messages: [{ role: "user", content: "hello" }]
-      })
+    const request = messagesRequest({
+      model: "claude-opus-4.7",
+      max_tokens: 32,
+      messages: [{ role: "user", content: "hello" }]
     });
     const response = await proxyMessages(request);
     const forwarded = capture.forwarded[0];
@@ -636,15 +555,11 @@ test("proxyMessages injects Aerial defaultEffort when request has no effort/thin
 test("proxyMessages does not override explicit output_config.effort with defaultEffort", async () => {
   await withDefaultEffort("high", async () => {
     const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-low")] });
-    const request = new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-opus-4.7",
-        max_tokens: 32,
-        output_config: { effort: "low" },
-        messages: [{ role: "user", content: "hello" }]
-      })
+    const request = messagesRequest({
+      model: "claude-opus-4.7",
+      max_tokens: 32,
+      output_config: { effort: "low" },
+      messages: [{ role: "user", content: "hello" }]
     });
     const response = await proxyMessages(request);
     const forwarded = capture.forwarded[0];
@@ -656,15 +571,11 @@ test("proxyMessages does not override explicit output_config.effort with default
 test("proxyMessages does not override legacy thinking effort with defaultEffort", async () => {
   await withDefaultEffort("xhigh", async () => {
     const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-thinking-current")] });
-    const request = new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-opus-4.7",
-        max_tokens: 32,
-        thinking: { type: "enabled", budget_tokens: 4096 },
-        messages: [{ role: "user", content: "hello" }]
-      })
+    const request = messagesRequest({
+      model: "claude-opus-4.7",
+      max_tokens: 32,
+      thinking: { type: "enabled", budget_tokens: 4096 },
+      messages: [{ role: "user", content: "hello" }]
     });
     const response = await proxyMessages(request);
     const forwarded = capture.forwarded[0];
@@ -678,18 +589,14 @@ test("proxyMessages does not inject defaultEffort when adaptive thinking is set 
   await withDefaultEffort("high", async () => {
     let forwarded;
     globalThis.fetch = async (_url, init) => {
-      forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+      forwarded = parseForwardedJson(init);
       return Response.json({ ok: true });
     };
-    const request = new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4.6",
-        max_tokens: 32,
-        thinking: { type: "adaptive" },
-        messages: [{ role: "user", content: "hello" }]
-      })
+    const request = messagesRequest({
+      model: "claude-sonnet-4.6",
+      max_tokens: 32,
+      thinking: { type: "adaptive" },
+      messages: [{ role: "user", content: "hello" }]
     });
     const response = await proxyMessages(request);
     assert.equal(response.status, 200);
@@ -702,17 +609,13 @@ test("proxyMessages does not inject defaultEffort for non-Opus Claude models (e.
   await withDefaultEffort("high", async () => {
     let forwarded;
     globalThis.fetch = async (_url, init) => {
-      forwarded = JSON.parse(Buffer.from(init.body).toString("utf8"));
+      forwarded = parseForwardedJson(init);
       return Response.json({ ok: true });
     };
-    const request = new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4.6",
-        max_tokens: 32,
-        messages: [{ role: "user", content: "hello" }]
-      })
+    const request = messagesRequest({
+      model: "claude-sonnet-4.6",
+      max_tokens: 32,
+      messages: [{ role: "user", content: "hello" }]
     });
     const response = await proxyMessages(request);
     assert.equal(response.status, 200);
@@ -727,14 +630,10 @@ test("proxyMessages falls back to medium when defaultEffort is invalid in config
   fs.writeFileSync(raw, JSON.stringify({ ...current, defaultEffort: "turbo" }, null, 2));
   try {
     const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-medium-target")] });
-    const request = new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-opus-4.7",
-        max_tokens: 32,
-        messages: [{ role: "user", content: "hello" }]
-      })
+    const request = messagesRequest({
+      model: "claude-opus-4.7",
+      max_tokens: 32,
+      messages: [{ role: "user", content: "hello" }]
     });
     const response = await proxyMessages(request);
     const forwarded = capture.forwarded[0];

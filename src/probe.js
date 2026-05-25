@@ -1,30 +1,13 @@
 import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses } from "./copilot.js";
+import { readJsonSafely } from "./http-utils.js";
+import { aerialRoutes, usageSummary } from "./model-utils.js";
 
 function modelRoutes(model) {
-  return model.aerial?.routes || [];
+  return aerialRoutes(model);
 }
 
 function firstModel(models, route) {
   return models.find((model) => modelRoutes(model).includes(route));
-}
-
-async function readJson(response) {
-  const text = await response.text();
-  if (!text) return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { raw: text };
-  }
-}
-
-function tokenSummary(payload) {
-  const usage = payload.usage || {};
-  return {
-    input: usage.input_tokens ?? usage.prompt_tokens,
-    output: usage.output_tokens ?? usage.completion_tokens,
-    cached: usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens
-  };
 }
 
 async function probeRoute(name, model, handler, payload, headers = {}) {
@@ -33,14 +16,14 @@ async function probeRoute(name, model, handler, payload, headers = {}) {
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(payload)
   }));
-  const body = await readJson(response);
+  const body = await readJsonSafely(response);
   return {
     route: name,
     model: model.id,
     ok: response.ok,
     status: response.status,
     contentType: response.headers.get("content-type") || undefined,
-    usage: response.ok ? tokenSummary(body) : undefined,
+    usage: response.ok ? usageSummary(body) : undefined,
     error: response.ok ? undefined : body.error || body
   };
 }
@@ -52,7 +35,7 @@ function summarizeModels(models) {
     if (routes.includes("responses")) summary.responses += 1;
     if (routes.includes("messages")) summary.messages += 1;
     if (routes.includes("chat")) summary.chat += 1;
-    if (modelRoutes(model).includes("responses_websocket")) summary.websocketResponses += 1;
+    if (routes.includes("responses_websocket")) summary.websocketResponses += 1;
     if (model.aerial?.notes?.includes("embeddings_not_implemented")) summary.embeddings += 1;
     if (!model.aerial?.supported) summary.unsupported += 1;
   }
@@ -61,7 +44,7 @@ function summarizeModels(models) {
 
 export async function runProbe({ live = false } = {}) {
   const modelsResponse = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET" }));
-  const modelsPayload = await readJson(modelsResponse);
+  const modelsPayload = await readJsonSafely(modelsResponse);
   if (!modelsResponse.ok) {
     return { ok: false, generatedAt: new Date().toISOString(), error: modelsPayload.error || modelsPayload };
   }

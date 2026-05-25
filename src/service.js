@@ -622,8 +622,8 @@ function windowsServiceState(ctx) {
 }
 
 function serviceState(ctx) {
-  if (process.platform === "darwin") return darwinServiceState(ctx);
-  if (process.platform === "win32") return windowsServiceState(ctx);
+  const adapter = serviceAdapter(ctx);
+  if (adapter) return adapter.state();
   return { installed: false, loaded: false, reason: "unsupported_platform" };
 }
 
@@ -700,162 +700,237 @@ function windowsWriteDefinition(ctx) {
   return { wrapper, create };
 }
 
-async function describeRunning(ctx, host, port, healthFetch) {
+function serviceAdapter(ctx) {
+  if (process.platform === "darwin") {
+    return {
+      platform: "darwin",
+      wrapperPath: darwinWrapperPath,
+      state: () => darwinServiceState(ctx),
+      writeDefinition: () => {
+        const written = darwinWriteDefinition();
+        return {
+          ok: true,
+          info: { file: written.file, wrapper: written.wrapper, label: SERVICE_LABEL }
+        };
+      },
+      triggerStart: () => darwinBootstrap(ctx),
+      triggerStop: () => darwinBootout(ctx),
+      startFailureReason: "bootstrap_failed",
+      startResultKey: "bootstrap",
+      uninstall: (state) => darwinUninstall(ctx, state)
+    };
+  }
+  if (process.platform === "win32") {
+    return {
+      platform: "win32",
+      wrapperPath: winWrapperPath,
+      state: () => windowsServiceState(ctx),
+      writeDefinition: () => {
+        const written = windowsWriteDefinition(ctx);
+        const info = {
+          taskName: WIN_TASK_NAME,
+          wrapper: written.wrapper,
+          create: { status: written.create.status, stderr: written.create.stderr }
+        };
+        return { ok: written.create.status === 0, info };
+      },
+      triggerStart: () => ctx.run("schtasks.exe", buildSchtasksArgs("run")),
+      triggerStop: () => ctx.run("schtasks.exe", buildSchtasksArgs("end")),
+      startFailureReason: "run_failed",
+      startResultKey: "run",
+      uninstall: (state) => windowsUninstall(ctx, state)
+    };
+  }
+  return undefined;
+}
+
+function requireServiceAdapter(ctx, action) {
+  const adapter = serviceAdapter(ctx);
+  if (!adapter) throw unsupportedError(action);
+  return adapter;
+}
+
+function commandResultBlock(key, result) {
+  return { [key]: { status: result.status, stderr: result.stderr } };
+}
+
+function buildDefinitionRefreshFailure({ adapter, supervisor, config, definition }) {
+  const isManaged = supervisor === "service-managed";
+  const status = definition.info.create?.status;
+  const reason = isManaged ? "managed_definition_refresh_failed" : "foreground_definition_refresh_failed";
+  const message = isManaged
+    ? `schtasks /Create failed (status ${status}) while refreshing the managed-service definition. The running service was not disturbed, but wrapper/env changes were NOT applied. Resolve the underlying schtasks error and rerun \`aerial service install\`.`
+    : `Aerial is already running in the foreground on port ${config.port}. The wrapper was rewritten but schtasks /Create failed (status ${status}), so the Task Scheduler definition was NOT refreshed. Resolve the underlying schtasks error and rerun \`aerial service install\`.`;
+  return {
+    ok: false,
+    action: "install",
+    platform: adapter.platform,
+    reason,
+    ...(isManaged ? {} : { definitionUpdated: false }),
+    message,
+    warning: tokenWarning(),
+    ...definition.info
+  };
+}
+
+function buildRunningDefinitionResult({ adapter, supervisor, config, definition }) {
+  const managed = supervisor === "service-managed";
+  return {
+    ok: managed,
+    action: "install",
+    platform: adapter.platform,
+    ...(managed
+      ? {
+          note: "already running (service-managed); definition refreshed; run `aerial service restart` to apply wrapper/env changes"
+        }
+      : {
+          reason: "foreground_running",
+          message: `Aerial is already running in the foreground on port ${config.port}. The service definition has been updated, but the service was NOT started to avoid running two instances. Next step: stop the foreground process, then run \`aerial service start\`.`
+        }),
+    definitionUpdated: true,
+    warning: tokenWarning(),
+    ...definition.info
+  };
+}
+
+async function confirmStarted({ action, result, config, wrapper, healthFetch, healthDeadlineMs }) {
+  if (!result.ok) return result;
+  if (process.env.AERIAL_SERVICE_DRYRUN === "1") {
+    return { ...result, health: { ok: true, attempts: 0, elapsedMs: 0, dryRun: true } };
+  }
+  const poll = await pollForAerialUp(config.host, config.port, healthFetch, healthDeadlineMs);
+  if (poll.cls.mode === "aerial_running") {
+    return { ...result, health: { ok: true, attempts: poll.attempts, elapsedMs: poll.elapsedMs } };
+  }
+  const diagnostics = healthFailedDiagnostics({
+    wrapper,
+    probe: poll.probe,
+    attempts: poll.attempts,
+    elapsedMs: poll.elapsedMs
+  });
+  if (poll.cls.mode === "port_conflict") {
+    const prefix = action === "install" ? "After install" : "After start";
+    return {
+      ...result,
+      ok: false,
+      reason: "port_conflict",
+      message: `${prefix}, port ${config.port} is responding as a non-Aerial process: ${poll.cls.reason}. Free the port and rerun.`,
+      diagnostics
+    };
+  }
+  const message = action === "install"
+    ? `Service definition was written and start was triggered, but /health did not become Aerial within ${poll.elapsedMs}ms (${poll.attempts} attempts). Inspect logs and rerun \`aerial service status --json\`.`
+    : `Start was triggered, but /health did not become Aerial within ${poll.elapsedMs}ms (${poll.attempts} attempts). Inspect logs and rerun \`aerial service status --json\`.`;
+  return {
+    ...result,
+    ok: false,
+    reason: "health_check_failed",
+    ...(action === "install" ? { definitionWritten: true } : {}),
+    startAttempted: true,
+    message,
+    diagnostics
+  };
+}
+
+async function describeRunning(adapter, host, port, healthFetch, knownState) {
   const probe = await (healthFetch || defaultHealthFetch)(host, port);
   const cls = classifyHealth(probe);
   if (cls.mode !== "aerial_running") return { cls, probe };
-  const state = serviceState(ctx);
+  const state = knownState || adapter.state();
   const supervisor = state.installed && state.loaded ? "service-managed" : "foreground";
   return { cls, probe, supervisor };
 }
 
 export async function serviceInstall({ run = defaultRunCommand, healthFetch, healthDeadlineMs } = {}) {
-  if (isUnsupportedPlatform()) throw unsupportedError("install");
   const ctx = { run };
+  const adapter = requireServiceAdapter(ctx, "install");
   const config = loadConfig();
-  const { cls, supervisor } = await describeRunning(ctx, config.host, config.port, healthFetch);
+  const { cls, supervisor } = await describeRunning(adapter, config.host, config.port, healthFetch);
   if (cls.mode === "port_conflict") {
-    logEvent("service_install", { platform: process.platform, ok: false, reason: "port_conflict" });
+    logEvent("service_install", { platform: adapter.platform, ok: false, reason: "port_conflict" });
     return {
       ok: false,
       action: "install",
-      platform: process.platform,
+      platform: adapter.platform,
       reason: "port_conflict",
       message: `Port ${config.port} is already in use by a non-Aerial process: ${cls.reason}. Free the port and rerun.`
     };
   }
-  if (cls.mode === "aerial_running" && supervisor === "service-managed") {
-    let writeInfo;
-    if (process.platform === "darwin") {
-      const written = darwinWriteDefinition();
-      writeInfo = { file: written.file, wrapper: written.wrapper, label: SERVICE_LABEL };
-    } else {
-      const written = windowsWriteDefinition(ctx);
-      writeInfo = { taskName: WIN_TASK_NAME, wrapper: written.wrapper, create: { status: written.create.status, stderr: written.create.stderr } };
-      if (written.create.status !== 0) {
-        logEvent("service_install", { platform: "win32", ok: false, reason: "managed_definition_refresh_failed", status: written.create.status });
-        return {
-          ok: false,
-          action: "install",
-          platform: "win32",
-          reason: "managed_definition_refresh_failed",
-          message: `schtasks /Create failed (status ${written.create.status}) while refreshing the managed-service definition. The running service was not disturbed, but wrapper/env changes were NOT applied. Resolve the underlying schtasks error and rerun \`aerial service install\`.`,
-          warning: tokenWarning(),
-          ...writeInfo
-        };
-      }
+  if (cls.mode === "aerial_running") {
+    const definition = adapter.writeDefinition();
+    if (!definition.ok) {
+      const failure = buildDefinitionRefreshFailure({ adapter, supervisor, config, definition });
+      logEvent("service_install", {
+        platform: adapter.platform,
+        ok: false,
+        reason: failure.reason,
+        status: definition.info.create?.status
+      });
+      return failure;
     }
-    logEvent("service_install", { platform: process.platform, ok: true, note: "managed_refreshed", definitionUpdated: true });
-    return {
-      ok: true,
-      action: "install",
-      platform: process.platform,
-      note: "already running (service-managed); definition refreshed; run `aerial service restart` to apply wrapper/env changes",
-      definitionUpdated: true,
-      warning: tokenWarning(),
-      ...writeInfo
-    };
+    const result = buildRunningDefinitionResult({ adapter, supervisor, config, definition });
+    logEvent("service_install", {
+      platform: adapter.platform,
+      ok: result.ok,
+      reason: result.reason,
+      note: supervisor === "service-managed" ? "managed_refreshed" : undefined,
+      definitionUpdated: true
+    });
+    return result;
   }
-  if (cls.mode === "aerial_running" && supervisor === "foreground") {
-    let writeInfo;
-    if (process.platform === "darwin") {
-      const written = darwinWriteDefinition();
-      writeInfo = { file: written.file, wrapper: written.wrapper, label: SERVICE_LABEL };
-    } else {
-      const written = windowsWriteDefinition(ctx);
-      writeInfo = { taskName: WIN_TASK_NAME, wrapper: written.wrapper, create: { status: written.create.status, stderr: written.create.stderr } };
-      if (written.create.status !== 0) {
-        logEvent("service_install", { platform: "win32", ok: false, reason: "foreground_definition_refresh_failed", status: written.create.status });
-        return {
-          ok: false,
-          action: "install",
-          platform: "win32",
-          reason: "foreground_definition_refresh_failed",
-          definitionUpdated: false,
-          message: `Aerial is already running in the foreground on port ${config.port}. The wrapper was rewritten but schtasks /Create failed (status ${written.create.status}), so the Task Scheduler definition was NOT refreshed. Resolve the underlying schtasks error and rerun \`aerial service install\`.`,
-          warning: tokenWarning(),
-          ...writeInfo
-        };
-      }
-    }
-    logEvent("service_install", { platform: process.platform, ok: false, reason: "foreground_running", definitionUpdated: true });
-    return {
-      ok: false,
-      action: "install",
-      platform: process.platform,
-      reason: "foreground_running",
-      definitionUpdated: true,
-      message: `Aerial is already running in the foreground on port ${config.port}. The service definition has been updated, but the service was NOT started to avoid running two instances. Next step: stop the foreground process, then run \`aerial service start\`.`,
-      warning: tokenWarning(),
-      ...writeInfo
-    };
-  }
-  let result;
-  if (process.platform === "darwin") {
-    const written = darwinWriteDefinition();
-    const bootstrap = darwinBootstrap(ctx);
-    const ok = bootstrap.status === 0;
-    result = { ok, action: "install", platform: "darwin", file: written.file, wrapper: written.wrapper, label: SERVICE_LABEL, bootstrap: { status: bootstrap.status, stderr: bootstrap.stderr } };
-    if (!ok) result.reason = "bootstrap_failed";
+
+  const definition = adapter.writeDefinition();
+  let result = {
+    ok: definition.ok,
+    action: "install",
+    platform: adapter.platform,
+    ...definition.info
+  };
+  if (!definition.ok) {
+    result.reason = "create_failed";
   } else {
-    const written = windowsWriteDefinition(ctx);
-    const createOk = written.create.status === 0;
-    if (!createOk) {
-      result = { ok: false, action: "install", platform: "win32", taskName: WIN_TASK_NAME, wrapper: written.wrapper, create: { status: written.create.status, stderr: written.create.stderr }, reason: "create_failed" };
-    } else {
-      const runRes = ctx.run("schtasks.exe", buildSchtasksArgs("run"));
-      const ok = runRes.status === 0;
-      result = { ok, action: "install", platform: "win32", taskName: WIN_TASK_NAME, wrapper: written.wrapper, create: { status: written.create.status, stderr: written.create.stderr }, run: { status: runRes.status, stderr: runRes.stderr } };
-      if (!ok) result.reason = "run_failed";
-    }
+    const start = adapter.triggerStart();
+    const triggerOk = start.status === 0;
+    result = {
+      ...result,
+      ok: triggerOk,
+      ...commandResultBlock(adapter.startResultKey, start),
+      ...(triggerOk ? {} : { reason: adapter.startFailureReason })
+    };
   }
-  if (result.ok) {
-    if (process.env.AERIAL_SERVICE_DRYRUN === "1") {
-      result.health = { ok: true, attempts: 0, elapsedMs: 0, dryRun: true };
-    } else {
-      const poll = await pollForAerialUp(config.host, config.port, healthFetch, healthDeadlineMs);
-      if (poll.cls.mode === "aerial_running") {
-        result.health = { ok: true, attempts: poll.attempts, elapsedMs: poll.elapsedMs };
-      } else if (poll.cls.mode === "port_conflict") {
-        result.ok = false;
-        result.reason = "port_conflict";
-        result.message = `After install, port ${config.port} is responding as a non-Aerial process: ${poll.cls.reason}. Free the port and rerun.`;
-        result.diagnostics = healthFailedDiagnostics({ wrapper: result.wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs });
-      } else {
-        result.ok = false;
-        result.reason = "health_check_failed";
-        result.definitionWritten = true;
-        result.startAttempted = true;
-        result.message = `Service definition was written and start was triggered, but /health did not become Aerial within ${poll.elapsedMs}ms (${poll.attempts} attempts). Inspect logs and rerun \`aerial service status --json\`.`;
-        result.diagnostics = healthFailedDiagnostics({ wrapper: result.wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs });
-      }
-    }
-  }
+  result = await confirmStarted({
+    action: "install",
+    result,
+    config,
+    wrapper: result.wrapper,
+    healthFetch,
+    healthDeadlineMs
+  });
   result.warning = tokenWarning();
-  logEvent("service_install", { platform: process.platform, ok: result.ok, reason: result.reason });
+  logEvent("service_install", { platform: adapter.platform, ok: result.ok, reason: result.reason });
   return result;
 }
 
 export async function serviceStart({ run = defaultRunCommand, healthFetch, healthDeadlineMs } = {}) {
-  if (isUnsupportedPlatform()) throw unsupportedError("start");
   const ctx = { run };
+  const adapter = requireServiceAdapter(ctx, "start");
   const config = loadConfig();
-  const state = serviceState(ctx);
+  const state = adapter.state();
   if (!state.installed) {
     return {
       ok: false,
       action: "start",
-      platform: process.platform,
+      platform: adapter.platform,
       reason: "not_installed",
       message: "Service is not installed. Run `aerial service install` first."
     };
   }
-  const { cls, supervisor } = await describeRunning(ctx, config.host, config.port, healthFetch);
+  const { cls, supervisor } = await describeRunning(adapter, config.host, config.port, healthFetch, state);
   if (cls.mode === "port_conflict") {
     return {
       ok: false,
       action: "start",
-      platform: process.platform,
+      platform: adapter.platform,
       reason: "port_conflict",
       message: `Port ${config.port} is already in use by a non-Aerial process: ${cls.reason}. Free the port and rerun.`
     };
@@ -864,7 +939,7 @@ export async function serviceStart({ run = defaultRunCommand, healthFetch, healt
     return {
       ok: false,
       action: "start",
-      platform: process.platform,
+      platform: adapter.platform,
       reason: "foreground_running",
       message: `Aerial is already running in the foreground on port ${config.port}. Stop the foreground process before starting the service.`
     };
@@ -873,82 +948,51 @@ export async function serviceStart({ run = defaultRunCommand, healthFetch, healt
     return {
       ok: true,
       action: "start",
-      platform: process.platform,
+      platform: adapter.platform,
       note: "already running (service-managed)",
       warning: tokenWarning()
     };
   }
-  let r;
-  if (process.platform === "darwin") {
-    r = darwinBootstrap(ctx);
-  } else {
-    r = ctx.run("schtasks.exe", buildSchtasksArgs("run"));
-  }
+  const r = adapter.triggerStart();
   const triggerOk = r.status === 0;
-  const base = {
+  let result = {
     ok: triggerOk,
     action: "start",
-    platform: process.platform,
+    platform: adapter.platform,
     status: r.status,
     stderr: r.stderr,
     warning: tokenWarning(),
-    ...(triggerOk ? {} : { reason: process.platform === "darwin" ? "bootstrap_failed" : "run_failed" })
+    ...(triggerOk ? {} : { reason: adapter.startFailureReason })
   };
   if (!triggerOk) {
-    logEvent("service_start", { platform: process.platform, status: r.status, reason: base.reason });
-    return base;
+    logEvent("service_start", { platform: adapter.platform, status: r.status, reason: result.reason });
+    return result;
   }
-  if (process.env.AERIAL_SERVICE_DRYRUN === "1") {
-    base.health = { ok: true, attempts: 0, elapsedMs: 0, dryRun: true };
-    logEvent("service_start", { platform: process.platform, status: r.status, ok: true, dryRun: true });
-    return base;
-  }
-  const poll = await pollForAerialUp(config.host, config.port, healthFetch, healthDeadlineMs);
-  if (poll.cls.mode === "aerial_running") {
-    base.health = { ok: true, attempts: poll.attempts, elapsedMs: poll.elapsedMs };
-    logEvent("service_start", { platform: process.platform, status: r.status, ok: true });
-    return base;
-  }
-  const wrapper = process.platform === "darwin" ? darwinWrapperPath() : winWrapperPath();
-  if (poll.cls.mode === "port_conflict") {
-    logEvent("service_start", { platform: process.platform, ok: false, reason: "port_conflict" });
-    return {
-      ...base,
-      ok: false,
-      reason: "port_conflict",
-      message: `After start, port ${config.port} is responding as a non-Aerial process: ${poll.cls.reason}. Free the port and rerun.`,
-      diagnostics: healthFailedDiagnostics({ wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs })
-    };
-  }
-  logEvent("service_start", { platform: process.platform, ok: false, reason: "health_check_failed" });
-  return {
-    ...base,
-    ok: false,
-    reason: "health_check_failed",
-    startAttempted: true,
-    message: `Start was triggered, but /health did not become Aerial within ${poll.elapsedMs}ms (${poll.attempts} attempts). Inspect logs and rerun \`aerial service status --json\`.`,
-    diagnostics: healthFailedDiagnostics({ wrapper, probe: poll.probe, attempts: poll.attempts, elapsedMs: poll.elapsedMs })
-  };
+  result = await confirmStarted({
+    action: "start",
+    result,
+    config,
+    wrapper: adapter.wrapperPath(),
+    healthFetch,
+    healthDeadlineMs
+  });
+  logEvent("service_start", { platform: adapter.platform, status: r.status, ok: result.ok, reason: result.reason, dryRun: result.health?.dryRun });
+  return result;
 }
 
 export function serviceStop({ run = defaultRunCommand } = {}) {
-  if (isUnsupportedPlatform()) throw unsupportedError("stop");
   const ctx = { run };
-  const state = serviceState(ctx);
+  const adapter = requireServiceAdapter(ctx, "stop");
+  const state = adapter.state();
   if (!state.installed) {
-    return { ok: true, action: "stop", platform: process.platform, note: "not installed" };
+    return { ok: true, action: "stop", platform: adapter.platform, note: "not installed" };
   }
   if (!state.loaded) {
-    return { ok: true, action: "stop", platform: process.platform, note: "not running" };
+    return { ok: true, action: "stop", platform: adapter.platform, note: "not running" };
   }
-  let r;
-  if (process.platform === "darwin") {
-    r = darwinBootout(ctx);
-  } else {
-    r = ctx.run("schtasks.exe", buildSchtasksArgs("end"));
-  }
-  logEvent("service_stop", { platform: process.platform, status: r.status });
-  return { ok: r.status === 0, action: "stop", platform: process.platform, status: r.status, stderr: r.stderr };
+  const r = adapter.triggerStop();
+  logEvent("service_stop", { platform: adapter.platform, status: r.status });
+  return { ok: r.status === 0, action: "stop", platform: adapter.platform, status: r.status, stderr: r.stderr };
 }
 
 export async function serviceRestart(opts = {}) {
@@ -960,54 +1004,52 @@ export async function serviceRestart(opts = {}) {
   return { ok: start.ok, action: "restart", platform: process.platform, stop, start, warning: start.warning };
 }
 
-export function serviceUninstall({ run = defaultRunCommand } = {}) {
-  if (isUnsupportedPlatform()) throw unsupportedError("uninstall");
-  const ctx = { run };
-  const state = serviceState(ctx);
-  if (!state.installed) {
-    return { ok: true, action: "uninstall", platform: process.platform, note: "no service installed" };
+function removeFileIfExists(file) {
+  if (!fs.existsSync(file)) return false;
+  try {
+    fs.unlinkSync(file);
+    return true;
+  } catch {
+    return false;
   }
-  if (process.platform === "darwin") {
-    const file = plistPath();
-    const wrapper = darwinWrapperPath();
-    if (state.loaded) {
-      const bootout = darwinBootout(ctx);
-      if (bootout.status !== 0) {
-        logEvent("service_uninstall", { platform: "darwin", ok: false, reason: "bootout_failed", status: bootout.status });
-        return {
-          ok: false,
-          action: "uninstall",
-          platform: "darwin",
-          reason: "bootout_failed",
-          file,
-          wrapper,
-          bootout: { status: bootout.status, stderr: bootout.stderr },
-          message: `launchctl bootout failed (status ${bootout.status}). Service is still loaded; plist and wrapper were preserved. Retry with \`aerial service uninstall\`.`
-        };
-      }
-      try { fs.unlinkSync(file); } catch {}
-      if (fs.existsSync(wrapper)) {
-        try { fs.unlinkSync(wrapper); } catch {}
-      }
-      logEvent("service_uninstall", { platform: "darwin", ok: true });
-      return { ok: true, action: "uninstall", platform: "darwin", file, wrapper, bootout: { status: bootout.status, stderr: bootout.stderr } };
+}
+
+function darwinUninstall(ctx, state) {
+  const file = plistPath();
+  const wrapper = darwinWrapperPath();
+  if (state.loaded) {
+    const bootout = darwinBootout(ctx);
+    if (bootout.status !== 0) {
+      logEvent("service_uninstall", { platform: "darwin", ok: false, reason: "bootout_failed", status: bootout.status });
+      return {
+        ok: false,
+        action: "uninstall",
+        platform: "darwin",
+        reason: "bootout_failed",
+        file,
+        wrapper,
+        bootout: { status: bootout.status, stderr: bootout.stderr },
+        message: `launchctl bootout failed (status ${bootout.status}). Service is still loaded; plist and wrapper were preserved. Retry with \`aerial service uninstall\`.`
+      };
     }
-    try { fs.unlinkSync(file); } catch {}
-    if (fs.existsSync(wrapper)) {
-      try { fs.unlinkSync(wrapper); } catch {}
-    }
+    removeFileIfExists(file);
+    removeFileIfExists(wrapper);
     logEvent("service_uninstall", { platform: "darwin", ok: true });
-    return { ok: true, action: "uninstall", platform: "darwin", file, wrapper, bootout: { status: 0, skipped: "not_loaded" } };
+    return { ok: true, action: "uninstall", platform: "darwin", file, wrapper, bootout: { status: bootout.status, stderr: bootout.stderr } };
   }
+  removeFileIfExists(file);
+  removeFileIfExists(wrapper);
+  logEvent("service_uninstall", { platform: "darwin", ok: true });
+  return { ok: true, action: "uninstall", platform: "darwin", file, wrapper, bootout: { status: 0, skipped: "not_loaded" } };
+}
+
+function windowsUninstall(ctx, state) {
   if (state.loaded) {
     ctx.run("schtasks.exe", buildSchtasksArgs("end"));
   }
   const del = ctx.run("schtasks.exe", buildSchtasksArgs("delete"));
   const wrapper = winWrapperPath();
-  let wrapperRemoved = false;
-  if (del.status === 0 && fs.existsSync(wrapper)) {
-    try { fs.unlinkSync(wrapper); wrapperRemoved = true; } catch {}
-  }
+  const wrapperRemoved = del.status === 0 ? removeFileIfExists(wrapper) : false;
   logEvent("service_uninstall", { platform: "win32", ok: del.status === 0 });
   return {
     ok: del.status === 0,
@@ -1019,6 +1061,16 @@ export function serviceUninstall({ run = defaultRunCommand } = {}) {
     delete: { status: del.status, stderr: del.stderr },
     ...(del.status === 0 ? {} : { reason: "delete_failed", message: `schtasks /Delete failed (status ${del.status}). Task and wrapper were preserved. Retry with \`aerial service uninstall\`.` })
   };
+}
+
+export function serviceUninstall({ run = defaultRunCommand } = {}) {
+  const ctx = { run };
+  const adapter = requireServiceAdapter(ctx, "uninstall");
+  const state = adapter.state();
+  if (!state.installed) {
+    return { ok: true, action: "uninstall", platform: adapter.platform, note: "no service installed" };
+  }
+  return adapter.uninstall(state);
 }
 
 export async function serviceStatus({ run = defaultRunCommand, healthFetch } = {}) {

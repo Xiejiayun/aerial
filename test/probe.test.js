@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { parseForwardedJson } from "./helpers.js";
 
 process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-probe-test-"));
 delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
@@ -49,7 +50,7 @@ test("runProbe live checks first model for each route", async () => {
       { id: "gpt", supported_endpoints: ["/responses", "/chat/completions"], capabilities: { type: "chat" } },
       { id: "claude", supported_endpoints: ["/v1/messages"], capabilities: { type: "chat" } }
     ] });
-    const body = JSON.parse(Buffer.from(init.body).toString("utf8"));
+    const body = parseForwardedJson(init);
     return Response.json({ ok: true, model: body.model, usage: { input_tokens: 1, output_tokens: 1, input_tokens_details: { cached_tokens: 0 } } });
   };
 

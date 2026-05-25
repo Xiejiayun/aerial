@@ -259,6 +259,43 @@ export function claudeStatus() {
   return { target: "claude", state, file, backups, model, baseUrl, effort };
 }
 
+function validateTomlBackup(content) {
+  try {
+    parseToml(content.toString("utf8"));
+  } catch (err) {
+    throw new Error(`Restore aborted: backup is not valid TOML (${err.message}). Live file left unchanged.`);
+  }
+}
+
+function validateJsonBackup(content) {
+  try {
+    JSON.parse(content.toString("utf8"));
+  } catch (err) {
+    throw new Error(`Restore aborted: backup is not valid JSON (${err.message}). Live file left unchanged.`);
+  }
+}
+
+const CLIENTS = Object.freeze({
+  codex: Object.freeze({
+    target: "codex",
+    file: codexConfigFile,
+    status: codexStatus,
+    validateBackup: validateTomlBackup
+  }),
+  claude: Object.freeze({
+    target: "claude",
+    file: claudeSettingsFile,
+    status: claudeStatus,
+    validateBackup: validateJsonBackup
+  })
+});
+
+function clientDescriptor(target) {
+  const descriptor = CLIENTS[target];
+  if (!descriptor) throw new Error(`Unknown restore target: ${target}. Use codex, claude, or all.`);
+  return descriptor;
+}
+
 export function setupStatus() {
   const config = loadConfig();
   const apiKeyFile = apiKeyPath();
@@ -274,17 +311,12 @@ export function setupStatus() {
         return { file: githubTokenFile, exists: source !== "missing", source };
       })()
     },
-    clients: {
-      codex: codexStatus(),
-      claude: claudeStatus()
-    }
+    clients: Object.fromEntries(Object.entries(CLIENTS).map(([target, client]) => [target, client.status()]))
   };
 }
 
 function clientFile(target) {
-  if (target === "codex") return codexConfigFile();
-  if (target === "claude") return claudeSettingsFile();
-  throw new Error(`Unknown restore target: ${target}. Use codex, claude, or all.`);
+  return clientDescriptor(target).file();
 }
 
 function resolveWritePath(file) {
@@ -297,20 +329,7 @@ function resolveWritePath(file) {
 }
 
 function validateBackupContent(target, content) {
-  const text = content.toString("utf8");
-  if (target === "codex") {
-    try {
-      parseToml(text);
-    } catch (err) {
-      throw new Error(`Restore aborted: backup is not valid TOML (${err.message}). Live file left unchanged.`);
-    }
-  } else if (target === "claude") {
-    try {
-      JSON.parse(text);
-    } catch (err) {
-      throw new Error(`Restore aborted: backup is not valid JSON (${err.message}). Live file left unchanged.`);
-    }
-  }
+  clientDescriptor(target).validateBackup(content);
 }
 
 function resolveRestoreMode(writePath, backupPath, targetExisted) {
@@ -369,7 +388,7 @@ export function restoreClient(target, { now = () => new Date() } = {}) {
 
 export function restoreAllClients(opts) {
   const results = {};
-  for (const target of ["codex", "claude"]) {
+  for (const target of Object.keys(CLIENTS)) {
     try {
       results[target] = restoreClient(target, opts);
     } catch (err) {

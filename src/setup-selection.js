@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { parseNumberChoice } from "./prompt-utils.js";
 
 export const EFFORT_VALUES = Object.freeze(["low", "medium", "high", "xhigh"]);
 export const DEFAULT_EFFORT = "medium";
@@ -19,14 +20,6 @@ export function assertValidEffort(raw) {
     throw new Error(`Invalid --effort ${JSON.stringify(raw)}. Allowed: ${EFFORT_VALUES.join(", ")} (or alias 'max' for xhigh).`);
   }
   return normalized;
-}
-
-function parseChoice(value, max, defaultIndex) {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return defaultIndex;
-  if (!/^\d+$/.test(trimmed)) return undefined;
-  const n = Number(trimmed);
-  return n >= 1 && n <= max ? n - 1 : undefined;
 }
 
 export async function chooseSetupEffort({
@@ -53,7 +46,7 @@ export async function chooseSetupEffort({
     }
     while (true) {
       const answer = await rl.question(`Choose effort [1-${EFFORT_VALUES.length}, default ${defaultIndex + 1} = ${DEFAULT_EFFORT}]: `);
-      const selectedIndex = parseChoice(answer, EFFORT_VALUES.length, defaultIndex);
+      const selectedIndex = parseNumberChoice(answer, { max: EFFORT_VALUES.length, defaultIndex });
       if (selectedIndex !== undefined) {
         return { effort: EFFORT_VALUES[selectedIndex], source: "prompt", displayed: true };
       }

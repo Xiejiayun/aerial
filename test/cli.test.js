@@ -1,17 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { cliEnv, configEnv, mkHome, repoRoot, runCli } from "./helpers.js";
 
 test("key generate does not print the raw local key", () => {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-test-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "key", "generate"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "" }
-  });
+  const { env } = configEnv("cli-test", { AERIAL_API_KEY: "" });
+  const result = runCli(["key", "generate"], { env });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /stored privately/);
@@ -19,19 +14,8 @@ test("key generate does not print the raw local key", () => {
 });
 
 test("setup codex configures command-backed auth without requiring AERIAL_API_KEY in the environment", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-codex-auth-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-codex-test"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      AERIAL_CONFIG_DIR: path.join(home, "config"),
-      AERIAL_API_KEY: "",
-      AERIAL_SKIP_ENV_PERSIST: "1"
-    }
-  });
+  const home = mkHome("cli-codex-auth");
+  const result = runCli(["setup", "codex", "--model", "gpt-codex-test"], { home });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Configured Codex/);
@@ -45,19 +29,8 @@ test("setup codex configures command-backed auth without requiring AERIAL_API_KE
 });
 
 test("setup all is not a client setup command", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-setup-all-removed-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "all"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      AERIAL_CONFIG_DIR: path.join(home, "config"),
-      AERIAL_API_KEY: "",
-      AERIAL_SKIP_ENV_PERSIST: "1"
-    }
-  });
+  const home = mkHome("cli-setup-all-removed");
+  const result = runCli(["setup", "all"], { home });
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /aerial setup all has been removed/);
@@ -68,19 +41,8 @@ test("setup all is not a client setup command", () => {
 });
 
 test("setup codex --effort without a value exits 1 with a helpful message", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-effort-missing-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-codex-test", "--effort"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      AERIAL_CONFIG_DIR: path.join(home, "config"),
-      AERIAL_API_KEY: "",
-      AERIAL_SKIP_ENV_PERSIST: "1"
-    }
-  });
+  const home = mkHome("cli-effort-missing");
+  const result = runCli(["setup", "codex", "--model", "gpt-codex-test", "--effort"], { home });
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--effort requires a value/);
@@ -88,19 +50,8 @@ test("setup codex --effort without a value exits 1 with a helpful message", () =
 });
 
 test("setup codex --effort turbo (invalid) exits 1 before writing config", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-effort-invalid-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-codex-test", "--effort", "turbo"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      AERIAL_CONFIG_DIR: path.join(home, "config"),
-      AERIAL_API_KEY: "",
-      AERIAL_SKIP_ENV_PERSIST: "1"
-    }
-  });
+  const home = mkHome("cli-effort-invalid");
+  const result = runCli(["setup", "codex", "--model", "gpt-codex-test", "--effort", "turbo"], { home });
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Invalid --effort/);
@@ -108,21 +59,10 @@ test("setup codex --effort turbo (invalid) exits 1 before writing config", () =>
 });
 
 test("setup codex and setup claude keep separate model choices", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-separate-models-"));
-  const common = {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      AERIAL_CONFIG_DIR: path.join(home, "config"),
-      AERIAL_API_KEY: "",
-      AERIAL_SKIP_ENV_PERSIST: "1"
-    }
-  };
-  const codexResult = spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-codex-test"], common);
-  const claudeResult = spawnSync(process.execPath, ["src/cli.js", "setup", "claude", "--model", "claude-messages-test"], common);
+  const home = mkHome("cli-separate-models");
+  const env = cliEnv(home);
+  const codexResult = runCli(["setup", "codex", "--model", "gpt-codex-test"], { env });
+  const claudeResult = runCli(["setup", "claude", "--model", "claude-messages-test"], { env });
 
   assert.equal(codexResult.status, 0, codexResult.stderr);
   assert.equal(claudeResult.status, 0, claudeResult.stderr);
@@ -135,40 +75,34 @@ test("setup codex and setup claude keep separate model choices", () => {
 });
 
 test("config set defaultEffort accepts low/medium/high/xhigh and max alias", () => {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-effort-config-"));
-  const baseEnv = { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" };
-  spawnSync(process.execPath, ["src/cli.js", "key", "generate"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const { env: baseEnv } = configEnv("cli-effort-config");
+  runCli(["key", "generate"], { env: baseEnv });
 
-  const setHigh = spawnSync(process.execPath, ["src/cli.js", "config", "set", "defaultEffort", "high"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const setHigh = runCli(["config", "set", "defaultEffort", "high"], { env: baseEnv });
   assert.equal(setHigh.status, 0, setHigh.stderr);
-  const showHigh = spawnSync(process.execPath, ["src/cli.js", "config"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const showHigh = runCli(["config"], { env: baseEnv });
   assert.match(showHigh.stdout, /"defaultEffort":\s*"high"/);
 
-  const setMax = spawnSync(process.execPath, ["src/cli.js", "config", "set", "defaultEffort", "max"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const setMax = runCli(["config", "set", "defaultEffort", "max"], { env: baseEnv });
   assert.equal(setMax.status, 0, setMax.stderr);
-  const showMax = spawnSync(process.execPath, ["src/cli.js", "config"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const showMax = runCli(["config"], { env: baseEnv });
   assert.match(showMax.stdout, /"defaultEffort":\s*"xhigh"/);
 });
 
 test("config set defaultEffort rejects invalid values", () => {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-effort-config-bad-"));
-  const baseEnv = { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" };
-  spawnSync(process.execPath, ["src/cli.js", "key", "generate"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const { env: baseEnv } = configEnv("cli-effort-config-bad");
+  runCli(["key", "generate"], { env: baseEnv });
 
-  const result = spawnSync(process.execPath, ["src/cli.js", "config", "set", "defaultEffort", "turbo"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const result = runCli(["config", "set", "defaultEffort", "turbo"], { env: baseEnv });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Invalid --effort/);
 });
 
 test("config reset repairs an invalid config.json", () => {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-config-reset-"));
+  const { configDir, env } = configEnv("cli-config-reset");
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(path.join(configDir, "config.json"), "{bad json", "utf8");
-  const result = spawnSync(process.execPath, ["src/cli.js", "config", "reset"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" }
-  });
+  const result = runCli(["config", "reset"], { env });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Reset Aerial config/);
   const config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
@@ -177,14 +111,13 @@ test("config reset repairs an invalid config.json", () => {
 });
 
 test("config set validates port before writing", () => {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-port-config-"));
-  const baseEnv = { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" };
-  const valid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "port", "18182"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const { configDir, env: baseEnv } = configEnv("cli-port-config");
+  const valid = runCli(["config", "set", "port", "18182"], { env: baseEnv });
   assert.equal(valid.status, 0, valid.stderr);
   let config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
   assert.equal(config.port, 18182);
 
-  const invalid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "port", "NaN"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const invalid = runCli(["config", "set", "port", "NaN"], { env: baseEnv });
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /port must be an integer/);
   config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
@@ -192,14 +125,13 @@ test("config set validates port before writing", () => {
 });
 
 test("config set host only accepts loopback hosts", () => {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-host-config-"));
-  const baseEnv = { ...process.env, AERIAL_CONFIG_DIR: configDir, AERIAL_API_KEY: "aerial_test_key" };
-  const valid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "host", "localhost"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const { configDir, env: baseEnv } = configEnv("cli-host-config");
+  const valid = runCli(["config", "set", "host", "localhost"], { env: baseEnv });
   assert.equal(valid.status, 0, valid.stderr);
   let config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
   assert.equal(config.host, "localhost");
 
-  const invalid = spawnSync(process.execPath, ["src/cli.js", "config", "set", "host", "0.0.0.0"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const invalid = runCli(["config", "set", "host", "0.0.0.0"], { env: baseEnv });
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /host must be a loopback address/);
   config = JSON.parse(fs.readFileSync(path.join(configDir, "config.json"), "utf8"));
@@ -207,19 +139,8 @@ test("config set host only accepts loopback hosts", () => {
 });
 
 test("setup codex prints the full completion summary block", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-codex-summary-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-summary", "--effort", "high"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      AERIAL_CONFIG_DIR: path.join(home, "config"),
-      AERIAL_API_KEY: "",
-      AERIAL_SKIP_ENV_PERSIST: "1"
-    }
-  });
+  const home = mkHome("cli-codex-summary");
+  const result = runCli(["setup", "codex", "--model", "gpt-summary", "--effort", "high"], { home });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Configured Codex/);
   assert.match(result.stdout, /cli: Codex/);
@@ -235,19 +156,8 @@ test("setup codex prints the full completion summary block", () => {
 });
 
 test("setup claude prints the full completion summary and does not claim to write effort into settings", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-claude-summary-"));
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "claude", "--model", "claude-summary", "--effort", "low"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      AERIAL_CONFIG_DIR: path.join(home, "config"),
-      AERIAL_API_KEY: "",
-      AERIAL_SKIP_ENV_PERSIST: "1"
-    }
-  });
+  const home = mkHome("cli-claude-summary");
+  const result = runCli(["setup", "claude", "--model", "claude-summary", "--effort", "low"], { home });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Configured Claude Code/);
   assert.match(result.stdout, /cli: Claude Code/);
@@ -264,17 +174,10 @@ test("setup claude prints the full completion summary and does not claim to writ
 });
 
 test("setup status --json includes additive effort field on codex and claude", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-status-effort-"));
-  const baseEnv = {
-    ...process.env,
-    HOME: home,
-    USERPROFILE: home,
-    AERIAL_CONFIG_DIR: path.join(home, "config"),
-    AERIAL_API_KEY: "",
-    AERIAL_SKIP_ENV_PERSIST: "1"
-  };
-  spawnSync(process.execPath, ["src/cli.js", "setup", "codex", "--model", "gpt-x", "--effort", "xhigh"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "status", "--json"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const home = mkHome("cli-status-effort");
+  const baseEnv = cliEnv(home);
+  runCli(["setup", "codex", "--model", "gpt-x", "--effort", "xhigh"], { env: baseEnv });
+  const result = runCli(["setup", "status", "--json"], { env: baseEnv });
   assert.equal(result.status, 0, result.stderr);
   const status = JSON.parse(result.stdout);
   assert.equal(status.schema, "aerial.setup-status.v1");
@@ -283,28 +186,17 @@ test("setup status --json includes additive effort field on codex and claude", (
 });
 
 test("setup status text shows effort=missing when no client has effort", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cli-status-missing-"));
-  const baseEnv = {
-    ...process.env,
-    HOME: home,
-    USERPROFILE: home,
-    AERIAL_CONFIG_DIR: path.join(home, "config"),
-    AERIAL_API_KEY: "",
-    AERIAL_SKIP_ENV_PERSIST: "1"
-  };
-  spawnSync(process.execPath, ["src/cli.js", "key", "generate"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
-  const result = spawnSync(process.execPath, ["src/cli.js", "setup", "status"], { cwd: path.resolve(import.meta.dirname, ".."), env: baseEnv, encoding: "utf8" });
+  const home = mkHome("cli-status-missing");
+  const baseEnv = cliEnv(home);
+  runCli(["key", "generate"], { env: baseEnv });
+  const result = runCli(["setup", "status"], { env: baseEnv });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /codex.*effort=missing/);
   assert.match(result.stdout, /claude.*effort=medium/);
 });
 
 test("aerial --help lists max alias on setup codex and claude", () => {
-  const result = spawnSync(process.execPath, ["src/cli.js", "--help"], {
-    cwd: path.resolve(import.meta.dirname, ".."),
-    encoding: "utf8",
-    env: { ...process.env, AERIAL_API_KEY: "" }
-  });
+  const result = runCli(["--help"], { env: { ...process.env, AERIAL_API_KEY: "" }, cwd: repoRoot });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /setup codex.*--effort <low\|medium\|high\|xhigh\|max>/);
   assert.match(result.stdout, /setup claude.*--effort <low\|medium\|high\|xhigh\|max>/);

@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
 
 import { readPackageVersion } from "../src/version.js";
+import { repoRoot, runCli } from "./helpers.js";
 
 test("readPackageVersion returns the package.json version", () => {
   // Defaults to the package.json adjacent to src/version.js.
@@ -49,11 +49,7 @@ test("readPackageVersion warns and returns 'unknown' when the file has no versio
 });
 
 test("aerial --version prints the package version and exits 0", () => {
-  const repoRoot = path.resolve(import.meta.dirname, "..");
-  const result = spawnSync(process.execPath, ["src/cli.js", "--version"], {
-    cwd: repoRoot,
-    encoding: "utf8"
-  });
+  const result = runCli(["--version"]);
   assert.equal(result.status, 0, result.stderr);
   const stdout = result.stdout.trim();
   assert.match(stdout, /^\d+\.\d+\.\d+/);
