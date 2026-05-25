@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { atomicWriteFile } from "./file-utils.js";
 
 export function configDir() {
   if (process.env.AERIAL_CONFIG_DIR) return process.env.AERIAL_CONFIG_DIR;
@@ -30,9 +31,7 @@ export function ensureDir(dir = configDir()) {
 }
 
 export function writePrivateFile(file, content) {
-  ensureDir(path.dirname(file));
-  fs.writeFileSync(file, content, { mode: 0o600 });
-  if (process.platform !== "win32") fs.chmodSync(file, 0o600);
+  atomicWriteFile(file, content, { mode: 0o600 });
 }
 
 export function readJsonIfExists(file) {

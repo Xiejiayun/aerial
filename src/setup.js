@@ -7,6 +7,7 @@ import { apiKeyPath, githubTokenPath } from "./paths.js";
 import { gitHubTokenSource } from "./auth.js";
 import { logEvent } from "./log.js";
 import { assertValidEffort, normalizeEffort } from "./setup-selection.js";
+import { atomicWriteFile } from "./file-utils.js";
 
 const BACKUP_PREFIX = ".aerial-backup-";
 const PRE_RESTORE_PREFIX = ".aerial-pre-restore-";
@@ -116,7 +117,7 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   const profileValues = { model_provider: "aerial", model: selectedModel };
   if (normalizedEffort) profileValues.model_reasoning_effort = normalizedEffort;
   content = upsertTomlSection(content, "profiles.aerial", profileValues);
-  fs.writeFileSync(file, content, "utf8");
+  atomicWriteFile(file, content);
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
     saveConfig({ ...config, defaultEffort: normalizedEffort });
   }
@@ -140,7 +141,7 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
     env: claudeEnvForAerial(current.env, config)
   };
   if (selectedModel) next.model = selectedModel;
-  fs.writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  atomicWriteFile(file, `${JSON.stringify(next, null, 2)}\n`);
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
     saveConfig({ ...config, defaultEffort: normalizedEffort });
   }
@@ -366,21 +367,14 @@ export function restoreClient(target, { now = () => new Date() } = {}) {
     snapshot = `${writePath}${PRE_RESTORE_PREFIX}${stamp}`;
     fs.copyFileSync(writePath, snapshot);
   }
-  ensureParent(writePath);
-  const tmp = `${writePath}.aerial-restore-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   const writeOpts = mode !== undefined ? { mode } : undefined;
-  fs.writeFileSync(tmp, backupContent, writeOpts);
   try {
-    fs.renameSync(tmp, writePath);
+    atomicWriteFile(writePath, backupContent, writeOpts);
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch {}
     if (err.code === "EXDEV") {
       throw new Error(`Restore failed: backup and target on different filesystems (EXDEV). File: ${writePath}. Move the backup next to the target and retry.`);
     }
     throw err;
-  }
-  if (mode !== undefined) {
-    try { fs.chmodSync(writePath, mode); } catch {}
   }
   logEvent("setup_restore", { target, file: writePath, from: latest.path, snapshot, mode });
   return { target, ok: true, restored: true, file: writePath, from: latest.path, snapshot, mode };

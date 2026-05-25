@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { configDir, apiKeyPath, githubTokenPath } from "./paths.js";
 import { loadConfig } from "./config.js";
 import { logEvent } from "./log.js";
+import { atomicWriteFile } from "./file-utils.js";
 
 const SERVICE_LABEL = "com.jiayunxie.aerial";
 const WIN_TASK_NAME = "AerialLocalProxy";
@@ -107,27 +108,6 @@ function darwinWrapperPath() {
 
 function winWrapperPath() {
   return path.join(configDir(), "bin", "aerial-service.ps1");
-}
-
-function ensureDir(file) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-}
-
-function atomicWriteText(file, content, { mode } = {}) {
-  ensureDir(file);
-  const tmp = `${file}.aerial-svc-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
-  const opts = mode !== undefined ? { mode } : undefined;
-  fs.writeFileSync(tmp, content, opts);
-  try {
-    if (process.platform === "win32" && fs.existsSync(file)) fs.unlinkSync(file);
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch {}
-    throw err;
-  }
-  if (process.platform !== "win32" && mode !== undefined) {
-    try { fs.chmodSync(file, mode); } catch {}
-  }
 }
 
 function xmlEscape(value) {
@@ -658,10 +638,10 @@ function darwinWriteDefinition() {
     maxBytes: logCfg.maxBytes,
     backups: logCfg.backups
   });
-  atomicWriteText(wrapper, wrapperContent, { mode: 0o755 });
+  atomicWriteFile(wrapper, wrapperContent, { mode: 0o755 });
   const file = plistPath();
   const plistContent = renderPlist({ wrapperPath: wrapper });
-  atomicWriteText(file, plistContent, { mode: 0o644 });
+  atomicWriteFile(file, plistContent, { mode: 0o644 });
   return { file, wrapper };
 }
 
@@ -694,7 +674,7 @@ function windowsWriteDefinition(ctx) {
     maxBytes: logCfg.maxBytes,
     backups: logCfg.backups
   });
-  atomicWriteText(wrapper, wrapperContent);
+  atomicWriteFile(wrapper, wrapperContent);
   const args = buildSchtasksCreateArgs({ wrapperPath: wrapper });
   const create = ctx.run("schtasks.exe", args);
   return { wrapper, create };
