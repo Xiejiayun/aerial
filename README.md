@@ -11,7 +11,7 @@ It runs locally on `127.0.0.1:18181`. Your GitHub token and Aerial key stay on y
 
 Requirements:
 
-- Node.js 24+
+- Node.js 20.18.1+
 - A GitHub account with an active Copilot subscription
 - Codex CLI and/or Claude Code installed
 

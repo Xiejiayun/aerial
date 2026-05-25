@@ -16,8 +16,6 @@ const DEFAULT_WRAPPER_LOG_BACKUPS = 3;
 const HEALTH_TIMEOUT_MS = 1500;
 const HEALTH_START_TIMEOUT_MS = 5000;
 const HEALTH_POLL_INTERVAL_MS = 250;
-const MIN_SERVICE_NODE_MAJOR = 24;
-const DARWIN_CODEX_NODE = "/Applications/Codex.app/Contents/Resources/node";
 
 function wrapperLogConfig() {
   const out = { maxBytes: DEFAULT_WRAPPER_LOG_MAX_BYTES, backups: DEFAULT_WRAPPER_LOG_BACKUPS };
@@ -78,43 +76,8 @@ function defaultRunCommand(file, args, opts = {}) {
   };
 }
 
-function parseNodeMajor(versionText) {
-  const match = /^v?(\d+)\./.exec(String(versionText || "").trim());
-  return match ? Number(match[1]) : undefined;
-}
-
-function nodeMajorOfBinary(file) {
-  if (!file || !fs.existsSync(file)) return undefined;
-  const result = spawnSync(file, ["--version"], {
-    stdio: "pipe",
-    encoding: "utf8",
-    timeout: 3000,
-    windowsHide: true
-  });
-  if (result.status !== 0) return undefined;
-  return parseNodeMajor(result.stdout || result.stderr);
-}
-
-function selectServiceNodeBinary({ requested, current, candidates = [], versionOf = nodeMajorOfBinary } = {}) {
-  if (requested) return requested;
-  if (versionOf(current) >= MIN_SERVICE_NODE_MAJOR) return current;
-  for (const candidate of candidates) {
-    if (versionOf(candidate) >= MIN_SERVICE_NODE_MAJOR) return candidate;
-  }
-  return current;
-}
-
-function serviceNodeCandidates() {
-  if (process.platform === "darwin") return [DARWIN_CODEX_NODE];
-  return [];
-}
-
 function nodeBinary() {
-  return selectServiceNodeBinary({
-    requested: process.env.AERIAL_SERVICE_NODE,
-    current: process.execPath,
-    candidates: serviceNodeCandidates()
-  });
+  return process.env.AERIAL_SERVICE_NODE || process.execPath;
 }
 
 function cliEntry() {
@@ -1177,6 +1140,5 @@ export const _internal = {
   buildSchtasksArgs,
   quoteSchtasksTR,
   classifyHealth,
-  parseNodeMajor,
-  selectServiceNodeBinary
+  nodeBinary
 };

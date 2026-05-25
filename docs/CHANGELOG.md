@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Lowered the package Node requirement from Node.js 24+ to Node.js 20.18.1+ and removed the generated service wrapper's Codex.app-specific Node fallback path.
 - Redacted proxy URL userinfo from `aerial proxy status`, `aerial proxy enable --json`, and candidate diagnostics.
 - Added a 1 MiB PAC file read limit for proxy auto-discovery.
 - Added regression coverage for proxy enable failures preserving existing config, env proxy override precedence, and proxy validation failure paths.
