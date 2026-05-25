@@ -140,6 +140,18 @@ test("renderDarwinWrapper shell-escapes paths with single quotes and spaces", ()
   assert.match(wrapper, /CLI_ENTRY='\/Users\/x\/aerial '\\''beta'\\''\/src\/cli\.js'/);
 });
 
+test("service Node selection prefers Node 24+ unless AERIAL_SERVICE_NODE explicitly overrides", () => {
+  const versionOf = (file) => ({
+    "/old/node": 22,
+    "/codex/node": 24,
+    "/new/node": 25
+  })[file];
+  assert.equal(_internal.parseNodeMajor("v24.14.0"), 24);
+  assert.equal(_internal.selectServiceNodeBinary({ current: "/new/node", candidates: ["/codex/node"], versionOf }), "/new/node");
+  assert.equal(_internal.selectServiceNodeBinary({ current: "/old/node", candidates: ["/codex/node"], versionOf }), "/codex/node");
+  assert.equal(_internal.selectServiceNodeBinary({ requested: "/custom/node", current: "/old/node", candidates: ["/codex/node"], versionOf }), "/custom/node");
+});
+
 test("renderWindowsWrapper rotates stdio.log, sets log env vars, and runs node with PowerShell stream redirect", () => {
   const wrapper = renderWindowsWrapper({
     nodePath: "C:\\Program Files\\nodejs\\node.exe",
