@@ -218,7 +218,7 @@ test("renderWindowsWrapper propagates install-time AERIAL_LOG_MAX_BYTES / AERIAL
   assert.match(wrapper, /\$backups = 9/);
 });
 
-test("buildSchtasksCreateArgs wraps /TR in escaped quotes for paths with spaces and non-ASCII", () => {
+test("buildSchtasksCreateArgs passes /TR without shell-escaped quotes", () => {
   for (const wrapper of [
     "C:\\noSpace\\aerial-service.ps1",
     "C:\\Users\\Jeremy Xie\\AppData\\Roaming\\aerial\\bin\\aerial-service.ps1",
@@ -228,8 +228,8 @@ test("buildSchtasksCreateArgs wraps /TR in escaped quotes for paths with spaces 
     const trIndex = args.indexOf("/TR");
     assert.ok(trIndex > 0);
     const tr = args[trIndex + 1];
-    assert.ok(tr.startsWith("\\\""), `expected /TR to start with \\\" but was: ${tr}`);
-    assert.ok(tr.endsWith("\\\""), `expected /TR to end with \\\" but was: ${tr}`);
+    assert.ok(tr.startsWith("powershell.exe "), `expected /TR to start with powershell.exe but was: ${tr}`);
+    assert.ok(!tr.includes('\\"'), `expected /TR to contain real quotes, not backslash-escaped quotes: ${tr}`);
     assert.ok(tr.includes(wrapper));
     assert.ok(tr.includes("-WindowStyle Hidden"));
     assert.ok(tr.includes("-File"));
@@ -240,7 +240,7 @@ test("buildSchtasksCreateArgs quotes the -File operand separately so Task Schedu
   const wrapper = "C:\\Users\\Jeremy Xie\\AppData\\Roaming\\aerial\\bin\\aerial-service.ps1";
   const args = buildSchtasksCreateArgs({ wrapperPath: wrapper });
   const tr = args[args.indexOf("/TR") + 1];
-  assert.ok(tr.includes(`-File \\"${wrapper}\\"`), `expected -File operand wrapped in escaped quotes, but /TR was: ${tr}`);
+  assert.ok(tr.includes(`-File "${wrapper}"`), `expected -File operand wrapped in quotes, but /TR was: ${tr}`);
   assert.ok(!/-File C:\\Users\\Jeremy /.test(tr), "must not register an unquoted path that would be split at the first space");
 });
 

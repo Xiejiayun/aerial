@@ -4,9 +4,9 @@ import {
   aerialLogPath,
   buildSchtasksArgs,
   darwinWrapperPath,
+  formatSchtasksTR,
   nodeBinary,
   plistPath,
-  quoteSchtasksTR,
   renderDarwinWrapper,
   renderPlist,
   renderWindowsWrapper,
@@ -32,7 +32,7 @@ export const _internal = {
   parseWrapperPaths,
   wrapperBlock,
   buildSchtasksArgs,
-  quoteSchtasksTR,
+  formatSchtasksTR,
   classifyHealth,
   nodeBinary
 };

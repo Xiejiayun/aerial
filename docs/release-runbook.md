@@ -805,12 +805,13 @@ recorded with an explicit, signed-off risk acceptance does not block.
   command exits 1 with a retry pointer at
   `aerial service uninstall`.
 - [ ] `aerial service install` /TR argument: registered Task action
-  embeds the wrapper path inside escaped double quotes
-  (`\"...-File \"C:\Users\... Xie\...\\aerial-service.ps1\"\"`) so
+  embeds the wrapper path inside normal double quotes
+  (`powershell.exe ... -File "C:\Users\... Xie\...\\aerial-service.ps1"`) so
   Task Scheduler parses the wrapper path as a single token even
   when it contains spaces or non-ASCII characters. Verify with
-  `schtasks /Query /TN AerialLocalProxy /XML` and inspect
-  `Arguments`.
+  `schtasks /Query /TN AerialLocalProxy /XML` and inspect that
+  `Command` is `powershell.exe` and `Arguments` has no literal
+  backslash-quote prefix.
 
 ### Linux (unsupported-platform friendly fail)
 

@@ -202,9 +202,8 @@ export function renderWindowsWrapper({ nodePath, cliPath, host, port, stdioLog, 
   return lines.join("\r\n");
 }
 
-export function quoteSchtasksTR(command) {
-  const wrapped = command.replace(/"/g, '\\"');
-  return `\\"${wrapped}\\"`;
+export function formatSchtasksTR(command) {
+  return String(command);
 }
 
 export function buildSchtasksCreateArgs({ taskName = WIN_TASK_NAME, wrapperPath: wrapper }) {
@@ -215,7 +214,7 @@ export function buildSchtasksCreateArgs({ taskName = WIN_TASK_NAME, wrapperPath:
     "/SC", "ONLOGON",
     "/RL", "LIMITED",
     "/F",
-    "/TR", quoteSchtasksTR(cmd)
+    "/TR", formatSchtasksTR(cmd)
   ];
 }
 

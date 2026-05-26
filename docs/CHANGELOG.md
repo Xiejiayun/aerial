@@ -4,6 +4,12 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-05-26
+
+### Fixed
+
+- Fixed Windows `aerial service install` task registration so Task Scheduler receives `powershell.exe` as the action command with the wrapper path quoted in the arguments, instead of persisting literal backslash-escaped quotes that made `AerialLocalProxy` fail with `ERROR_FILE_NOT_FOUND`.
+
 ## [0.2.1] - 2026-05-26
 
 ### Fixed
