@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-const PACKAGE_JSON_URL = new URL("../package.json", import.meta.url);
+const PACKAGE_JSON_URL = new URL("../../package.json", import.meta.url);
 
 export function readPackageVersion(packageJsonUrl = PACKAGE_JSON_URL) {
   try {

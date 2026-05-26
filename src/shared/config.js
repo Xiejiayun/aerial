@@ -2,8 +2,8 @@ import fs from "node:fs";
 import { CONFIG_VERSION, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_VERSIONS } from "./constants.js";
 import { apiKeyPath, configPath, readJsonIfExists, writeJsonPrivate, writePrivateFile } from "./paths.js";
 import { hashApiKey, randomApiKey, verifyApiKey } from "./crypto.js";
-import { DEFAULT_EFFORT, normalizeEffort } from "./setup-selection.js";
-import { PROXY_MODE_AUTO, normalizeProxyEndpoint, normalizeProxyMode } from "./proxy-config.js";
+import { DEFAULT_EFFORT, normalizeEffort } from "./effort.js";
+import { PROXY_MODE_AUTO, normalizeProxyEndpoint, normalizeProxyMode } from "../upstream/proxy-config.js";
 
 export function defaultConfig() {
   return {

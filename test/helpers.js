@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 export const repoRoot = path.resolve(import.meta.dirname, "..");
-export const cliPath = path.join(repoRoot, "src", "cli.js");
+export const cliPath = path.join(repoRoot, "src", "cli", "index.js");
 
 export function mkHome(label) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `aerial-${label}-`));

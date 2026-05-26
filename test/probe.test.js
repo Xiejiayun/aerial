@@ -10,8 +10,8 @@ delete process.env.AERIAL_PROMPT_CACHE_RETENTION;
 process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_GITHUB_TOKEN = "github-test-token";
 
-const { runProbe, formatProbeReport } = await import("../src/probe.js");
-const { ensureApiKey } = await import("../src/config.js");
+const { runProbe, formatProbeReport } = await import("../src/cli/probe.js");
+const { ensureApiKey } = await import("../src/shared/config.js");
 ensureApiKey();
 
 const originalFetch = globalThis.fetch;

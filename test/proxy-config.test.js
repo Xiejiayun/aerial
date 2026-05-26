@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeProxyEndpoint, redactProxyEndpoint, redactProxySource } from "../src/proxy-config.js";
+import { normalizeProxyEndpoint, redactProxyEndpoint, redactProxySource } from "../src/upstream/proxy-config.js";
 
 test("normalizeProxyEndpoint accepts HTTP(S) and SOCKS proxy endpoints", () => {
   assert.equal(normalizeProxyEndpoint("http://127.0.0.1:1087/"), "http://127.0.0.1:1087");

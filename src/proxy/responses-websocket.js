@@ -1,6 +1,6 @@
 import { WebSocket } from "undici";
-import { COPILOT_API_ORIGIN } from "./constants.js";
-import { upstreamDispatcher } from "./upstream-fetch.js";
+import { COPILOT_API_ORIGIN } from "../shared/constants.js";
+import { upstreamDispatcher } from "../upstream/fetch.js";
 
 const TERMINAL_RESPONSE_TYPES = new Set([
   "response.completed",

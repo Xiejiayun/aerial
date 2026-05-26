@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 
-import { readPackageVersion } from "../src/version.js";
+import { readPackageVersion } from "../src/cli/version.js";
 import { repoRoot, runCli } from "./helpers.js";
 
 test("readPackageVersion returns the package.json version", () => {
-  // Defaults to the package.json adjacent to src/version.js.
+  // Defaults to the repository package.json from src/cli/version.js.
   const version = readPackageVersion();
   assert.equal(typeof version, "string");
   assert.match(version, /^\d+\.\d+\.\d+/);

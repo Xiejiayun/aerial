@@ -22,8 +22,8 @@ const {
   upstreamProxyState,
   validateProxyEndpoint,
   _clearProxyDispatcherCacheForTests
-} = await import("../src/upstream-fetch.js");
-const { loadConfig, saveConfig } = await import("../src/config.js");
+} = await import("../src/upstream/fetch.js");
+const { loadConfig, saveConfig } = await import("../src/shared/config.js");
 
 test.afterEach(async () => {
   await _clearProxyDispatcherCacheForTests();

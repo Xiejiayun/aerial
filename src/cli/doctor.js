@@ -1,7 +1,7 @@
-import { setupStatus } from "./setup.js";
-import { serviceStatus } from "./service.js";
+import { setupStatus } from "../setup/index.js";
+import { serviceStatus } from "../service/index.js";
 import { computeAppStatus } from "./app-status.js";
-import { readConfigFileStatus } from "./config.js";
+import { readConfigFileStatus } from "../shared/config.js";
 
 const REPAIRS = Object.freeze({
   CONFIG_RESET: Object.freeze({ command: "aerial", args: ["config", "reset"] }),

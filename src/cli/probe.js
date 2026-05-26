@@ -1,6 +1,6 @@
-import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses } from "./copilot.js";
-import { readJsonSafely } from "./http-utils.js";
-import { aerialRoutes, usageSummary } from "./model-utils.js";
+import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses } from "../proxy/index.js";
+import { readJsonSafely } from "../shared/http-utils.js";
+import { aerialRoutes, usageSummary } from "../proxy/model-utils.js";
 
 function modelRoutes(model) {
   return aerialRoutes(model);

@@ -12,9 +12,9 @@ process.env.USERPROFILE = temp;
 process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_SKIP_ENV_PERSIST = "1";
 
-const { ensureApiKey } = await import("../src/config.js");
-const { setupCodex, setupClaude, setupStatus, codexStatus } = await import("../src/setup.js");
-const { loadConfig, saveConfig } = await import("../src/config.js");
+const { ensureApiKey } = await import("../src/shared/config.js");
+const { setupCodex, setupClaude, setupStatus, codexStatus } = await import("../src/setup/index.js");
+const { loadConfig, saveConfig } = await import("../src/shared/config.js");
 ensureApiKey();
 
 test("setupCodex writes responses provider without deleting existing content", () => {
@@ -62,14 +62,14 @@ test("setupCodex can write an absolute command-backed auth helper for CLI instal
     model: "copilot-test",
     authCommand: {
       command: "/usr/local/bin/node",
-      args: ["/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli.js", "key", "print"],
+      args: ["/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli/index.js", "key", "print"],
       timeout_ms: 5000,
       refresh_interval_ms: 0
     }
   });
   const content = fs.readFileSync(result.file, "utf8");
   assert.match(content, /command = "\/usr\/local\/bin\/node"/);
-  assert.match(content, /args = \["\/usr\/local\/lib\/node_modules\/@jiayunxie\/aerial\/src\/cli\.js", "key", "print"\]/);
+  assert.match(content, /args = \["\/usr\/local\/lib\/node_modules\/@jiayunxie\/aerial\/src\/cli\/index\.js", "key", "print"\]/);
   assert.match(content, /refresh_interval_ms = 0/);
 });
 
@@ -86,9 +86,9 @@ test("setupClaude merges gateway settings", () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4.7-xhigh"
     }
   }), "utf8");
-  const result = setupClaude({ model: "claude-test", apiKeyHelper: "\"/usr/local/bin/node\" \"/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli.js\" \"key\" \"print\"" });
+  const result = setupClaude({ model: "claude-test", apiKeyHelper: "\"/usr/local/bin/node\" \"/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli/index.js\" \"key\" \"print\"" });
   const settings = JSON.parse(fs.readFileSync(result.file, "utf8"));
-  assert.equal(settings.apiKeyHelper, "\"/usr/local/bin/node\" \"/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli.js\" \"key\" \"print\"");
+  assert.equal(settings.apiKeyHelper, "\"/usr/local/bin/node\" \"/usr/local/lib/node_modules/@jiayunxie/aerial/src/cli/index.js\" \"key\" \"print\"");
   assert.equal(settings.model, "claude-test");
   assert.equal(settings.env.EXISTING, "1");
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:18181");

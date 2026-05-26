@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { atomicWriteFile } from "../src/file-utils.js";
+import { atomicWriteFile } from "../src/shared/file-utils.js";
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-file-utils-test-"));
 

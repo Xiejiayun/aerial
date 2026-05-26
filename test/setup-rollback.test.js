@@ -11,7 +11,7 @@ process.env.USERPROFILE = temp;
 process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_SKIP_ENV_PERSIST = "1";
 
-const { ensureApiKey, loadConfig, saveConfig } = await import("../src/config.js");
+const { ensureApiKey, loadConfig, saveConfig } = await import("../src/shared/config.js");
 const {
   findLatestBackup,
   codexStatus,
@@ -19,7 +19,7 @@ const {
   setupStatus,
   restoreClient,
   restoreAllClients
-} = await import("../src/setup.js");
+} = await import("../src/setup/index.js");
 ensureApiKey();
 
 const codexDir = path.join(temp, ".codex");

@@ -8,8 +8,8 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-test-"));
 process.env.AERIAL_CONFIG_DIR = temp;
 process.env.AERIAL_API_KEY = "aerial_test_key";
 
-const { apiKeyPath, configPath } = await import("../src/paths.js");
-const { ensureApiKey, loadConfig, validateLocalAuth, saveConfig } = await import("../src/config.js");
+const { apiKeyPath, configPath } = await import("../src/shared/paths.js");
+const { ensureApiKey, loadConfig, validateLocalAuth, saveConfig } = await import("../src/shared/config.js");
 
 test("ensureApiKey stores a private key file plus hash and auth validates bearer or x-api-key", () => {
   const result = ensureApiKey();
@@ -96,7 +96,7 @@ test("loadConfig normalizes valid upstream proxy endpoints and drops invalid one
 
 test("loadConfig falls back to defaults when config.json is not valid JSON", async () => {
   fs.writeFileSync(configPath(), "{bad json", "utf8");
-  const { readConfigFileStatus } = await import("../src/config.js");
+  const { readConfigFileStatus } = await import("../src/shared/config.js");
   const status = readConfigFileStatus();
   assert.equal(status.ok, false);
   assert.match(status.error, /JSON/);

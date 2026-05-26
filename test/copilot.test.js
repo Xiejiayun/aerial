@@ -9,9 +9,9 @@ process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-co
 process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_GITHUB_TOKEN = "github-test-token";
 
-const { proxyModels, proxyResponses, proxyMessages, proxyChatCompletions } = await import("../src/copilot.js");
-const { clearModelCatalogCacheForTests } = await import("../src/model-catalog.js");
-const { ensureApiKey, loadConfig, saveConfig } = await import("../src/config.js");
+const { proxyModels, proxyResponses, proxyMessages, proxyChatCompletions } = await import("../src/proxy/index.js");
+const { clearModelCatalogCacheForTests } = await import("../src/proxy/model-catalog.js");
+const { ensureApiKey, loadConfig, saveConfig } = await import("../src/shared/config.js");
 ensureApiKey();
 
 const originalFetch = globalThis.fetch;
@@ -625,7 +625,7 @@ test("proxyMessages does not inject defaultEffort for non-Opus Claude models (e.
 
 test("proxyMessages falls back to medium when defaultEffort is invalid in config", async () => {
   const original = loadConfig().defaultEffort;
-  const raw = (await import("../src/paths.js")).configPath();
+  const raw = (await import("../src/shared/paths.js")).configPath();
   const current = JSON.parse(fs.readFileSync(raw, "utf8"));
   fs.writeFileSync(raw, JSON.stringify({ ...current, defaultEffort: "turbo" }, null, 2));
   try {

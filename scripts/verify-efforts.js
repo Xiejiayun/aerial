@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { getCopilotToken } from "../src/auth.js";
-import { COPILOT_API_ORIGIN, DEFAULT_ANTHROPIC_VERSION, DEFAULT_VERSIONS } from "../src/constants.js";
+import { getCopilotToken } from "../src/shared/auth.js";
+import { COPILOT_API_ORIGIN, DEFAULT_ANTHROPIC_VERSION, DEFAULT_VERSIONS } from "../src/shared/constants.js";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_GPT_MODELS = ["gpt-5.2", "gpt-5-mini", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-5.2-codex", "gpt-5.3-codex"];

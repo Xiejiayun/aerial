@@ -11,7 +11,7 @@ process.env.USERPROFILE = temp;
 process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_SKIP_ENV_PERSIST = "1";
 
-const { logEvent, logPaths, _resetForTests } = await import("../src/log.js");
+const { logEvent, logPaths, _resetForTests } = await import("../src/shared/log.js");
 
 function freshLogFile(label) {
   const dir = fs.mkdtempSync(path.join(temp, `${label}-`));

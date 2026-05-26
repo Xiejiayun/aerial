@@ -7,7 +7,7 @@ import fs from "node:fs";
 process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-doctor-test-"));
 process.env.AERIAL_API_KEY = "aerial_test_key";
 
-const { doctor, renderDoctorText, renderRepairCommand } = await import("../src/doctor.js");
+const { doctor, renderDoctorText, renderRepairCommand } = await import("../src/cli/doctor.js");
 
 function makeSetup({
   apiKeyExists = true,

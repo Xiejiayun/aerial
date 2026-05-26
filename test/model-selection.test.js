@@ -8,8 +8,8 @@ process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-mo
 process.env.AERIAL_API_KEY = "aerial_test_key";
 process.env.AERIAL_GITHUB_TOKEN = "github-test-token";
 
-const { chooseSetupModel, discoverModelsForRoute, formatModelChoices, rankModels, orderForPrompt, pickRecommended } = await import("../src/model-selection.js");
-const { ensureApiKey } = await import("../src/config.js");
+const { chooseSetupModel, discoverModelsForRoute, formatModelChoices, rankModels, orderForPrompt, pickRecommended } = await import("../src/cli/model-selection.js");
+const { ensureApiKey } = await import("../src/shared/config.js");
 ensureApiKey();
 
 const originalFetch = globalThis.fetch;

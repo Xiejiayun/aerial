@@ -1,15 +1,15 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { proxyModels } from "./copilot.js";
-import { readJsonSafely } from "./http-utils.js";
-import { modelsForRoute } from "./model-utils.js";
-import { parseNumberChoice } from "./prompt-utils.js";
+import { proxyModels } from "../proxy/index.js";
+import { readJsonSafely } from "../shared/http-utils.js";
+import { modelsForRoute } from "../proxy/model-utils.js";
+import { parseNumberChoice } from "../shared/prompt-utils.js";
 
 const MAX_LISTED_MODELS = 20;
 const GPT_VERSION_RE = /^gpt-(\d+)(?:\.(\d+))?/i;
 const STABLE_GPT_RE = /^gpt-\d+(?:\.\d+)?$/i;
 
-export { modelsForRoute } from "./model-utils.js";
+export { modelsForRoute } from "../proxy/model-utils.js";
 
 function gptVersionScore(id) {
   const match = GPT_VERSION_RE.exec(id);

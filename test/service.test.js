@@ -24,7 +24,7 @@ const {
   serviceUninstall,
   serviceStatus,
   _internal
-} = await import("../src/service.js");
+} = await import("../src/service/index.js");
 
 function makeRunner() {
   const calls = [];
@@ -95,7 +95,7 @@ test("renderPlist embeds generated header, KeepAlive dict, ThrottleInterval=10, 
 test("renderDarwinWrapper rotates stdio.log, exports log env vars, and exec's node with stdio redirected", () => {
   const wrapper = renderDarwinWrapper({
     nodePath: "/usr/local/bin/node",
-    cliPath: "/opt/aerial/src/cli.js",
+    cliPath: "/opt/aerial/src/cli/index.js",
     host: "127.0.0.1",
     port: 18181,
     stdioLog: "/var/log/aerial-stdio.log",
@@ -117,7 +117,7 @@ test("renderDarwinWrapper rotates stdio.log, exports log env vars, and exec's no
 test("renderDarwinWrapper conditionally embeds AERIAL_CONFIG_DIR when install-time env had it", () => {
   const wrapper = renderDarwinWrapper({
     nodePath: "/usr/local/bin/node",
-    cliPath: "/opt/aerial/src/cli.js",
+    cliPath: "/opt/aerial/src/cli/index.js",
     host: "127.0.0.1",
     port: 18181,
     stdioLog: "/tmp/aerial-stdio.log",
@@ -130,14 +130,14 @@ test("renderDarwinWrapper conditionally embeds AERIAL_CONFIG_DIR when install-ti
 test("renderDarwinWrapper shell-escapes paths with single quotes and spaces", () => {
   const wrapper = renderDarwinWrapper({
     nodePath: "/Users/x/My Tools/node",
-    cliPath: "/Users/x/aerial 'beta'/src/cli.js",
+    cliPath: "/Users/x/aerial 'beta'/src/cli/index.js",
     host: "127.0.0.1",
     port: 18181,
     stdioLog: "/tmp/aerial-stdio.log",
     aerialLog: "/tmp/aerial.log"
   });
   assert.match(wrapper, /NODE_BIN='\/Users\/x\/My Tools\/node'/);
-  assert.match(wrapper, /CLI_ENTRY='\/Users\/x\/aerial '\\''beta'\\''\/src\/cli\.js'/);
+  assert.match(wrapper, /CLI_ENTRY='\/Users\/x\/aerial '\\''beta'\\''\/src\/cli\/index\.js'/);
 });
 
 test("service wrapper uses current Node unless AERIAL_SERVICE_NODE explicitly overrides", () => {
@@ -189,7 +189,7 @@ test("renderWindowsWrapper conditionally embeds AERIAL_CONFIG_DIR when install-t
 test("renderDarwinWrapper propagates install-time AERIAL_LOG_MAX_BYTES / AERIAL_LOG_BACKUPS overrides", () => {
   const wrapper = renderDarwinWrapper({
     nodePath: "/usr/local/bin/node",
-    cliPath: "/opt/aerial/src/cli.js",
+    cliPath: "/opt/aerial/src/cli/index.js",
     host: "127.0.0.1",
     port: 18181,
     stdioLog: "/tmp/aerial-stdio.log",
@@ -814,7 +814,7 @@ test("serviceStatus logs block parses the installed wrapper when present and lab
       fs.mkdirSync(path.dirname(wrapper), { recursive: true });
       const content = renderDarwinWrapper({
         nodePath: "/usr/local/bin/node",
-        cliPath: "/opt/aerial/src/cli.js",
+        cliPath: "/opt/aerial/src/cli/index.js",
         host: "127.0.0.1",
         port: 18181,
         stdioLog: "/tmp/aerial-stdio.log",

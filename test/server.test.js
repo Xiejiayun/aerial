@@ -9,9 +9,9 @@ import { once } from "node:events";
 process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-server-test-"));
 process.env.AERIAL_API_KEY = "aerial_test_key";
 
-const { createServer } = await import("../src/server.js");
-const { _resetCopilotTokenCacheForTests } = await import("../src/auth.js");
-const { ensureApiKey } = await import("../src/config.js");
+const { createServer } = await import("../src/proxy/server.js");
+const { _resetCopilotTokenCacheForTests } = await import("../src/shared/auth.js");
+const { ensureApiKey } = await import("../src/shared/config.js");
 
 test.beforeEach(() => {
   _resetCopilotTokenCacheForTests();

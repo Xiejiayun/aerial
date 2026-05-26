@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readJsonSafely } from "../src/http-utils.js";
-import { aerialRoutes, modelsForRoute, usageSummary } from "../src/model-utils.js";
-import { parseNumberChoice } from "../src/prompt-utils.js";
+import { readJsonSafely } from "../src/shared/http-utils.js";
+import { aerialRoutes, modelsForRoute, usageSummary } from "../src/proxy/model-utils.js";
+import { parseNumberChoice } from "../src/shared/prompt-utils.js";
 
 test("readJsonSafely handles empty, JSON, and malformed responses", async () => {
   assert.deepEqual(await readJsonSafely(new Response("")), {});

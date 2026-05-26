@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { COPILOT_TOKEN_URL, GITHUB_CLIENT_ID } from "./constants.js";
 import { githubTokenPath, writePrivateFile } from "./paths.js";
 import { logEvent } from "./log.js";
-import { upstreamFetch } from "./upstream-fetch.js";
+import { upstreamFetch } from "../upstream/fetch.js";
 
 let cachedCopilotToken;
 let refreshPromise;

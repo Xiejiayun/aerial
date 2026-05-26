@@ -1,9 +1,9 @@
 import http from "node:http";
-import { DEFAULT_HOST, DEFAULT_PORT } from "./constants.js";
-import { loadConfig, validateLocalAuth } from "./config.js";
-import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses, localCountTokens } from "./copilot.js";
-import { readGitHubToken } from "./auth.js";
-import { logEvent } from "./log.js";
+import { DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
+import { loadConfig, validateLocalAuth } from "../shared/config.js";
+import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses, localCountTokens } from "./index.js";
+import { readGitHubToken } from "../shared/auth.js";
+import { logEvent } from "../shared/log.js";
 
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 

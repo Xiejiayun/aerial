@@ -7,7 +7,7 @@ const {
   canonicalClaudeFamily,
   findCompatibleModel,
   tokenFingerprintOf
-} = await import("../src/model-catalog.js");
+} = await import("../src/proxy/model-catalog.js");
 
 function makeModel(id, { route = "/v1/messages", adaptive = true, efforts = ["low", "medium", "high", "xhigh"] } = {}) {
   return {

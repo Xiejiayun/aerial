@@ -47,10 +47,10 @@ jobs:
         run: npm test
 
       - name: CLI help smoke
-        run: node src/cli.js --help
+        run: node src/cli/index.js --help
 
       - name: CLI version smoke
-        run: node src/cli.js --version
+        run: node src/cli/index.js --version
 
   package:
     # Runs in parallel with `test` (no `needs:`). pack + secret scan are fast

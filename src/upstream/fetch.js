@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { ProxyAgent } from "undici";
-import { loadConfig, saveConfig } from "./config.js";
+import { loadConfig, saveConfig } from "../shared/config.js";
 import { PROXY_MODE_AUTO, PROXY_MODE_DISABLED, isSocksProxyEndpoint, normalizeProxyEndpoint, normalizeProxyMode } from "./proxy-config.js";
 import { startSocks5Bridge, _closeSocks5BridgesForTests } from "./socks5-bridge.js";
 

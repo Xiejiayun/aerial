@@ -8,7 +8,7 @@ const {
   assertValidEffort,
   chooseSetupEffort,
   formatEffortSelection
-} = await import("../src/setup-selection.js");
+} = await import("../src/cli/setup-selection.js");
 
 test("EFFORT_VALUES and DEFAULT_EFFORT exposed and frozen", () => {
   assert.deepEqual([...EFFORT_VALUES], ["low", "medium", "high", "xhigh"]);

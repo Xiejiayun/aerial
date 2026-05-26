@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { shouldUseResponsesWebSocket, supportsResponsesWebSocket } from "../src/responses-websocket.js";
+import { shouldUseResponsesWebSocket, supportsResponsesWebSocket } from "../src/proxy/responses-websocket.js";
 
 test("supportsResponsesWebSocket detects Copilot ws:/responses endpoint", () => {
   assert.equal(supportsResponsesWebSocket({ supported_endpoints: ["/responses", "ws:/responses"] }), true);

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import { once } from "node:events";
-import { startSocks5Bridge, _closeSocks5BridgesForTests } from "../src/socks5-bridge.js";
+import { startSocks5Bridge, _closeSocks5BridgesForTests } from "../src/upstream/socks5-bridge.js";
 
 test.afterEach(async () => {
   await _closeSocks5BridgesForTests();

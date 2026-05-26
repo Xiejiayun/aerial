@@ -117,7 +117,7 @@ post-publish smoke passes.
   green before merge:
   - `test` matrix (Node 22 × Ubuntu / Windows / macOS): `npm ci` → syntax
     check (`node scripts/check-syntax.js`) → `npm test` → CLI smoke
-    (`node src/cli.js --help` and `node src/cli.js --version`).
+    (`node src/cli/index.js --help` and `node src/cli/index.js --version`).
   - `package & secret scan` (Ubuntu only): `npm ci` →
     `node scripts/verify-secrets.mjs` → `node scripts/verify-package.mjs`.
 - After merge to `main`, CI runs again on the post-merge state. No publish
@@ -668,12 +668,12 @@ on the registry)
 
 ## §17 Service Manual Lifecycle Checklist (manual validation, not CI-gated)
 
-`src/service.js` wraps platform service primitives (macOS launchd,
+`src/service/index.js` wraps platform service primitives (macOS launchd,
 Windows Task Scheduler). Automated tests deliberately stub the
 subprocess runner via dependency injection so CI never calls
 `launchctl`, `schtasks`, or PowerShell against the runner's real
 system — that means the end-to-end behavior must be validated by hand
-before any release that touches `src/service.js`, `src/log.js`, or the
+before any release that touches `src/service/index.js`, `src/shared/log.js`, or the
 service docs.
 
 Record the result of this checklist in the release PR description (or

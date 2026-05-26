@@ -2,16 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { ensureApiKey, loadConfig, saveConfig } from "./config.js";
-import { apiKeyPath, githubTokenPath } from "./paths.js";
-import { gitHubTokenSource } from "./auth.js";
-import { logEvent } from "./log.js";
-import { assertValidEffort, normalizeEffort } from "./setup-selection.js";
-import { atomicWriteFile } from "./file-utils.js";
+import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
+import { logEvent } from "../shared/log.js";
+import { atomicWriteFile } from "../shared/file-utils.js";
+import { assertValidEffort, normalizeEffort } from "../shared/effort.js";
+import { backupIfExists, backupPathsFor } from "./backup.js";
+import { setTomlRootString, upsertTomlSection } from "./toml.js";
 
-const BACKUP_PREFIX = ".aerial-backup-";
-const PRE_RESTORE_PREFIX = ".aerial-pre-restore-";
-const ISO_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
   args: ["key", "print"],
@@ -20,57 +17,8 @@ const DEFAULT_CODEX_AUTH = Object.freeze({
 });
 const DEFAULT_CLAUDE_API_KEY_HELPER = "aerial key print";
 
-function backupIfExists(file) {
-  if (!fs.existsSync(file)) return undefined;
-  const backup = `${file}.aerial-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  fs.copyFileSync(file, backup);
-  return backup;
-}
-
 function ensureParent(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-}
-
-function tomlValue(value) {
-  if (Array.isArray(value)) return `[${value.map(tomlValue).join(", ")}]`;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(String(value));
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function setTomlRootString(content, key, value) {
-  const line = `${key} = ${tomlValue(value)}`;
-  const source = content.split(/\r?\n/);
-  const firstSection = source.findIndex((sourceLine) => /^\s*\[.*\]\s*(?:#.*)?$/.test(sourceLine));
-  const rootLines = firstSection === -1 ? source : source.slice(0, firstSection);
-  const restLines = firstSection === -1 ? [] : source.slice(firstSection);
-  const root = rootLines.join("\n");
-  const rest = restLines.join("\n");
-  const re = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=.*$`, "m");
-  const nextRoot = re.test(root) ? root.replace(re, line) : `${root.trimEnd()}${root.trimEnd() ? "\n" : ""}${line}`;
-  if (!rest) return `${nextRoot.trimEnd()}\n`;
-  return `${nextRoot.trimEnd()}\n${rest}`;
-}
-
-function upsertTomlSection(content, section, values) {
-  const heading = `[${section}]`;
-  const lines = Object.entries(values).map(([key, value]) => `${key} = ${tomlValue(value)}`).join("\n");
-  const block = `${heading}\n${lines}\n`;
-  const source = content.split(/\r?\n/);
-  const start = source.findIndex((line) => line.trim() === heading);
-  if (start === -1) return `${content.trimEnd()}\n\n${block}`;
-  let end = source.length;
-  for (let i = start + 1; i < source.length; i += 1) {
-    if (/^\s*\[.*\]\s*$/.test(source[i])) {
-      end = i;
-      break;
-    }
-  }
-  source.splice(start, end - start, ...block.trimEnd().split("\n"));
-  return `${source.join("\n").trimEnd()}\n`;
 }
 
 function claudeEnvForAerial(currentEnv, config) {
@@ -97,7 +45,7 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   if (!selectedModel) {
     throw new Error("setupCodex requires a model id; pass --model or let `aerial setup codex` select one from live Copilot models.");
   }
-  const file = path.join(os.homedir(), ".codex", "config.toml");
+  const file = codexConfigFile();
   ensureParent(file);
   const backup = backupIfExists(file);
   let content = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
@@ -130,8 +78,7 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
   ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel;
-  const dir = path.join(os.homedir(), ".claude");
-  const file = path.join(dir, "settings.json");
+  const file = claudeSettingsFile();
   ensureParent(file);
   const backup = backupIfExists(file);
   const current = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
@@ -155,32 +102,6 @@ function codexConfigFile() {
 
 function claudeSettingsFile() {
   return path.join(os.homedir(), ".claude", "settings.json");
-}
-
-function listBackups(file) {
-  const dir = path.dirname(file);
-  const base = path.basename(file);
-  if (!fs.existsSync(dir)) return [];
-  const prefix = `${base}${BACKUP_PREFIX}`;
-  const entries = fs.readdirSync(dir);
-  const matches = [];
-  for (const entry of entries) {
-    if (!entry.startsWith(prefix)) continue;
-    const stamp = entry.slice(prefix.length);
-    if (!ISO_STAMP_RE.test(stamp)) continue;
-    matches.push({ name: entry, path: path.join(dir, entry), stamp });
-  }
-  matches.sort((a, b) => (a.stamp < b.stamp ? -1 : a.stamp > b.stamp ? 1 : 0));
-  return matches;
-}
-
-export function findLatestBackup(file) {
-  const all = listBackups(file);
-  return all.length ? all[all.length - 1] : undefined;
-}
-
-function backupPathsFor(file) {
-  return listBackups(file).map((entry) => entry.path);
 }
 
 function codexStateFromDoc(doc, expectedBaseUrl) {
@@ -276,7 +197,7 @@ function validateJsonBackup(content) {
   }
 }
 
-const CLIENTS = Object.freeze({
+export const CLIENTS = Object.freeze({
   codex: Object.freeze({
     target: "codex",
     file: codexConfigFile,
@@ -290,105 +211,3 @@ const CLIENTS = Object.freeze({
     validateBackup: validateJsonBackup
   })
 });
-
-function clientDescriptor(target) {
-  const descriptor = CLIENTS[target];
-  if (!descriptor) throw new Error(`Unknown restore target: ${target}. Use codex, claude, or all.`);
-  return descriptor;
-}
-
-export function setupStatus() {
-  const config = loadConfig();
-  const apiKeyFile = apiKeyPath();
-  const githubTokenFile = githubTokenPath();
-  return {
-    schema: "aerial.setup-status.v1",
-    platform: process.platform,
-    config: { host: config.host, port: config.port },
-    auth: {
-      api_key: { file: apiKeyFile, exists: fs.existsSync(apiKeyFile) },
-      github_token: (() => {
-        const source = gitHubTokenSource();
-        return { file: githubTokenFile, exists: source !== "missing", source };
-      })()
-    },
-    clients: Object.fromEntries(Object.entries(CLIENTS).map(([target, client]) => [target, client.status()]))
-  };
-}
-
-function clientFile(target) {
-  return clientDescriptor(target).file();
-}
-
-function resolveWritePath(file) {
-  if (!fs.existsSync(file)) return file;
-  try {
-    return fs.realpathSync(file);
-  } catch {
-    return file;
-  }
-}
-
-function validateBackupContent(target, content) {
-  clientDescriptor(target).validateBackup(content);
-}
-
-function resolveRestoreMode(writePath, backupPath, targetExisted) {
-  if (process.platform === "win32") return undefined;
-  let preserved;
-  if (targetExisted) {
-    try { preserved = fs.statSync(writePath).mode & 0o777; } catch { preserved = undefined; }
-  }
-  if (preserved === undefined) {
-    try { preserved = fs.statSync(backupPath).mode & 0o777; } catch { preserved = 0o600; }
-  }
-  return preserved & 0o600;
-}
-
-export function restoreClient(target, { now = () => new Date() } = {}) {
-  const file = clientFile(target);
-  const writePath = resolveWritePath(file);
-  const latest = findLatestBackup(file);
-  if (!latest) {
-    return { target, ok: true, restored: false, reason: "no_backup", file };
-  }
-  let backupContent;
-  try {
-    backupContent = fs.readFileSync(latest.path);
-  } catch (err) {
-    throw new Error(`Restore failed: cannot read backup ${latest.path}: ${err.message}`);
-  }
-  validateBackupContent(target, backupContent);
-  const targetExisted = fs.existsSync(writePath);
-  const mode = resolveRestoreMode(writePath, latest.path, targetExisted);
-  let snapshot;
-  if (targetExisted) {
-    const stamp = now().toISOString().replace(/[:.]/g, "-");
-    snapshot = `${writePath}${PRE_RESTORE_PREFIX}${stamp}`;
-    fs.copyFileSync(writePath, snapshot);
-  }
-  const writeOpts = mode !== undefined ? { mode } : undefined;
-  try {
-    atomicWriteFile(writePath, backupContent, writeOpts);
-  } catch (err) {
-    if (err.code === "EXDEV") {
-      throw new Error(`Restore failed: backup and target on different filesystems (EXDEV). File: ${writePath}. Move the backup next to the target and retry.`);
-    }
-    throw err;
-  }
-  logEvent("setup_restore", { target, file: writePath, from: latest.path, snapshot, mode });
-  return { target, ok: true, restored: true, file: writePath, from: latest.path, snapshot, mode };
-}
-
-export function restoreAllClients(opts) {
-  const results = {};
-  for (const target of Object.keys(CLIENTS)) {
-    try {
-      results[target] = restoreClient(target, opts);
-    } catch (err) {
-      results[target] = { target, ok: false, error: err.message };
-    }
-  }
-  const ok = Object.values(results).every((r) => r.ok);
-  return { ok, results };
-}
