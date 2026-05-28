@@ -150,15 +150,25 @@ test("setupCodex/setupClaude with invalid effort have no side effects on a fresh
   }
 });
 
-test("setupClaude updates Aerial defaultEffort without writing effort into Claude settings.json", () => {
+test("setupClaude writes native effortLevel and updates Aerial defaultEffort", () => {
   saveConfig({ ...loadConfig(), defaultEffort: "medium" });
   const result = setupClaude({ model: "claude-test", effort: "low" });
   const settings = JSON.parse(fs.readFileSync(result.file, "utf8"));
   assert.equal(settings.model, "claude-test");
+  assert.equal(settings.effortLevel, "low");
   assert.equal(settings.effort, undefined);
   assert.equal(settings.reasoning_effort, undefined);
   assert.equal(result.effort, "low");
   assert.equal(loadConfig().defaultEffort, "low");
+});
+
+test("setupClaude normalizes max effort to xhigh in Claude settings", () => {
+  saveConfig({ ...loadConfig(), defaultEffort: "medium" });
+  const result = setupClaude({ model: "claude-test", effort: "max" });
+  const settings = JSON.parse(fs.readFileSync(result.file, "utf8"));
+  assert.equal(settings.effortLevel, "xhigh");
+  assert.equal(result.effort, "xhigh");
+  assert.equal(loadConfig().defaultEffort, "xhigh");
 });
 
 test("setupStatus exposes additive effort field with canonical or 'missing'", () => {
@@ -168,6 +178,21 @@ test("setupStatus exposes additive effort field with canonical or 'missing'", ()
   assert.equal(status.schema, "aerial.setup-status.v1");
   assert.equal(status.clients.codex.effort, "xhigh");
   assert.equal(status.clients.claude.effort, "xhigh");
+});
+
+test("setupStatus prefers Claude effortLevel over Aerial defaultEffort", () => {
+  saveConfig({ ...loadConfig(), defaultEffort: "high" });
+  const claudeDir = path.join(temp, ".claude");
+  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.writeFileSync(path.join(claudeDir, "settings.json"), JSON.stringify({
+    apiKeyHelper: "aerial key print",
+    effortLevel: "low",
+    env: {
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:18181"
+    }
+  }, null, 2), "utf8");
+  const status = setupStatus();
+  assert.equal(status.clients.claude.effort, "low");
 });
 
 test("setupStatus reports codex effort 'missing' when Codex profile lacks model_reasoning_effort", () => {

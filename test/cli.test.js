@@ -155,7 +155,7 @@ test("setup codex prints the full completion summary block", () => {
   assert.match(result.stdout, /note: restart Codex/);
 });
 
-test("setup claude prints the full completion summary and does not claim to write effort into settings", () => {
+test("setup claude prints the full completion summary and writes effortLevel", () => {
   const home = mkHome("cli-claude-summary");
   const result = runCli(["setup", "claude", "--model", "claude-summary", "--effort", "low"], { home });
   assert.equal(result.status, 0, result.stderr);
@@ -168,8 +168,9 @@ test("setup claude prints the full completion summary and does not claim to writ
   assert.match(result.stdout, /aerial config: /);
   assert.match(result.stdout, /aerial defaultEffort: low/);
   assert.match(result.stdout, /auth: apiKeyHelper local Aerial key/);
-  assert.match(result.stdout, /effort is applied via Aerial defaultEffort/);
+  assert.match(result.stdout, /effort is written to Claude settings\.json effortLevel/);
   const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
+  assert.equal(settings.effortLevel, "low");
   assert.equal(settings.effort, undefined);
 });
 

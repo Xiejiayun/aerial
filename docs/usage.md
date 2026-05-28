@@ -105,7 +105,7 @@ If Claude Code was previously pointed at another Anthropic-compatible gateway, s
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|medium|high|xhigh|max>`. Claude `settings.json` does not store an effort value; instead, `setup claude --effort <value>` updates Aerial-wide `defaultEffort` and the local proxy injects it into outgoing `/v1/messages` payloads. Precedence for the Anthropic effort applied to a Claude Opus 4.7 request, in order:
+To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|medium|high|xhigh|max>`. `setup claude --effort <value>` writes Claude Code's native `"effortLevel": "<effort>"` setting into `settings.json` and also updates Aerial-wide `defaultEffort` as a proxy fallback. Precedence for the Anthropic effort applied to a Claude Opus 4.7 request, in order:
 
 1. An explicit `output_config.effort` in the request body is preserved verbatim.
 2. A legacy `thinking: { type: "enabled", budget_tokens }` is translated to `thinking: { type: "adaptive" }` with a derived `output_config.effort`.

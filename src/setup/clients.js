@@ -88,6 +88,7 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
     env: claudeEnvForAerial(current.env, config)
   };
   if (selectedModel) next.model = selectedModel;
+  if (normalizedEffort) next.effortLevel = normalizedEffort;
   atomicWriteFile(file, `${JSON.stringify(next, null, 2)}\n`);
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
     saveConfig({ ...config, defaultEffort: normalizedEffort });
@@ -167,17 +168,19 @@ export function claudeStatus() {
   const expectedBaseUrl = `http://${config.host}:${config.port}`;
   const file = claudeSettingsFile();
   const backups = backupPathsFor(file);
-  const effort = typeof config.defaultEffort === "string" && config.defaultEffort.trim() ? config.defaultEffort.trim() : "missing";
-  if (!fs.existsSync(file)) return { target: "claude", state: "missing", file, backups, effort };
+  const fallbackEffort = typeof config.defaultEffort === "string" && config.defaultEffort.trim() ? config.defaultEffort.trim() : "missing";
+  if (!fs.existsSync(file)) return { target: "claude", state: "missing", file, backups, effort: fallbackEffort };
   let doc;
   try {
     doc = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (err) {
-    return { target: "claude", state: "invalid", file, backups, error: err.message, effort };
+    return { target: "claude", state: "invalid", file, backups, error: err.message, effort: fallbackEffort };
   }
   const state = claudeStateFromDoc(doc, expectedBaseUrl);
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
+  const settingsEffort = typeof doc?.effortLevel === "string" ? normalizeEffort(doc.effortLevel) : undefined;
+  const effort = settingsEffort || fallbackEffort;
   return { target: "claude", state, file, backups, model, baseUrl, effort };
 }
 

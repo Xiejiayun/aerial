@@ -4,6 +4,12 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `aerial setup claude --effort <value>` now writes Claude Code's native `effortLevel` setting into `~/.claude/settings.json` while preserving Aerial `defaultEffort` as the proxy fallback.
+
 ## [0.2.3] - 2026-05-26
 
 ### Fixed

@@ -83,7 +83,7 @@ export async function runSetupCli(subcommand, rest) {
       aerialDefaultEffort: config.defaultEffort || "missing",
       backup: result.backup,
       auth: "apiKeyHelper local Aerial key",
-      notes: ["effort is applied via Aerial defaultEffort and proxy fallback; Claude settings.json does not store an effort value."]
+      notes: ["effort is written to Claude settings.json effortLevel and mirrored to Aerial defaultEffort for proxy fallback."]
     });
     return;
   }
