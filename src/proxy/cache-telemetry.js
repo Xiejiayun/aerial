@@ -2,6 +2,8 @@ import { logEvent } from "../shared/log.js";
 import { copyResponseHeaders } from "./headers.js";
 import { countCacheControlBlocks } from "./cache-policy.js";
 
+const SSE_FRAME_BOUNDARY = /\r?\n\r?\n/;
+
 export function parseJsonBody(body, contentType) {
   if (!body || !contentType.includes("json")) return undefined;
   try {
@@ -103,8 +105,7 @@ export function createSseCacheObserver(route, requestCache) {
 
   const consume = () => {
     let match;
-    const boundary = /\r?\n\r?\n/;
-    while ((match = boundary.exec(buffer)) !== null) {
+    while ((match = SSE_FRAME_BOUNDARY.exec(buffer)) !== null) {
       const frame = buffer.slice(0, match.index);
       buffer = buffer.slice(match.index + match[0].length);
       for (const payload of sseJsonPayloads(frame)) {

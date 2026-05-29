@@ -1,17 +1,15 @@
 import { loadConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
+import { EFFORT_VALUES, normalizeEffort } from "../shared/effort.js";
 import { canonicalClaudeFamily, findCompatibleModel as findCompatibleModelShared } from "./model-catalog.js";
 import { withDefaultAnthropicCache, withDefaultPromptCache } from "./cache-policy.js";
 
-function normalizeProxyEffort(effort) {
-  return effort === "max" ? "xhigh" : effort;
-}
-
 function openAIEffortRoute(model, effort) {
   if (effort === undefined) return undefined;
-  const normalized = normalizeProxyEffort(effort);
+  const normalized = normalizeEffort(effort);
+  if (!normalized) return undefined;
   if (/^gpt-5-mini(?:-|$)/.test(model) && normalized === "xhigh") return "high";
-  if (normalized !== effort) return normalized;
+  if (normalized !== String(effort).trim().toLowerCase()) return normalized;
   return undefined;
 }
 
@@ -47,8 +45,8 @@ function withSupportedAnthropicEffort(payload, models) {
   const model = typeof payload?.model === "string" ? payload.model : "";
   const family = canonicalClaudeFamily(model);
   if (!family) return payload;
-  const nextEffort = normalizeProxyEffort(effort);
-  if (!["low", "medium", "high", "xhigh"].includes(nextEffort)) return payload;
+  const nextEffort = normalizeEffort(effort);
+  if (!nextEffort || !EFFORT_VALUES.includes(nextEffort)) return payload;
   const routed = findCompatibleModelShared({
     models,
     family,

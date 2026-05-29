@@ -99,7 +99,7 @@ async function readBody(req, maxBytes = MAX_BODY_BYTES) {
 
 async function handle(fetchRequest, runtime = {}) {
   const url = new URL(fetchRequest.url);
-  const config = loadConfig();
+  const config = runtime.config || loadConfig();
   if (fetchRequest.method === "GET" && url.pathname === "/health") {
     return Response.json({ ok: true, service: "aerial", host: runtime.host || config.host, port: runtime.port || config.port });
   }
@@ -157,8 +157,9 @@ export function createServer(runtime = {}) {
     try {
       logEvent("request_start", { method: req.method, path: req.url });
       let localAuthValidated = false;
+      let config;
       if (!publicRoute(req)) {
-        const config = loadConfig();
+        config = loadConfig();
         if (!validateLocalAuth(nodeHeaderObject(req.headers), config)) {
           const fetchResponse = json(401, { error: { type: "authentication_error", message: "Invalid or missing Aerial API key" } });
           await writeNodeResponse(res, fetchResponse, controller.signal);
@@ -169,7 +170,7 @@ export function createServer(runtime = {}) {
       }
       const body = await readBody(req);
       const fetchRequest = nodeRequestToFetch(req, body, controller.signal);
-      const fetchResponse = await handle(fetchRequest, { ...runtime, localAuthValidated });
+      const fetchResponse = await handle(fetchRequest, { ...runtime, localAuthValidated, config });
       await writeNodeResponse(res, fetchResponse, controller.signal);
       logEvent("request_end", { method: req.method, path: req.url, status: fetchResponse.status, ms: Date.now() - started });
     } catch (error) {
