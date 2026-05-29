@@ -7,7 +7,7 @@
 //   2. FORBIDDEN — known-bad categories with descriptive errors.
 //   3. ALLOWLIST — strict catch-all: any path not on this list fails as
 //      "UNEXPECTED file in pack". This is what guarantees that future
-//      additions like docs/release-runbook.md or scripts/publish-nightly.mjs
+//      additions like docs/release-runbook.md or scripts/verify-secrets.mjs
 //      cannot silently leak into the published tarball if package.json's
 //      `files` field is ever broadened by mistake.
 //
