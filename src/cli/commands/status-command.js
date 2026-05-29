@@ -1,7 +1,7 @@
-import { setupStatus } from "../setup/index.js";
-import { serviceStatus } from "../service/index.js";
-import { computeAppStatus } from "./app-status.js";
-import { printServiceSummary, printSetupSummary } from "./output.js";
+import { setupStatus } from "../../setup/index.js";
+import { serviceStatus } from "../../service/index.js";
+import { computeAppStatus } from "../app-status.js";
+import { printServiceSummary, printSetupSummary } from "../output.js";
 
 export async function appStatus({ json = false } = {}) {
   const setup = setupStatus();

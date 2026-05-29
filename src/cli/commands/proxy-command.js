@@ -1,8 +1,8 @@
-import { loadConfig } from "../shared/config.js";
-import { disableUpstreamProxy, enableUpstreamProxy, probeEgress, upstreamProxyState } from "../upstream/fetch.js";
-import { redactProxyEndpoint, redactProxySource } from "../upstream/proxy-config.js";
-import { runProbe } from "./probe.js";
-import { formatEgress } from "./output.js";
+import { loadConfig } from "../../shared/config.js";
+import { disableUpstreamProxy, enableUpstreamProxy, probeEgress, upstreamProxyState } from "../../upstream/fetch.js";
+import { redactProxyEndpoint, redactProxySource } from "../../upstream/proxy-config.js";
+import { runProbe } from "../probe.js";
+import { formatEgress } from "../output.js";
 
 async function proxyRouteSummary() {
   try {

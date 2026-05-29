@@ -1,6 +1,6 @@
-import { restoreAllClients } from "../setup/index.js";
-import { serviceUninstall } from "../service/index.js";
-import { printRestoreResults } from "./output.js";
+import { restoreAllClients } from "../../setup/index.js";
+import { serviceUninstall } from "../../service/index.js";
+import { printRestoreResults } from "../output.js";
 import { printServiceUninstallResult } from "./service-command.js";
 
 export function runDisableCli() {

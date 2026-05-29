@@ -4,7 +4,7 @@ import { logEvent } from "../shared/log.js";
 import { isResponsesWebSocketOptIn, proxyResponsesWebSocket, shouldUseResponsesWebSocket } from "./responses-websocket.js";
 import { annotateModelsResponse } from "./models.js";
 import { upstreamHeaders } from "./headers.js";
-import { withAnthropicDefaults, withOpenAIDefaults } from "./effort.js";
+import { withAnthropicDefaults, withOpenAIDefaults } from "./effort-routing.js";
 import {
   cacheRequestFields,
   createSseCacheObserver,

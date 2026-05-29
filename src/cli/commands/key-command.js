@@ -1,4 +1,4 @@
-import { ensureApiKey } from "../shared/config.js";
+import { ensureApiKey } from "../../shared/config.js";
 
 export function runKeyCli(subcommand) {
   if (subcommand === "generate") {

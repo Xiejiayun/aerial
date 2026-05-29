@@ -1,4 +1,4 @@
-import { gitHubTokenSource, pollDeviceFlow, startDeviceFlow } from "../shared/auth.js";
+import { gitHubTokenSource, pollDeviceFlow, startDeviceFlow } from "../../shared/auth.js";
 
 export async function runLoginCli(args) {
   const force = args.includes("--force");

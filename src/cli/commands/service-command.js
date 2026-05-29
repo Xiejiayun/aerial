@@ -1,5 +1,5 @@
-import { serviceInstall, serviceRestart, serviceStart, serviceStatus, serviceStop, serviceUninstall } from "../service/index.js";
-import { printServiceDiagnostics, printServiceWarning } from "./output.js";
+import { serviceInstall, serviceRestart, serviceStart, serviceStatus, serviceStop, serviceUninstall } from "../../service/index.js";
+import { printServiceDiagnostics, printServiceWarning } from "../output.js";
 
 export function printServiceUninstallResult(r, { prefix = "Service uninstall" } = {}) {
   if (r.note === "no service installed") console.log(`${prefix}: no service installed`);

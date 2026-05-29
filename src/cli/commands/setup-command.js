@@ -1,11 +1,11 @@
-import { loadConfig } from "../shared/config.js";
-import { configPath } from "../shared/paths.js";
-import { restoreAllClients, restoreClient, setupClaude, setupCodex, setupStatus } from "../setup/index.js";
-import { chooseSetupModel, formatModelChoices } from "./model-selection.js";
-import { assertValidEffort, chooseSetupEffort, formatEffortSelection } from "./setup-selection.js";
-import { requiredArgValue } from "./args.js";
-import { claudeApiKeyHelper, codexAuthCommand } from "./runtime-auth.js";
-import { printRestoreResults, printSetupCompletionSummary } from "./output.js";
+import { loadConfig } from "../../shared/config.js";
+import { configPath } from "../../shared/paths.js";
+import { restoreAllClients, restoreClient, setupClaude, setupCodex, setupStatus } from "../../setup/index.js";
+import { chooseSetupModel, formatModelChoices } from "../model-selection.js";
+import { assertValidEffort, chooseSetupEffort, formatEffortSelection } from "../setup-selection.js";
+import { requiredArgValue } from "../args.js";
+import { claudeApiKeyHelper, codexAuthCommand } from "../runtime-auth.js";
+import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
 
 async function selectSetupOptions(target, route, args) {
   const explicitEffort = requiredArgValue(args, "--effort");

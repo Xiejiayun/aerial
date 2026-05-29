@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 import { printVersion } from "./version.js";
 import { printHelp } from "./help.js";
-import { appStatus } from "./status-command.js";
-import { runConfigCli } from "./config-command.js";
-import { runDisableCli } from "./disable-command.js";
-import { runKeyCli } from "./key-command.js";
-import { runLoginCli } from "./login-command.js";
-import { runProxyCli } from "./proxy-command.js";
-import { runServiceCli } from "./service-command.js";
-import { runSetupCli } from "./setup-command.js";
-import { runStartCli } from "./start-command.js";
+import { appStatus } from "./commands/status-command.js";
+import { runConfigCli } from "./commands/config-command.js";
+import { runDisableCli } from "./commands/disable-command.js";
+import { runKeyCli } from "./commands/key-command.js";
+import { runLoginCli } from "./commands/login-command.js";
+import { runProxyCli } from "./commands/proxy-command.js";
+import { runServiceCli } from "./commands/service-command.js";
+import { runSetupCli } from "./commands/setup-command.js";
+import { runStartCli } from "./commands/start-command.js";
 import { doctor, renderDoctorText } from "./doctor.js";
 import { formatProbeReport, runProbe } from "./probe.js";
 
