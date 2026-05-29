@@ -93,6 +93,7 @@ export async function proxyResponsesWebSocket(payload, headers, { initiator = "u
       };
       ws.addEventListener("message", async (event) => {
         const message = await normalizeMessageData(event.data);
+        if (!message) return;
         controller.enqueue(encoder.encode(toSseFrame(message)));
         if (isTerminalMessage(message)) {
           controller.close();

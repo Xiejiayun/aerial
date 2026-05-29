@@ -19,7 +19,7 @@ export function cacheRequestFields(payload) {
     hasPromptCacheKey: payload.prompt_cache_key !== undefined,
     cacheControlBlocks: countCacheControlBlocks(payload)
   };
-  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== false && value !== 0));
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== false));
 }
 
 function responseItems(payload) {

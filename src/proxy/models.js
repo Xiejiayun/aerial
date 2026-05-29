@@ -1,3 +1,5 @@
+import { copyResponseHeaders } from "./headers.js";
+
 export function aerialSupportForModel(model) {
   const endpoints = Array.isArray(model.supported_endpoints) ? model.supported_endpoints : [];
   const routes = [];
@@ -19,9 +21,9 @@ export async function annotateModelsResponse(response) {
   const contentType = response.headers.get("content-type") || "";
   if (!response.ok || !contentType.includes("application/json")) return response;
   const payload = await response.json();
-  if (!Array.isArray(payload.data)) return Response.json(payload, { status: response.status, headers: response.headers });
+  if (!Array.isArray(payload.data)) return Response.json(payload, { status: response.status, headers: copyResponseHeaders(response) });
   return Response.json({
     ...payload,
     data: payload.data.map((model) => ({ ...model, aerial: aerialSupportForModel(model) }))
-  }, { status: response.status });
+  }, { status: response.status, headers: copyResponseHeaders(response) });
 }

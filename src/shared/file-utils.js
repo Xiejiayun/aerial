@@ -22,7 +22,7 @@ export function atomicWriteFile(file, content, { mode } = {}) {
       throw err;
     }
     if (process.platform !== "win32" && mode !== undefined) {
-      fs.chmodSync(file, mode);
+      try { fs.chmodSync(file, mode); } catch {}
     }
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch {}
