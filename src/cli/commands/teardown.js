@@ -3,11 +3,11 @@ import { serviceUninstall } from "../../service/index.js";
 import { printRestoreResults } from "../output.js";
 import { printServiceUninstallResult } from "./service.js";
 
-export function runDisableCli() {
+export function runTeardownCli() {
   const { ok: restoreOk, results } = restoreAllClients();
   printRestoreResults(results);
   if (!restoreOk) {
-    console.log("service uninstall: skipped because client restore reported failures; resolve restore errors then rerun `aerial disable` or `aerial service uninstall`.");
+    console.log("service uninstall: skipped because client restore reported failures; resolve restore errors then rerun `aerial teardown` or `aerial service uninstall`.");
     process.exitCode = 1;
     return;
   }

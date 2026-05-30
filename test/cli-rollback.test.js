@@ -78,9 +78,9 @@ test("aerial setup restore codex --latest exits 0 when no backup", () => {
   assert.match(r.stdout, /no backup to restore/);
 });
 
-test("aerial disable exits 0 with no backups and reports service uninstall result on unsupported platforms", () => {
-  const home = mkHome("disable-empty");
-  const r = runCli(["disable"], home);
+test("aerial teardown exits 0 with no backups and reports service uninstall result on unsupported platforms", () => {
+  const home = mkHome("teardown-empty");
+  const r = runCli(["teardown"], home);
   assert.equal(r.status, 0, r.stderr);
   if (process.platform === "darwin" || process.platform === "win32") {
     assert.match(r.stdout, /service uninstall: (ok|no service installed)/);
@@ -149,9 +149,9 @@ test("aerial service uninstall surfaces reason + retry message when /Delete fail
   assert.match(r.stdout, /schtasks stderr: ERROR: Access is denied\./);
 });
 
-test("aerial disable surfaces uninstall reason + retry message on Windows when /Delete fails", { skip: process.platform !== "win32" }, () => {
-  const home = mkHome("disable-uninstall-fail");
-  const r = runCli(["disable"], home, {
+test("aerial teardown surfaces uninstall reason + retry message on Windows when /Delete fails", { skip: process.platform !== "win32" }, () => {
+  const home = mkHome("teardown-uninstall-fail");
+  const r = runCli(["teardown"], home, {
     AERIAL_SERVICE_DRYRUN_INSTALLED: "1",
     AERIAL_SERVICE_DRYRUN_FAIL: "delete"
   });

@@ -581,7 +581,7 @@ recorded with an explicit, signed-off risk acceptance does not block.
   `reason = "bootout_failed"`, the plist and wrapper are PRESERVED
   (not removed), and the message tells the user to retry. Rerunning
   succeeds once the user resolves the underlying launchd error.
-- [ ] `aerial disable` on macOS: when client restore succeeds but a
+- [ ] `aerial teardown` on macOS: when client restore succeeds but a
   rigged `launchctl bootout` makes uninstall return `ok = false`,
   the command exits 1 and prints a retry pointer at
   `aerial service uninstall`. It does NOT silently exit 0.
@@ -639,7 +639,7 @@ recorded with an explicit, signed-off risk acceptance does not block.
 - [ ] If `schtasks /Delete` fails, `aerial service uninstall` exits
   1 with `reason = "delete_failed"`, the wrapper `.ps1` is
   PRESERVED, and the message tells the user to retry.
-- [ ] `aerial disable` on Windows: when client restore succeeds but
+- [ ] `aerial teardown` on Windows: when client restore succeeds but
   uninstall returns `ok = false` (e.g. `/Delete` fails), the
   command exits 1 with a retry pointer at
   `aerial service uninstall`.

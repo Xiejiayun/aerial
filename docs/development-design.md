@@ -166,7 +166,7 @@ Responsibilities:
 - Configure each supported CLI.
 - Backup touched config files before editing.
 - Merge config files through structured parsers, not string replacement.
-- Provide rollback with `aerial disable`.
+- Provide rollback with `aerial teardown`.
 - Provide diagnostics with `aerial doctor`.
 
 Suggested commands:
@@ -180,7 +180,7 @@ aerial setup claude
 aerial setup codex
 aerial setup gemini
 aerial doctor
-aerial disable
+aerial teardown
 ```
 
 ## Distribution and Startup
@@ -470,7 +470,7 @@ Exit criteria:
 - Support macOS user LaunchAgent.
 - Support Linux user `systemd` unit.
 - Keep setup commands client-specific so Codex and Claude Code can use different model IDs.
-- Implement `disable` rollback.
+- Implement `teardown` rollback.
 - Add shell profile export mode as an alternative to config edits.
 
 Exit criteria:

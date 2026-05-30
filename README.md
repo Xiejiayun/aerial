@@ -122,7 +122,7 @@ aerial status           # setup, login, service, and health summary
 aerial proxy status     # upstream proxy mode, egress, and route visibility
 aerial service install  # install and start the background service
 aerial doctor           # local diagnostics
-aerial disable          # restore client configs and uninstall the service
+aerial teardown          # restore client configs and uninstall the service
 ```
 
 `aerial start` is for foreground debugging in the current terminal. Most users should use `aerial service install`.
@@ -136,7 +136,7 @@ Advanced service lifecycle commands are documented in `docs/usage.md`.
 - No models listed during setup: run `aerial login` first, then retry setup.
 - Claude models or the `messages` route are missing: run `aerial proxy enable`, then `aerial probe`.
 - Port conflict on `18181`: run `aerial status` to see whether another process is using the port.
-- Need to undo setup: run `aerial disable`, or restore one client with `aerial setup restore <codex|claude> --latest`.
+- Need to undo setup: run `aerial teardown`, or restore one client with `aerial setup restore <codex|claude> --latest`.
 
 ## Notes
 

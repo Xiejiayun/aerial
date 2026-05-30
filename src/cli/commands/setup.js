@@ -1,8 +1,7 @@
 import { loadConfig } from "../../shared/config.js";
 import { configPath } from "../../shared/paths.js";
 import { restoreAllClients, restoreClient, setupClaude, setupCodex, setupStatus } from "../../setup/index.js";
-import { chooseSetupModel, formatModelChoices } from "../model-selection.js";
-import { assertValidEffort, chooseSetupEffort, formatEffortSelection } from "../setup-selection.js";
+import { chooseSetupModel, formatModelChoices, assertValidEffort, chooseSetupEffort, formatEffortSelection } from "../select.js";
 import { requiredArgValue, claudeApiKeyHelper, codexAuthCommand } from "../helpers.js";
 import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
 

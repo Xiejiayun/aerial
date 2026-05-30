@@ -2,7 +2,7 @@
 import { printVersion } from "./helpers.js";
 import { appStatus } from "./commands/status.js";
 import { runConfigCli } from "./commands/config.js";
-import { runDisableCli } from "./commands/disable.js";
+import { runTeardownCli } from "./commands/teardown.js";
 import { runKeyCli } from "./commands/key.js";
 import { runLoginCli } from "./commands/login.js";
 import { runProxyCli } from "./commands/proxy.js";
@@ -28,7 +28,7 @@ Diagnostics and rollback:
   aerial setup status [--json]
   aerial setup restore <codex|claude|all> --latest
   aerial service status [--json]
-  aerial disable
+  aerial teardown
   aerial doctor
   aerial probe [--live] [--json]
 
@@ -74,8 +74,8 @@ async function main() {
     }
   }
 
-  if (command === "disable") {
-    runDisableCli();
+  if (command === "teardown") {
+    runTeardownCli();
     return;
   }
 
@@ -109,7 +109,16 @@ async function main() {
   process.exitCode = 1;
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+main()
+  .then(() => {
+    // One-shot commands may leave keep-alive sockets (undici pools), a SOCKS5
+    // bridge, or stdin open, which keeps the event loop alive and hangs the CLI
+    // after the work is done. `start` is the only long-running command, so for
+    // everything else exit explicitly once main() resolves.
+    const command = process.argv[2];
+    if (command !== "start") process.exit(process.exitCode ?? 0);
+  })
+  .catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });

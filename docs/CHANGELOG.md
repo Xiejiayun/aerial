@@ -143,7 +143,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - `managed_running` re-install regenerates the plist / wrapper / schtasks definition without recycling the running service and reports `definitionUpdated: true`.
 - `aerial setup status` JSON report covering Codex / Claude config state and Aerial API key presence.
 - `aerial setup restore <codex|claude|all> --latest` to restore the most recent backup with parse validation and atomic writes; a `.aerial-pre-restore-<timestamp>` snapshot is preserved alongside.
-- `aerial disable` end-to-end rollback: restores client configs from their latest aerial backups and uninstalls the bundled service in one step, surfacing `FAILED(reason)` from either side.
+- `aerial teardown` end-to-end rollback: restores client configs from their latest aerial backups and uninstalls the bundled service in one step, surfacing `FAILED(reason)` from either side.
 - Opt-in size-bounded file logger via `AERIAL_LOG_FILE`, with automatic rotation gated by `AERIAL_LOG_MAX_BYTES` and `AERIAL_LOG_BACKUPS`. Service wrappers bake these rotation env vars at install time.
 - `aerial.service-status.v1` status schema: `service`, `health`, `logs`, and `auth` blocks. The `logs.source` field is `installed-wrapper` when a parseable wrapper is on disk, otherwise `next-install-default`.
 
