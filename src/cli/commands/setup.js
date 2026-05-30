@@ -45,6 +45,7 @@ function printSetupStatus(status) {
     console.log(`${head}${effortText}  file=${cs.file}`);
     if (cs.backups.length) console.log(`         backups=${cs.backups.length}`);
     if (cs.error) console.log(`         error=${cs.error}`);
+    if (cs.migration) console.log(`         migration=${cs.migration}`);
   }
 }
 

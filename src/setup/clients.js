@@ -7,7 +7,7 @@ import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/file-utils.js";
 import { assertValidEffort, normalizeEffort } from "../shared/effort.js";
 import { backupIfExists, backupPathsFor } from "./backup.js";
-import { setTomlRootString, upsertTomlSection } from "./toml.js";
+import { setTomlRootString, upsertTomlSection, removeTomlSection } from "./toml.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -51,6 +51,7 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   let content = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   content = setTomlRootString(content, "model_provider", "aerial");
   content = setTomlRootString(content, "model", selectedModel);
+  if (normalizedEffort) content = setTomlRootString(content, "model_reasoning_effort", normalizedEffort);
   content = upsertTomlSection(content, "model_providers.aerial", {
     name: "Aerial",
     base_url: `http://${config.host}:${config.port}/v1`,
@@ -62,9 +63,7 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
     timeout_ms: authCommand.timeout_ms || DEFAULT_CODEX_AUTH.timeout_ms,
     refresh_interval_ms: authCommand.refresh_interval_ms ?? DEFAULT_CODEX_AUTH.refresh_interval_ms
   });
-  const profileValues = { model_provider: "aerial", model: selectedModel };
-  if (normalizedEffort) profileValues.model_reasoning_effort = normalizedEffort;
-  content = upsertTomlSection(content, "profiles.aerial", profileValues);
+  content = removeTomlSection(content, "profiles.aerial");
   atomicWriteFile(file, content);
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
     saveConfig({ ...config, defaultEffort: normalizedEffort });
@@ -146,9 +145,23 @@ export function codexStatus() {
   const baseUrl = typeof doc?.model_providers?.aerial?.base_url === "string"
     ? doc.model_providers.aerial.base_url
     : undefined;
-  const profileEffort = doc?.profiles?.aerial?.model_reasoning_effort;
-  const effort = typeof profileEffort === "string" ? (normalizeEffort(profileEffort) || "missing") : "missing";
-  return { target: "codex", state, file, backups, model, baseUrl, effort };
+  const rootEffort = doc?.model_reasoning_effort;
+  const effort = typeof rootEffort === "string" ? (normalizeEffort(rootEffort) || "missing") : "missing";
+  const legacyProfile = doc?.profiles?.aerial && typeof doc.profiles.aerial === "object";
+  const legacyProfileLooksAerial = legacyProfile
+    && (doc.profiles.aerial.model_provider === "aerial"
+      || typeof doc.profiles.aerial.model_reasoning_effort === "string");
+  const needsMigration = legacyProfile && (state !== "not-aerial" || legacyProfileLooksAerial);
+  return {
+    target: "codex",
+    state,
+    file,
+    backups,
+    model,
+    baseUrl,
+    effort,
+    ...(needsMigration ? { migration: "run aerial setup codex" } : {})
+  };
 }
 
 function claudeStateFromDoc(doc, expectedBaseUrl) {

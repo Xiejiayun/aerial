@@ -23,7 +23,7 @@ test("setup codex configures command-backed auth without requiring AERIAL_API_KE
   assert.match(result.stdout, /auth: command-backed local Aerial key/);
   const content = fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
   assert.match(content, /\[model_providers\.aerial\.auth\]/);
-  assert.match(content, /args = \[.*"key", "print"\]/);
+  assert.match(content, /args = \[.*"key", "print" \]/);
   assert.match(content, /model = "gpt-codex-test"/);
   assert.doesNotMatch(content, /env_key = "AERIAL_API_KEY"/);
 });
