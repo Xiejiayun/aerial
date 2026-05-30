@@ -106,9 +106,10 @@ post-publish smoke passes.
 - Every pull request triggers `.github/workflows/ci.yml`, which runs two
   jobs **in parallel** (no `needs:` chain between them); both must be
   green before merge:
-  - `test` matrix (Node 22 × Ubuntu / Windows / macOS): `npm ci` → syntax
-    check (`node scripts/check-syntax.js`) → `npm test` → CLI smoke
-    (`node src/cli/index.js --help` and `node src/cli/index.js --version`).
+  - `test` matrix (Node 20.18.1 and Node 22 × Ubuntu / Windows / macOS):
+    `npm ci` → syntax check (`node scripts/check-syntax.js`) → `npm test`
+    → CLI smoke (`node src/cli/index.js --help` and
+    `node src/cli/index.js --version`).
   - `package & secret scan` (Ubuntu only): `npm ci` →
     `node scripts/verify-secrets.mjs` → `node scripts/verify-package.mjs`.
 - After merge to `main`, CI runs again on the post-merge state. No publish
@@ -125,8 +126,8 @@ post-publish smoke passes.
 2. Tag the commit: `git tag v<version> && git push origin v<version>`.
 3. The pushed `v*` tag triggers `release.yml`. Three jobs run in this order:
 
-   a. **`test` matrix** (Node 22 × Ubuntu / Windows / macOS), `package &
-      secret scan` (Ubuntu) — run in **parallel** as prerequisites
+   a. **`test` matrix** (Node 20.18.1 and Node 22 × Ubuntu / Windows /
+      macOS), `package & secret scan` (Ubuntu, Node 22) — run in **parallel** as prerequisites
       (`publish` declares `needs: [test, package-checks]`). Both must
       succeed before publish starts. Per-job steps are the same as in §4
       (test matrix runs `npm ci` → syntax check → `npm test` → CLI smoke;
@@ -396,13 +397,12 @@ confuses tooling that distinguishes prerelease from stable identifiers.
   comfortable headroom above both floors, and runs an explicit
   Node-side Node/npm version guard before `npm ci` that hard-fails
   when either the observed `node --version` is below `22.14.0` or
-  the observed `npm --version` is below `11.5.1`. The `test` and
-  `package-checks` jobs intentionally stay on `actions/setup-node@v4`
-  + `node-version: "22"` to validate the Node 22 floor declared in
-  `package.json` `engines.node` — that is what we ship to users, and
-  the publish-job runtime split exists solely so npm's trusted
-  publishing exchange has a satisfying CLI. See §9 for the failure
-  mode that can arise when the publish-job CLI is too old (a
+  the observed `npm --version` is below `11.5.1`. The `test` job
+  intentionally stays on `actions/setup-node@v4` and covers Node 20.18.1
+  plus Node 22 to validate `package.json` `engines.node` and the current
+  LTS line — that is what we ship to users. The publish-job runtime split
+  exists solely so npm's trusted publishing exchange has a satisfying CLI.
+  See §9 for the failure mode that can arise when the publish-job CLI is too old (a
   confusing `404` from `npm publish` even though sigstore provenance
   signing succeeded); §9 is a documented troubleshooting case, not
   a claim that every publish 404 traces back to runtime.

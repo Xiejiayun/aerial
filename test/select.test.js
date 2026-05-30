@@ -114,6 +114,14 @@ test("default tag is rendered on the default row", async () => {
   assert.match(text, /default/);
 });
 
+test("q cancels the effort selector instead of selecting the highlighted row", async () => {
+  const { inputStream, outputStream } = fakeStreams("q");
+  await assert.rejects(
+    () => chooseSetupEffort({ target: "Codex", input: inputStream, output: outputStream }),
+    /Codex setup cancelled\./
+  );
+});
+
 test("effort selector marks the configured effort as current and starts on it", async () => {
   const { setupCodex } = await import("../src/setup/index.js");
   const codexFile = path.join(fakeHome, ".codex", "config.toml");
@@ -270,6 +278,20 @@ test("chooseSetupModel recommends gpt-5.5 over gpt-4.1 when both expose the resp
   assert.equal(selected.recommended, "gpt-5.5");
   assert.equal(selected.source, "recommended_stable");
   assert.deepEqual(selected.choices.map((c) => c.id), ["gpt-5.5", "gpt-5.4-mini", "gpt-4.1"]);
+});
+
+test("q cancels the model selector instead of selecting the recommended model", async () => {
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    return Response.json({ data: [
+      { id: "gpt-5.5", supported_endpoints: ["/responses"] }
+    ] });
+  };
+  const { inputStream, outputStream } = fakeStreams("q");
+  await assert.rejects(
+    () => chooseSetupModel({ target: "Codex", route: "responses", prompt: true, input: inputStream, output: outputStream }),
+    /Codex setup cancelled\./
+  );
 });
 
 test("stable gpt-N.M beats higher-versioned suffix variants in recommendation", async () => {

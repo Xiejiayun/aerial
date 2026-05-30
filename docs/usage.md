@@ -91,7 +91,7 @@ The local key is generated and stored by Aerial automatically. Users do not need
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-To skip the prompts, pass `--model <responses-model-id>` and/or `--effort <low|medium|high|xhigh|max>` (`max` is an alias for `xhigh`). The chosen effort is written into the `[profiles.aerial]` block as `model_reasoning_effort = "<effort>"` and is also persisted as Aerial-wide `defaultEffort` in `~/.aerial/config.json`. Under non-TTY (CI/pipes) the wizard does not prompt and falls back to the default effort `medium`.
+To skip the prompts, pass `--model <responses-model-id>` and/or `--effort <low|medium|high|xhigh|max>` (`max` is an alias for `xhigh`). The chosen effort is written as root-level `model_reasoning_effort = "<effort>"` and is also persisted as Aerial-wide `defaultEffort` in `~/.aerial/config.json`. Under non-TTY (CI/pipes) the wizard does not prompt and falls back to the default effort `medium`.
 
 ## 6. Configure Claude Code
 

@@ -225,7 +225,14 @@ function currentEffortFor(target) {
   }
 }
 
-export async function chooseSetupModel({ target, route, explicitModel, prompt = input.isTTY }) {
+export async function chooseSetupModel({
+  target,
+  route,
+  explicitModel,
+  prompt,
+  input: inputStream = input,
+  output: outputStream = output
+} = {}) {
   if (explicitModel) return { model: explicitModel, choices: [], source: "explicit" };
   let raw;
   try {
@@ -239,16 +246,17 @@ export async function chooseSetupModel({ target, route, explicitModel, prompt = 
   const { recommended, source: recommendedSource, ranked } = pickRecommended(raw);
   const choices = ranked;
   const promptListed = orderForPrompt(ranked, recommended);
-  if (!prompt) return { model: recommended, choices, source: recommendedSource, recommended };
+  const shouldPrompt = prompt === undefined ? Boolean(inputStream.isTTY) : prompt;
+  if (!shouldPrompt) return { model: recommended, choices, source: recommendedSource, recommended };
 
   const current = currentModelFor(target);
   const items = promptListed.map((choice) => ({ label: choice.id, id: choice.id }));
   const currentIndex = items.findIndex((item) => item.id === current);
   const initialIndex = currentIndex >= 0 ? currentIndex : 0;
 
-  output.write(`Available ${target} models (${route} route):\n`);
+  outputStream.write(`Available ${target} models (${route} route):\n`);
   if (recommendedSource === "recommended_fallback") {
-    output.write(`  No stable gpt-N.M model available; ${recommended} is the fallback. Pass --model <id> to override.\n`);
+    outputStream.write(`  No stable gpt-N.M model available; ${recommended} is the fallback. Pass --model <id> to override.\n`);
   }
 
   const { item, cancelled } = await select({
@@ -260,10 +268,11 @@ export async function chooseSetupModel({ target, route, explicitModel, prompt = 
       if (it.id === recommended) tags.push("recommended");
       if (it.id === current) tags.push("current");
       return tags;
-    }
+    },
+    input: inputStream,
+    output: outputStream
   });
-  if (cancelled && current) return { model: current, choices, source: "current", displayed: true, recommended };
-  if (cancelled) return { model: recommended, choices, source: recommendedSource, displayed: true, recommended };
+  if (cancelled) throw new Error(`${target} setup cancelled.`);
   return { model: item.id, choices, source: "prompt", displayed: true, recommended };
 }
 
@@ -307,7 +316,7 @@ export async function chooseSetupEffort({
   const current = currentEffortFor(target);
   const currentIndex = EFFORT_VALUES.indexOf(current);
   const initialIndex = currentIndex >= 0 ? currentIndex : EFFORT_VALUES.indexOf(DEFAULT_EFFORT);
-  const { item } = await select({
+  const { item, cancelled } = await select({
     title: `Choose ${target} reasoning effort:`,
     items: EFFORT_VALUES.map((value) => ({ label: value, value })),
     initialIndex,
@@ -320,6 +329,7 @@ export async function chooseSetupEffort({
     input: inputStream,
     output: outputStream
   });
+  if (cancelled) throw new Error(`${target} setup cancelled.`);
   return { effort: item.value, source: "prompt", displayed: true };
 }
 

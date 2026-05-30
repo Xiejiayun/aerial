@@ -4,17 +4,36 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.6] - 2026-05-30
+
+### Changed
+
+- CI and release gates now test the declared Node.js 20.18.1 package floor in addition to Node.js 22 before publishing.
 
 ### Fixed
 
-- `aerial setup claude --effort <value>` now writes Claude Code's native `effortLevel` setting into `~/.claude/settings.json` while preserving Aerial `defaultEffort` as the proxy fallback.
+- Pressing `q`, Esc, or Ctrl-C in setup model/effort pickers now cancels setup instead of continuing with the highlighted value.
+- `package-lock.json` now points the `aerial` binary at the shipped `src/cli/index.js` entrypoint.
+- Updated usage and release documentation so Codex effort placement and Node.js support match the current implementation.
+
+## [0.2.5] - 2026-05-28
+
+### Fixed
+
+- Fixed Claude Code setup so `--effort <value>` writes Claude Code's native `effortLevel` setting while preserving Aerial `defaultEffort` as the proxy fallback.
+- Stabilized the release pipeline after nightly publishing was removed and kept stable releases on the single OIDC-backed publish workflow.
 
 ## [0.2.3] - 2026-05-26
 
 ### Fixed
 
 - Fixed Windows `aerial service install` task registration so Task Scheduler receives `powershell.exe` as the action command with the wrapper path quoted in the arguments, instead of persisting literal backslash-escaped quotes that made `AerialLocalProxy` fail with `ERROR_FILE_NOT_FOUND`.
+
+## [0.2.2] - 2026-05-26
+
+### Fixed
+
+- Bumped package metadata for the stable 0.2.2 release.
 
 ## [0.2.1] - 2026-05-26
 
@@ -158,6 +177,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.2.6]: https://github.com/Xiejiayun/aerial/compare/v0.2.5...v0.2.6
+[0.2.5]: https://github.com/Xiejiayun/aerial/compare/v0.2.3...v0.2.5
+[0.2.3]: https://github.com/Xiejiayun/aerial/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/Xiejiayun/aerial/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/Xiejiayun/aerial/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/Xiejiayun/aerial/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/Xiejiayun/aerial/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/Xiejiayun/aerial/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/Xiejiayun/aerial/compare/v0.1.8...v0.1.9

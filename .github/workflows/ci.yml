@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, Node ${{ matrix.node }})
     strategy:
       # Don't let a Windows failure cancel Linux/macOS — we want full triplet
       # signal on every PR.
@@ -26,15 +26,18 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macos-latest
+        node:
+          - "20.18.1"
+          - "22"
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js ${{ matrix.node }}
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: Install dependencies

@@ -29,10 +29,11 @@ name: Release
 # different file would change `job_workflow_ref` and break OIDC.
 #
 # Runtime split between test matrix and publish job:
-#   - The `test` and `package-checks` jobs intentionally pin
-#     `actions/setup-node@v4` with `node-version: "22"` so we keep
-#     validating the Node 22 floor declared in package.json
-#     (`engines.node: ">=22"`).
+#   - The `test` job intentionally covers Node 20.18.1 and Node 22 so
+#     we keep validating both the package.json floor
+#     (`engines.node: ">=20.18.1"`) and the current LTS line.
+#   - The `package-checks` job stays on Node 22 because pack and secret
+#     verification do not need the full cross-version matrix.
 #   - The `publish` job uses `actions/setup-node@v6` with
 #     `node-version: 24` and `package-manager-cache: false` because
 #     npm trusted publishing requires npm CLI >= 11.5.1 and Node
@@ -73,7 +74,7 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, Node ${{ matrix.node }})
     strategy:
       fail-fast: false
       matrix:
@@ -81,15 +82,18 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macos-latest
+        node:
+          - "20.18.1"
+          - "22"
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js ${{ matrix.node }}
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: Install dependencies
@@ -154,9 +158,10 @@ jobs:
         # npm trusted publishing requires npm CLI >= 11.5.1 and Node
         # >= 22.14. Node 24 satisfies both with margin and matches the
         # runtime npm's docs recommend for trusted publishers
-        # (https://docs.npmjs.com/trusted-publishers/). The `test` and
-        # `package-checks` jobs above stay on Node 22 to validate the
-        # Node 22 floor declared in package.json engines.
+        # (https://docs.npmjs.com/trusted-publishers/). The `test` job
+        # above covers the Node 20.18.1 package floor and Node 22; the
+        # publish job uses Node 24 solely for npm's trusted publishing
+        # exchange.
         #
         # `package-manager-cache: false` disables setup-node's automatic
         # npm cache wiring per the trusted-publishers example; the
