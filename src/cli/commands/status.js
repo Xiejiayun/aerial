@@ -1,6 +1,6 @@
 import { setupStatus } from "../../setup/index.js";
 import { serviceStatus } from "../../service/index.js";
-import { computeAppStatus } from "../app-status.js";
+import { computeAppStatus } from "../helpers.js";
 import { printServiceSummary, printSetupSummary } from "../output.js";
 
 export async function appStatus({ json = false } = {}) {

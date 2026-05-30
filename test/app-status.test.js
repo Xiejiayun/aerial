@@ -7,7 +7,7 @@ import fs from "node:fs";
 process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-app-status-test-"));
 process.env.AERIAL_API_KEY = "aerial_test_key";
 
-const { computeAppStatus } = await import("../src/cli/app-status.js");
+const { computeAppStatus } = await import("../src/cli/helpers.js");
 
 function makeSetup({ githubSource = "file", apiKeyExists = true, codexState = "aerial", claudeState = "missing" } = {}) {
   return {

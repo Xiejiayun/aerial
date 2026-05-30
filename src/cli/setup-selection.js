@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { parseNumberChoice } from "../shared/prompt-utils.js";
+import { parseNumberChoice } from "../shared/utils.js";
 import { DEFAULT_EFFORT, EFFORT_VALUES, assertValidEffort } from "../shared/effort.js";
 
 export { DEFAULT_EFFORT, EFFORT_VALUES, normalizeEffort, assertValidEffort } from "../shared/effort.js";

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { loadConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
-import { atomicWriteFile } from "../shared/file-utils.js";
+import { atomicWriteFile } from "../shared/utils.js";
 import {
   SERVICE_LABEL,
   WIN_TASK_NAME,

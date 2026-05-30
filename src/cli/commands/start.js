@@ -1,6 +1,6 @@
 import { ensureApiKey, loadConfig } from "../../shared/config.js";
 import { startServer } from "../../proxy/server.js";
-import { argValue } from "../args.js";
+import { argValue } from "../helpers.js";
 
 export function runStartCli(args) {
   const config = loadConfig();

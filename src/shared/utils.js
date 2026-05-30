@@ -1,6 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export function parseNumberChoice(value, { max, defaultIndex = 0, oneBased = false } = {}) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return defaultIndex;
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const n = Number(trimmed);
+  if (n < 1 || n > max) return undefined;
+  return oneBased ? n : n - 1;
+}
+
+export async function readJsonSafely(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
 function ensureParentDir(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
 }

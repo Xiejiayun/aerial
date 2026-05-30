@@ -3,8 +3,7 @@ import { configPath } from "../../shared/paths.js";
 import { restoreAllClients, restoreClient, setupClaude, setupCodex, setupStatus } from "../../setup/index.js";
 import { chooseSetupModel, formatModelChoices } from "../model-selection.js";
 import { assertValidEffort, chooseSetupEffort, formatEffortSelection } from "../setup-selection.js";
-import { requiredArgValue } from "../args.js";
-import { claudeApiKeyHelper, codexAuthCommand } from "../runtime-auth.js";
+import { requiredArgValue, claudeApiKeyHelper, codexAuthCommand } from "../helpers.js";
 import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
 
 async function selectSetupOptions(target, route, args) {

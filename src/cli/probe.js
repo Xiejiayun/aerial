@@ -1,6 +1,6 @@
 import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses } from "../proxy/index.js";
-import { readJsonSafely } from "../shared/http-utils.js";
-import { aerialRoutes, usageSummary } from "../proxy/model-utils.js";
+import { readJsonSafely } from "../shared/utils.js";
+import { aerialRoutes, usageSummary } from "../proxy/models.js";
 
 function modelRoutes(model) {
   return aerialRoutes(model);

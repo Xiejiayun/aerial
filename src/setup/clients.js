@@ -4,9 +4,9 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
-import { atomicWriteFile } from "../shared/file-utils.js";
+import { atomicWriteFile } from "../shared/utils.js";
 import { assertValidEffort, normalizeEffort } from "../shared/effort.js";
-import { backupIfExists, backupPathsFor } from "./backup.js";
+import { backupIfExists, backupPathsFor } from "./restore.js";
 import { setTomlRootString, upsertTomlSection, removeTomlSection } from "./toml.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({

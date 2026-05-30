@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { printVersion } from "./version.js";
-import { printHelp } from "./help.js";
+import { printVersion } from "./helpers.js";
 import { appStatus } from "./commands/status.js";
 import { runConfigCli } from "./commands/config.js";
 import { runDisableCli } from "./commands/disable.js";
@@ -12,6 +11,30 @@ import { runSetupCli } from "./commands/setup.js";
 import { runStartCli } from "./commands/start.js";
 import { doctor, renderDoctorText } from "./doctor.js";
 import { formatProbeReport, runProbe } from "./probe.js";
+
+function printHelp() {
+  console.log(`Aerial local Copilot proxy
+
+Usage:
+  aerial --version
+  aerial login
+  aerial setup codex [--model <id>] [--effort <low|medium|high|xhigh|max>]
+  aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max>]
+  aerial service install
+  aerial status [--json]
+  aerial proxy status|enable|disable [--json]
+
+Diagnostics and rollback:
+  aerial setup status [--json]
+  aerial setup restore <codex|claude|all> --latest
+  aerial service status [--json]
+  aerial disable
+  aerial doctor
+  aerial probe [--live] [--json]
+
+Debug:
+  aerial start [--host 127.0.0.1] [--port 18181]`);
+}
 
 async function main() {
   const args = process.argv.slice(2);

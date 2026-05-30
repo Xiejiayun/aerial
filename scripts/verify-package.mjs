@@ -28,7 +28,7 @@ const REQUIRED_FILES = [
   "docs/usage.md",
   "package.json",
   "src/cli/index.js",
-  "src/cli/version.js"
+  "src/cli/helpers.js"
 ];
 
 // Strict allowlist: every file in the npm pack must match one of these

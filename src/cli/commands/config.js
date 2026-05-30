@@ -1,7 +1,7 @@
 import { defaultConfig, loadConfig, saveConfig } from "../../shared/config.js";
 import { configPath } from "../../shared/paths.js";
 import { assertValidEffort } from "../../shared/effort.js";
-import { parseConfigHost, parseConfigPort } from "../args.js";
+import { parseConfigHost, parseConfigPort } from "../helpers.js";
 
 export function runConfigCli(subcommand, rest) {
   if (subcommand === "reset") {
