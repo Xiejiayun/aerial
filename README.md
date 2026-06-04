@@ -53,6 +53,8 @@ During setup, Aerial reads your Copilot model list, shows the models that work f
 aerial service install
 ```
 
+On Windows, run this command from an Administrator PowerShell or Command Prompt. Aerial registers its background service with Task Scheduler, and Windows requires elevation for that registration step.
+
 4. Check everything from one place:
 
 ```bash
@@ -120,7 +122,7 @@ Advanced override: `AERIAL_UPSTREAM_PROXY` can be set to a bare `http://`, `http
 ```bash
 aerial status           # setup, login, service, and health summary
 aerial proxy status     # upstream proxy mode, egress, and route visibility
-aerial service install  # install and start the background service
+aerial service install  # install and start the background service (Windows: Administrator terminal required)
 aerial doctor           # local diagnostics
 aerial teardown          # restore client configs and uninstall the service
 ```
@@ -141,7 +143,7 @@ Advanced service lifecycle commands are documented in `docs/usage.md`.
 ## Notes
 
 - macOS background service support uses a user LaunchAgent.
-- Windows background service support uses a user Task Scheduler task.
+- Windows background service support uses a user Task Scheduler task. Run `aerial service install` from an Administrator terminal to register it.
 - Linux service management is not built in yet; run `aerial start` or use your own init system.
 - Copilot inference routes are an observed compatibility target and may change upstream.
 
