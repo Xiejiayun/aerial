@@ -428,6 +428,38 @@ test("proxyMessages maps max effort to xhigh on a live catalog Claude Opus 4.7 m
   assert.equal(forwarded.output_config.effort, "xhigh");
 });
 
+test("proxyMessages clamps Claude Opus 4.8 high effort to selected model supported effort", async () => {
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.8", ["medium"])] });
+
+  const request = messagesRequest({
+    model: "claude-opus-4.8",
+    max_tokens: 32,
+    output_config: { effort: "high" },
+    messages: [{ role: "user", content: "hello" }]
+  });
+  const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.model, "claude-opus-4.8");
+  assert.equal(forwarded.output_config.effort, "medium");
+});
+
+test("proxyMessages clamps hyphenated Claude Opus 4.8 alias to catalog supported effort", async () => {
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.8", ["medium"])] });
+
+  const request = messagesRequest({
+    model: "claude-opus-4-8",
+    max_tokens: 32,
+    output_config: { effort: "high" },
+    messages: [{ role: "user", content: "hello" }]
+  });
+  const response = await proxyMessages(request);
+  const forwarded = capture.forwarded[0];
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.model, "claude-opus-4.8");
+  assert.equal(forwarded.output_config.effort, "medium");
+});
+
 test("proxyMessages routes hyphenated Claude Opus 4.7 aliases to live catalog model", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-effort-2026")] });
 

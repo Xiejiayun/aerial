@@ -6,6 +6,7 @@ const {
   clearModelCatalogCacheForTests,
   canonicalClaudeFamily,
   findCompatibleModel,
+  supportedReasoningEfforts,
   tokenFingerprintOf
 } = await import("../src/proxy/model-catalog.js");
 
@@ -19,13 +20,22 @@ function makeModel(id, { route = "/v1/messages", adaptive = true, efforts = ["lo
 
 test.afterEach(() => clearModelCatalogCacheForTests());
 
-test("canonicalClaudeFamily recognizes Opus 4.7 and its hyphen alias", () => {
+test("canonicalClaudeFamily recognizes Opus 4.x and hyphen aliases", () => {
   assert.equal(canonicalClaudeFamily("claude-opus-4.7"), "claude-opus-4.7");
   assert.equal(canonicalClaudeFamily("claude-opus-4-7"), "claude-opus-4.7");
   assert.equal(canonicalClaudeFamily("claude-opus-4.7-1m-internal"), "claude-opus-4.7");
+  assert.equal(canonicalClaudeFamily("claude-opus-4.8"), "claude-opus-4.8");
+  assert.equal(canonicalClaudeFamily("claude-opus-4-8"), "claude-opus-4.8");
+  assert.equal(canonicalClaudeFamily("claude-opus-4.8-fast"), "claude-opus-4.8");
   assert.equal(canonicalClaudeFamily("claude-sonnet-4.6"), undefined);
   assert.equal(canonicalClaudeFamily("gpt-5"), undefined);
   assert.equal(canonicalClaudeFamily(null), undefined);
+});
+
+test("supportedReasoningEfforts reads singular and plural catalog fields", () => {
+  assert.deepEqual(supportedReasoningEfforts({ capabilities: { supports: { reasoning_effort: ["medium"] } } }), ["medium"]);
+  assert.deepEqual(supportedReasoningEfforts({ capabilities: { supports: { reasoning_efforts: "high" } } }), ["high"]);
+  assert.deepEqual(supportedReasoningEfforts({}), []);
 });
 
 test("findCompatibleModel filters by family", () => {

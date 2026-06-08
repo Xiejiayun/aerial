@@ -1,7 +1,11 @@
 import { loadConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
 import { EFFORT_VALUES, normalizeEffort } from "../shared/effort.js";
-import { canonicalClaudeFamily, findCompatibleModel as findCompatibleModelShared } from "./model-catalog.js";
+import {
+  canonicalClaudeFamily,
+  findCompatibleModel as findCompatibleModelShared,
+  supportedReasoningEfforts
+} from "./model-catalog.js";
 import { withDefaultAnthropicCache, withDefaultPromptCache } from "./cache-policy.js";
 
 function openAIEffortRoute(model, effort) {
@@ -39,6 +43,40 @@ function objectOrEmpty(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+function closestSupportedEffort(model, requestedEffort) {
+  const requestedRank = EFFORT_VALUES.indexOf(requestedEffort);
+  if (requestedRank === -1) return undefined;
+  const supported = supportedReasoningEfforts(model)
+    .map((effort) => normalizeEffort(effort))
+    .filter((effort, index, values) => effort && values.indexOf(effort) === index);
+  if (supported.includes(requestedEffort)) return requestedEffort;
+  if (supported.length === 0) return undefined;
+  const ranked = supported
+    .map((effort) => ({ effort, rank: EFFORT_VALUES.indexOf(effort) }))
+    .filter((entry) => entry.rank !== -1)
+    .sort((a, b) => a.rank - b.rank);
+  const lowerOrEqual = ranked.filter((entry) => entry.rank <= requestedRank);
+  return (lowerOrEqual.at(-1) || ranked[0])?.effort;
+}
+
+function preferredModel(models, modelId) {
+  if (!Array.isArray(models)) return undefined;
+  return models.find((model) => model?.id === modelId);
+}
+
+function fallbackModelForFamily(models, family, preferredId) {
+  const exact = preferredModel(models, preferredId);
+  if (exact) return exact;
+  const base = preferredModel(models, family);
+  if (!base) return undefined;
+  return findCompatibleModelShared({
+    models: [base],
+    family,
+    route: "/v1/messages",
+    adaptiveThinking: true
+  });
+}
+
 function withSupportedAnthropicEffort(payload, models) {
   const effort = payload?.output_config?.effort;
   if (effort === undefined) return payload;
@@ -47,18 +85,33 @@ function withSupportedAnthropicEffort(payload, models) {
   if (!family) return payload;
   const nextEffort = normalizeEffort(effort);
   if (!nextEffort || !EFFORT_VALUES.includes(nextEffort)) return payload;
-  const routed = findCompatibleModelShared({
+  let routedEffort = nextEffort;
+  let routed = findCompatibleModelShared({
     models,
     family,
     route: "/v1/messages",
     adaptiveThinking: true,
-    effort: nextEffort,
+    effort: routedEffort,
     preferredId: model
   });
+  if (!routed) {
+    const fallbackEffort = closestSupportedEffort(fallbackModelForFamily(models, family, model), nextEffort);
+    if (fallbackEffort && fallbackEffort !== nextEffort) {
+      routedEffort = fallbackEffort;
+      routed = findCompatibleModelShared({
+        models,
+        family,
+        route: "/v1/messages",
+        adaptiveThinking: true,
+        effort: routedEffort,
+        preferredId: model
+      });
+    }
+  }
   const nextModel = routed?.id || model;
-  if (model === nextModel && effort === nextEffort) return payload;
-  logEvent("anthropic_effort_route", { model, effort, routedModel: nextModel, routedEffort: nextEffort });
-  return { ...payload, model: nextModel, output_config: { ...payload.output_config, effort: nextEffort } };
+  if (model === nextModel && effort === routedEffort) return payload;
+  logEvent("anthropic_effort_route", { model, effort, routedModel: nextModel, routedEffort });
+  return { ...payload, model: nextModel, output_config: { ...payload.output_config, effort: routedEffort } };
 }
 
 function legacyThinkingEffort(thinking) {
