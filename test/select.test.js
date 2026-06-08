@@ -27,6 +27,7 @@ const {
   EFFORT_VALUES,
   DEFAULT_EFFORT,
   normalizeEffort,
+  normalizeEffortCandidates,
   assertValidEffort,
   chooseSetupEffort,
   formatEffortSelection
@@ -114,6 +115,24 @@ test("default tag is rendered on the default row", async () => {
   assert.match(text, /default/);
 });
 
+test("effort selector only offers efforts supported by the selected model", async () => {
+  const { inputStream, outputStream, getOutput } = fakeStreams("\n");
+  const result = await chooseSetupEffort({
+    target: "Claude Code",
+    model: "claude-opus-4.8",
+    supportedEfforts: ["medium"],
+    input: inputStream,
+    output: outputStream
+  });
+  const text = getOutput();
+  assert.equal(result.effort, "medium");
+  assert.deepEqual(result.supportedEfforts, ["medium"]);
+  assert.match(text, /medium/);
+  assert.doesNotMatch(text, /\blow\b/);
+  assert.doesNotMatch(text, /\bhigh\b/);
+  assert.doesNotMatch(text, /\bxhigh\b/);
+});
+
 test("q cancels the effort selector instead of selecting the highlighted row", async () => {
   const { inputStream, outputStream } = fakeStreams("q");
   await assert.rejects(
@@ -166,6 +185,11 @@ test("normalizeEffort returns undefined for invalid input", () => {
   assert.equal(normalizeEffort(null), undefined);
 });
 
+test("normalizeEffortCandidates canonicalizes aliases and preserves global effort order", () => {
+  assert.deepEqual(normalizeEffortCandidates(["HIGH", "max", "medium", "turbo"]), ["medium", "high", "xhigh"]);
+  assert.deepEqual(normalizeEffortCandidates(undefined), []);
+});
+
 test("assertValidEffort throws with allowed values listed", () => {
   assert.throws(() => assertValidEffort("turbo"), /Invalid --effort/);
   assert.throws(() => assertValidEffort("turbo"), /low, medium, high, xhigh/);
@@ -191,6 +215,30 @@ test("chooseSetupEffort normalizes explicit max -> xhigh", async () => {
   assert.equal(result.source, "explicit");
 });
 
+test("chooseSetupEffort accepts explicit max when the selected model supports xhigh", async () => {
+  const result = await chooseSetupEffort({
+    target: "Codex",
+    model: "gpt-max",
+    supportedEfforts: ["xhigh"],
+    explicitEffort: "max",
+    prompt: true
+  });
+  assert.equal(result.effort, "xhigh");
+});
+
+test("chooseSetupEffort rejects explicit efforts unsupported by the selected model", async () => {
+  await assert.rejects(
+    () => chooseSetupEffort({
+      target: "Claude Code",
+      model: "claude-opus-4.8",
+      supportedEfforts: ["medium"],
+      explicitEffort: "high",
+      prompt: true
+    }),
+    /not supported by Claude Code model claude-opus-4\.8.*<medium>/
+  );
+});
+
 test("chooseSetupEffort rejects invalid explicit effort", async () => {
   await assert.rejects(
     () => chooseSetupEffort({ target: "Codex", explicitEffort: "turbo", prompt: true }),
@@ -205,6 +253,18 @@ test("chooseSetupEffort returns default medium under non-TTY", async () => {
   assert.equal(result.displayed, false);
 });
 
+test("chooseSetupEffort uses the first model-supported effort under non-TTY when medium is unavailable", async () => {
+  const result = await chooseSetupEffort({
+    target: "Claude Code",
+    model: "claude-opus-4.8",
+    supportedEfforts: ["high"],
+    prompt: false
+  });
+  assert.equal(result.effort, "high");
+  assert.equal(result.source, "default_non_tty");
+  assert.deepEqual(result.supportedEfforts, ["high"]);
+});
+
 test("formatEffortSelection differentiates non-TTY default", () => {
   const explicit = formatEffortSelection({ target: "Codex", effort: "high", source: "explicit" });
   const prompt = formatEffortSelection({ target: "Codex", effort: "low", source: "prompt" });
@@ -215,13 +275,23 @@ test("formatEffortSelection differentiates non-TTY default", () => {
   assert.match(nonTty, /--effort <low\|medium\|high\|xhigh\|max>/);
 });
 
+test("formatEffortSelection narrows non-TTY --effort help when model efforts are known", () => {
+  const nonTty = formatEffortSelection({
+    target: "Claude Code",
+    effort: "medium",
+    source: "default_non_tty",
+    supportedEfforts: ["medium", "xhigh"]
+  });
+  assert.match(nonTty, /--effort <medium\|xhigh\|max>/);
+});
+
 // --- model discovery / ranking / selection ---
 
 test("discoverModelsForRoute filters models by Aerial route", async () => {
   globalThis.fetch = async (url) => {
     if (String(url).includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
     return Response.json({ data: [
-      { id: "gpt-responses", supported_endpoints: ["/responses"] },
+      { id: "gpt-responses", supported_endpoints: ["/responses"], capabilities: { supports: { reasoning_effort: ["medium"] } } },
       { id: "claude-messages", supported_endpoints: ["/v1/messages"] },
       { id: "chat-only", supported_endpoints: ["/chat/completions"] }
     ] });
@@ -229,6 +299,7 @@ test("discoverModelsForRoute filters models by Aerial route", async () => {
   const responses = await discoverModelsForRoute("responses");
   const messages = await discoverModelsForRoute("messages");
   assert.deepEqual(responses.map((model) => model.id), ["gpt-responses"]);
+  assert.deepEqual(responses[0].supportedEfforts, ["medium"]);
   assert.deepEqual(messages.map((model) => model.id), ["claude-messages"]);
 });
 

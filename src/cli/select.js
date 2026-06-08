@@ -12,6 +12,7 @@ export { DEFAULT_EFFORT, EFFORT_VALUES, normalizeEffort, assertValidEffort } fro
 const MAX_LISTED_MODELS = 20;
 const GPT_VERSION_RE = /^gpt-(\d+)(?:\.(\d+))?/i;
 const STABLE_GPT_RE = /^gpt-\d+(?:\.\d+)?$/i;
+const GLOBAL_EFFORT_USAGE = "<low|medium|high|xhigh|max>";
 
 const CLEAR_LINE = "\x1b[2K";
 const CURSOR_UP = "\x1b[1A";
@@ -225,6 +226,27 @@ function currentEffortFor(target) {
   }
 }
 
+export function normalizeEffortCandidates(values) {
+  if (!Array.isArray(values)) return [];
+  const normalized = new Set();
+  for (const value of values) {
+    const effort = normalizeEffort(value);
+    if (effort) normalized.add(effort);
+  }
+  return EFFORT_VALUES.filter((effort) => normalized.has(effort));
+}
+
+function effortUsage(candidates, restricted) {
+  if (!restricted) return GLOBAL_EFFORT_USAGE;
+  const values = [...candidates];
+  if (values.includes("xhigh")) values.push("max");
+  return `<${values.join("|")}>`;
+}
+
+function defaultEffortFor(candidates) {
+  return candidates.includes(DEFAULT_EFFORT) ? DEFAULT_EFFORT : candidates[0];
+}
+
 export async function chooseSetupModel({
   target,
   route,
@@ -302,23 +324,34 @@ export function formatModelChoices({ target, route, choices, selectedModel, sour
 export async function chooseSetupEffort({
   target,
   explicitEffort,
+  model,
+  supportedEfforts,
   prompt,
   input: inputStream = input,
   output: outputStream = output
 } = {}) {
+  const restrictedEfforts = normalizeEffortCandidates(supportedEfforts);
+  const restricted = restrictedEfforts.length > 0;
+  const candidates = restricted ? restrictedEfforts : EFFORT_VALUES;
   if (explicitEffort !== undefined) {
-    return { effort: assertValidEffort(explicitEffort), source: "explicit", displayed: false };
+    const effort = assertValidEffort(explicitEffort);
+    if (restricted && !candidates.includes(effort)) {
+      const subject = model ? `${target} model ${model}` : `${target} model`;
+      throw new Error(`Effort ${JSON.stringify(explicitEffort)} is not supported by ${subject}. Allowed: ${effortUsage(candidates, true)}.`);
+    }
+    return { effort, source: "explicit", displayed: false, supportedEfforts: restricted ? candidates : undefined };
   }
   const shouldPrompt = prompt === undefined ? Boolean(inputStream.isTTY) : prompt;
   if (!shouldPrompt) {
-    return { effort: DEFAULT_EFFORT, source: "default_non_tty", displayed: false };
+    return { effort: defaultEffortFor(candidates), source: "default_non_tty", displayed: false, supportedEfforts: restricted ? candidates : undefined };
   }
   const current = currentEffortFor(target);
-  const currentIndex = EFFORT_VALUES.indexOf(current);
-  const initialIndex = currentIndex >= 0 ? currentIndex : EFFORT_VALUES.indexOf(DEFAULT_EFFORT);
+  const currentIndex = candidates.indexOf(current);
+  const defaultIndex = candidates.indexOf(DEFAULT_EFFORT);
+  const initialIndex = currentIndex >= 0 ? currentIndex : defaultIndex >= 0 ? defaultIndex : 0;
   const { item, cancelled } = await select({
     title: `Choose ${target} reasoning effort:`,
-    items: EFFORT_VALUES.map((value) => ({ label: value, value })),
+    items: candidates.map((value) => ({ label: value, value })),
     initialIndex,
     getTags: (it) => {
       const tags = [];
@@ -330,11 +363,13 @@ export async function chooseSetupEffort({
     output: outputStream
   });
   if (cancelled) throw new Error(`${target} setup cancelled.`);
-  return { effort: item.value, source: "prompt", displayed: true };
+  return { effort: item.value, source: "prompt", displayed: true, supportedEfforts: restricted ? candidates : undefined };
 }
 
-export function formatEffortSelection({ target, effort, source }) {
+export function formatEffortSelection({ target, effort, source, supportedEfforts }) {
   if (source === "explicit") return `Selected ${target} effort: ${effort}`;
   if (source === "prompt") return `Selected ${target} effort: ${effort}`;
-  return `No interactive terminal detected; selected ${target} effort: ${effort}. Pass --effort <low|medium|high|xhigh|max> to choose a different effort.`;
+  const restrictedEfforts = normalizeEffortCandidates(supportedEfforts);
+  const restricted = restrictedEfforts.length > 0;
+  return `No interactive terminal detected; selected ${target} effort: ${effort}. Pass --effort ${effortUsage(restrictedEfforts, restricted)} to choose a different effort.`;
 }

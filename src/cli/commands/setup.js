@@ -1,7 +1,7 @@
 import { loadConfig } from "../../shared/config.js";
 import { configPath } from "../../shared/paths.js";
 import { restoreAllClients, restoreClient, setupClaude, setupCodex, setupStatus } from "../../setup/index.js";
-import { chooseSetupModel, formatModelChoices, assertValidEffort, chooseSetupEffort, formatEffortSelection } from "../select.js";
+import { chooseSetupModel, discoverModelsForRoute, formatModelChoices, assertValidEffort, chooseSetupEffort, formatEffortSelection } from "../select.js";
 import { requiredArgValue, claudeApiKeyHelper, codexAuthCommand } from "../helpers.js";
 import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
 
@@ -16,8 +16,26 @@ async function selectSetupOptions(target, route, args) {
   } else {
     console.log(`Selected ${target} model: ${selected.model}`);
   }
-  const effortChoice = await chooseSetupEffort({ target, explicitEffort });
-  console.log(formatEffortSelection({ target, effort: effortChoice.effort, source: effortChoice.source }));
+  let selectedModel = selected.choices.find((choice) => choice.id === selected.model);
+  if (!selectedModel && selected.source === "explicit") {
+    try {
+      selectedModel = (await discoverModelsForRoute(route)).find((choice) => choice.id === selected.model);
+    } catch {
+      selectedModel = undefined;
+    }
+  }
+  const effortChoice = await chooseSetupEffort({
+    target,
+    explicitEffort,
+    model: selected.model,
+    supportedEfforts: selectedModel?.supportedEfforts
+  });
+  console.log(formatEffortSelection({
+    target,
+    effort: effortChoice.effort,
+    source: effortChoice.source,
+    supportedEfforts: effortChoice.supportedEfforts
+  }));
   return {
     model: selected.model,
     effort: effortChoice.effort,

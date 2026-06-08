@@ -16,7 +16,7 @@ test("readJsonSafely handles empty, JSON, and malformed responses", async () => 
 
 test("model utils normalize missing routes and filter by route", () => {
   const models = [
-    { id: "gpt", aerial: { routes: ["responses"], notes: ["stable"] } },
+    { id: "gpt", aerial: { routes: ["responses"], notes: ["stable"] }, capabilities: { supports: { reasoning_effort: ["medium"] } } },
     { id: "claude", aerial: { routes: ["messages"] } },
     { id: 42, aerial: { routes: ["responses"] } },
     { id: "broken", aerial: { routes: "responses" } }
@@ -24,7 +24,7 @@ test("model utils normalize missing routes and filter by route", () => {
 
   assert.deepEqual(aerialRoutes(models[3]), []);
   assert.deepEqual(modelsForRoute(models, "responses"), [
-    { id: "gpt", routes: ["responses"], notes: ["stable"] }
+    { id: "gpt", routes: ["responses"], notes: ["stable"], supportedEfforts: ["medium"] }
   ]);
 });
 

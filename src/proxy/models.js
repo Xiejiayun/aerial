@@ -1,4 +1,5 @@
 import { copyResponseHeaders } from "./headers.js";
+import { supportedReasoningEfforts } from "./model-catalog.js";
 
 export function aerialSupportForModel(model) {
   const endpoints = Array.isArray(model.supported_endpoints) ? model.supported_endpoints : [];
@@ -35,7 +36,15 @@ export function aerialRoutes(model) {
 export function modelsForRoute(models, route) {
   return models
     .filter((model) => typeof model?.id === "string" && aerialRoutes(model).includes(route))
-    .map((model) => ({ id: model.id, routes: aerialRoutes(model), notes: model.aerial?.notes || [] }));
+    .map((model) => {
+      const supportedEfforts = supportedReasoningEfforts(model);
+      return {
+        id: model.id,
+        routes: aerialRoutes(model),
+        notes: model.aerial?.notes || [],
+        ...(supportedEfforts.length ? { supportedEfforts } : {})
+      };
+    });
 }
 
 export function usageSummary(payload) {

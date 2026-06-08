@@ -26,7 +26,8 @@ export function clearModelCatalogCacheForTests() {
 
 export function canonicalClaudeFamily(modelId) {
   if (typeof modelId !== "string") return undefined;
-  if (/^claude-opus-4[.-]7(?:-|$)/.test(modelId)) return "claude-opus-4.7";
+  const opus = modelId.match(/^claude-opus-4[.-](\d+)(?:-|$)/);
+  if (opus) return `claude-opus-4.${opus[1]}`;
   return undefined;
 }
 
@@ -42,7 +43,7 @@ function modelSupportsAdaptiveThinking(model) {
   return supports?.adaptive_thinking === true || supports?.thinking?.adaptive === true;
 }
 
-function supportedReasoningEfforts(model) {
+export function supportedReasoningEfforts(model) {
   const supports = model?.capabilities?.supports;
   const values = supports?.reasoning_effort ?? supports?.reasoning_efforts;
   if (Array.isArray(values)) return values.map(String);
