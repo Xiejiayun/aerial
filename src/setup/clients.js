@@ -5,7 +5,7 @@ import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/utils.js";
-import { assertValidEffort, normalizeEffort } from "../shared/effort.js";
+import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort, normalizeEffort } from "../shared/effort.js";
 import { backupIfExists, backupPathsFor } from "./restore.js";
 import { setTomlRootString, upsertTomlSection, removeTomlSection } from "./toml.js";
 
@@ -38,7 +38,7 @@ function claudeEnvForAerial(currentEnv, config) {
 }
 
 export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } = {}) {
-  const normalizedEffort = effort === undefined ? undefined : assertValidEffort(effort);
+  const normalizedEffort = effort === undefined ? undefined : assertValidCodexEffort(effort);
   ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel;
@@ -65,9 +65,6 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   });
   content = removeTomlSection(content, "profiles.aerial");
   atomicWriteFile(file, content);
-  if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
-    saveConfig({ ...config, defaultEffort: normalizedEffort });
-  }
   logEvent("setup_write", { target: "codex", file, backup, auth: "command", effort: normalizedEffort });
   return { file, backup, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
@@ -146,7 +143,7 @@ export function codexStatus() {
     ? doc.model_providers.aerial.base_url
     : undefined;
   const rootEffort = doc?.model_reasoning_effort;
-  const effort = typeof rootEffort === "string" ? (normalizeEffort(rootEffort) || "missing") : "missing";
+  const effort = typeof rootEffort === "string" ? (normalizeCodexEffort(rootEffort) || "missing") : "missing";
   const legacyProfile = doc?.profiles?.aerial && typeof doc.profiles.aerial === "object";
   const legacyProfileLooksAerial = legacyProfile
     && (doc.profiles.aerial.model_provider === "aerial"

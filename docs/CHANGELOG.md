@@ -4,6 +4,20 @@ All notable changes to `@jiayunxie/aerial` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.2.7] - 2026-07-14
+
+### Changed
+
+- Codex effort selection and proxy routing are now model-aware. Native `max` is preserved when Copilot advertises it, `ultra` falls back to the nearest supported level, and Codex `minimal` maps to Copilot `none`.
+- Codex and Claude effort semantics are separated. Claude keeps `max` as an `xhigh` alias, while Codex setup no longer overwrites the Claude-oriented Aerial `defaultEffort` fallback.
+- The last successful model catalog remains available as a stale fallback when a refresh fails.
+
+### Security
+
+- Updated `undici` to 7.28.0 to address upstream TLS validation, proxy-pool isolation, WebSocket denial-of-service, and HTTP parsing advisories.
+
 ## [0.2.6] - 2026-05-30
 
 ### Changed

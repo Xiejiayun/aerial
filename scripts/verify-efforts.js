@@ -2,8 +2,9 @@
 import { getCopilotToken } from "../src/shared/auth.js";
 import { COPILOT_API_ORIGIN, DEFAULT_ANTHROPIC_VERSION, DEFAULT_VERSIONS } from "../src/shared/constants.js";
 
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-const DEFAULT_GPT_MODELS = ["gpt-5.2", "gpt-5-mini", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-5.2-codex", "gpt-5.3-codex"];
+const GPT_EFFORTS = ["none", "low", "medium", "high", "xhigh", "max", "ultra"];
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const DEFAULT_GPT_MODELS = ["gpt-5.2", "gpt-5-mini", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.2-codex", "gpt-5.3-codex"];
 const DEFAULT_CLAUDE_MODELS = ["claude-opus-4.7", "claude-opus-4.7-high", "claude-opus-4.7-xhigh", "claude-opus-4.7-1m-internal"];
 
 function argValue(name) {
@@ -83,14 +84,14 @@ async function testClaude(token, model, effort) {
   return { family: "claude", model, effort, ...result };
 }
 
-function printTable(rows) {
+function printTable(rows, efforts) {
   const byModel = new Map();
   for (const row of rows) {
     if (!byModel.has(row.model)) byModel.set(row.model, {});
     byModel.get(row.model)[row.effort] = row.ok ? "OK" : `${row.status}`;
   }
-  const header = ["model", ...EFFORTS];
-  const table = [header, ...[...byModel.entries()].map(([model, efforts]) => [model, ...EFFORTS.map((effort) => efforts[effort] || "-")])];
+  const header = ["model", ...efforts];
+  const table = [header, ...[...byModel.entries()].map(([model, results]) => [model, ...efforts.map((effort) => results[effort] || "-")])];
   const widths = header.map((_, col) => Math.max(...table.map((row) => String(row[col]).length)));
   for (const row of table) {
     console.log(row.map((cell, col) => String(cell).padEnd(widths[col])).join("  "));
@@ -100,7 +101,7 @@ function printTable(rows) {
 async function main() {
   const family = argValue("--family") || "gpt";
   const models = csvArg("--models") || (family === "claude" ? DEFAULT_CLAUDE_MODELS : DEFAULT_GPT_MODELS);
-  const efforts = csvArg("--efforts") || EFFORTS;
+  const efforts = csvArg("--efforts") || (family === "claude" ? CLAUDE_EFFORTS : GPT_EFFORTS);
   const token = await getCopilotToken();
   const rows = [];
   for (const model of models) {
@@ -109,7 +110,7 @@ async function main() {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
-  if (outputFormat() === "table") printTable(rows);
+  if (outputFormat() === "table") printTable(rows, efforts);
   else console.log(JSON.stringify(rows, null, 2));
 }
 

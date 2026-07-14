@@ -101,23 +101,32 @@ test("setupClaude merges gateway settings", () => {
 });
 
 test("setupCodex writes model_reasoning_effort at root when effort is provided", () => {
+  saveConfig({ ...loadConfig(), defaultEffort: "medium" });
   const result = setupCodex({ model: "copilot-test", effort: "high" });
   const content = fs.readFileSync(result.file, "utf8");
   const rootBlock = content.split("[")[0];
   assert.match(rootBlock, /model_reasoning_effort = "high"/);
   assert.doesNotMatch(content, /\[profiles\.aerial\]/);
   assert.equal(result.effort, "high");
-  assert.equal(loadConfig().defaultEffort, "high");
+  assert.equal(loadConfig().defaultEffort, "medium", "Codex setup must not overwrite Claude's proxy fallback");
 });
 
-test("setupCodex normalizes max effort to xhigh", () => {
+test("setupCodex preserves native Codex max effort", () => {
   saveConfig({ ...loadConfig(), defaultEffort: "medium" });
   const result = setupCodex({ model: "copilot-test", effort: "max" });
   const content = fs.readFileSync(result.file, "utf8");
   const rootBlock = content.split("[")[0];
-  assert.match(rootBlock, /model_reasoning_effort = "xhigh"/);
-  assert.equal(result.effort, "xhigh");
-  assert.equal(loadConfig().defaultEffort, "xhigh");
+  assert.match(rootBlock, /model_reasoning_effort = "max"/);
+  assert.equal(result.effort, "max");
+  assert.equal(loadConfig().defaultEffort, "medium");
+});
+
+test("setupCodex canonicalizes none to Codex minimal", () => {
+  const result = setupCodex({ model: "copilot-test", effort: "none" });
+  const content = fs.readFileSync(result.file, "utf8");
+  const rootBlock = content.split("[")[0];
+  assert.match(rootBlock, /model_reasoning_effort = "minimal"/);
+  assert.equal(result.effort, "minimal");
 });
 
 test("setupCodex rejects invalid effort before writing config", () => {
@@ -248,7 +257,7 @@ test("setupStatus does not flag an ordinary non-Aerial profile named aerial", ()
   assert.equal(status.clients.codex.migration, undefined);
 });
 
-test("setupStatus normalizes Codex root effort 'max' to canonical 'xhigh'", () => {
+test("setupStatus preserves Codex root effort 'max'", () => {
   const codexDir = path.join(temp, ".codex");
   fs.mkdirSync(codexDir, { recursive: true });
   setupCodex({ model: "copilot-test", effort: "medium" });
@@ -256,7 +265,18 @@ test("setupStatus normalizes Codex root effort 'max' to canonical 'xhigh'", () =
   const content = fs.readFileSync(file, "utf8").replace(/model_reasoning_effort = "medium"/, 'model_reasoning_effort = "max"');
   fs.writeFileSync(file, content, "utf8");
   const status = setupStatus();
-  assert.equal(status.clients.codex.effort, "xhigh");
+  assert.equal(status.clients.codex.effort, "max");
+});
+
+test("setupStatus reports Codex root effort 'none' as canonical 'minimal'", () => {
+  const codexDir = path.join(temp, ".codex");
+  fs.mkdirSync(codexDir, { recursive: true });
+  setupCodex({ model: "copilot-test", effort: "medium" });
+  const file = path.join(codexDir, "config.toml");
+  const content = fs.readFileSync(file, "utf8").replace(/model_reasoning_effort = "medium"/, 'model_reasoning_effort = "none"');
+  fs.writeFileSync(file, content, "utf8");
+  const status = setupStatus();
+  assert.equal(status.clients.codex.effort, "minimal");
 });
 
 test("setupStatus reports codex effort 'missing' for non-canonical Codex root values like 'turbo'", () => {

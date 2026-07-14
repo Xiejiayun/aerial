@@ -18,7 +18,7 @@ function printHelp() {
 Usage:
   aerial --version
   aerial login
-  aerial setup codex [--model <id>] [--effort <low|medium|high|xhigh|max>]
+  aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>]
   aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max>]
   aerial service install
   aerial status [--json]

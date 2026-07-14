@@ -4,15 +4,34 @@ import { proxyModels } from "../proxy/index.js";
 import { readJsonSafely } from "../shared/utils.js";
 import { modelsForRoute } from "../proxy/models.js";
 import { codexStatus, claudeStatus } from "../setup/clients.js";
-import { DEFAULT_EFFORT, EFFORT_VALUES, assertValidEffort, normalizeEffort } from "../shared/effort.js";
+import {
+  CODEX_EFFORT_VALUES,
+  DEFAULT_EFFORT,
+  EFFORT_VALUES,
+  assertValidCodexEffort,
+  assertValidEffort,
+  normalizeCodexEffort,
+  normalizeEffort,
+  resolveCodexEffort
+} from "../shared/effort.js";
 
 export { modelsForRoute } from "../proxy/models.js";
-export { DEFAULT_EFFORT, EFFORT_VALUES, normalizeEffort, assertValidEffort } from "../shared/effort.js";
+export {
+  CODEX_EFFORT_VALUES,
+  DEFAULT_EFFORT,
+  EFFORT_VALUES,
+  assertValidCodexEffort,
+  assertValidEffort,
+  normalizeCodexEffort,
+  normalizeEffort,
+  resolveCodexEffort
+} from "../shared/effort.js";
 
 const MAX_LISTED_MODELS = 20;
 const GPT_VERSION_RE = /^gpt-(\d+)(?:\.(\d+))?/i;
 const STABLE_GPT_RE = /^gpt-\d+(?:\.\d+)?$/i;
-const GLOBAL_EFFORT_USAGE = "<low|medium|high|xhigh|max>";
+const CODEX_EFFORT_USAGE = "<minimal|low|medium|high|xhigh|max|ultra>";
+const CLAUDE_EFFORT_USAGE = "<low|medium|high|xhigh|max>";
 
 const CLEAR_LINE = "\x1b[2K";
 const CURSOR_UP = "\x1b[1A";
@@ -220,7 +239,8 @@ function currentModelFor(target) {
 function currentEffortFor(target) {
   try {
     const status = target === "Codex" ? codexStatus() : claudeStatus();
-    return typeof status.effort === "string" ? normalizeEffort(status.effort) : undefined;
+    if (typeof status.effort !== "string") return undefined;
+    return target === "Codex" ? normalizeCodexEffort(status.effort) : normalizeEffort(status.effort);
   } catch {
     return undefined;
   }
@@ -236,8 +256,19 @@ export function normalizeEffortCandidates(values) {
   return EFFORT_VALUES.filter((effort) => normalized.has(effort));
 }
 
-function effortUsage(candidates, restricted) {
-  if (!restricted) return GLOBAL_EFFORT_USAGE;
+export function normalizeCodexEffortCandidates(values) {
+  if (!Array.isArray(values)) return [];
+  const normalized = new Set();
+  for (const value of values) {
+    const effort = normalizeCodexEffort(value);
+    if (effort) normalized.add(effort);
+  }
+  return CODEX_EFFORT_VALUES.filter((effort) => normalized.has(effort));
+}
+
+function effortUsage(target, candidates, restricted) {
+  if (!restricted) return target === "Codex" ? CODEX_EFFORT_USAGE : CLAUDE_EFFORT_USAGE;
+  if (target === "Codex") return `<${candidates.join("|")}>`;
   const values = [...candidates];
   if (values.includes("xhigh")) values.push("max");
   return `<${values.join("|")}>`;
@@ -330,14 +361,28 @@ export async function chooseSetupEffort({
   input: inputStream = input,
   output: outputStream = output
 } = {}) {
-  const restrictedEfforts = normalizeEffortCandidates(supportedEfforts);
+  const isCodex = target === "Codex";
+  const restrictedEfforts = isCodex
+    ? normalizeCodexEffortCandidates(supportedEfforts)
+    : normalizeEffortCandidates(supportedEfforts);
   const restricted = restrictedEfforts.length > 0;
-  const candidates = restricted ? restrictedEfforts : EFFORT_VALUES;
+  const globalEfforts = isCodex ? CODEX_EFFORT_VALUES : EFFORT_VALUES;
+  const candidates = restricted ? restrictedEfforts : globalEfforts;
   if (explicitEffort !== undefined) {
+    if (isCodex) {
+      const requested = assertValidCodexEffort(explicitEffort);
+      const resolved = resolveCodexEffort(requested, supportedEfforts);
+      return {
+        effort: resolved.resolvedEffort,
+        source: "explicit",
+        displayed: false,
+        supportedEfforts: restricted ? candidates : undefined
+      };
+    }
     const effort = assertValidEffort(explicitEffort);
     if (restricted && !candidates.includes(effort)) {
       const subject = model ? `${target} model ${model}` : `${target} model`;
-      throw new Error(`Effort ${JSON.stringify(explicitEffort)} is not supported by ${subject}. Allowed: ${effortUsage(candidates, true)}.`);
+      throw new Error(`Effort ${JSON.stringify(explicitEffort)} is not supported by ${subject}. Allowed: ${effortUsage(target, candidates, true)}.`);
     }
     return { effort, source: "explicit", displayed: false, supportedEfforts: restricted ? candidates : undefined };
   }
@@ -363,13 +408,18 @@ export async function chooseSetupEffort({
     output: outputStream
   });
   if (cancelled) throw new Error(`${target} setup cancelled.`);
-  return { effort: item.value, source: "prompt", displayed: true, supportedEfforts: restricted ? candidates : undefined };
+  const effort = isCodex
+    ? resolveCodexEffort(item.value, supportedEfforts).resolvedEffort
+    : item.value;
+  return { effort, source: "prompt", displayed: true, supportedEfforts: restricted ? candidates : undefined };
 }
 
 export function formatEffortSelection({ target, effort, source, supportedEfforts }) {
   if (source === "explicit") return `Selected ${target} effort: ${effort}`;
   if (source === "prompt") return `Selected ${target} effort: ${effort}`;
-  const restrictedEfforts = normalizeEffortCandidates(supportedEfforts);
+  const restrictedEfforts = target === "Codex"
+    ? normalizeCodexEffortCandidates(supportedEfforts)
+    : normalizeEffortCandidates(supportedEfforts);
   const restricted = restrictedEfforts.length > 0;
-  return `No interactive terminal detected; selected ${target} effort: ${effort}. Pass --effort ${effortUsage(restrictedEfforts, restricted)} to choose a different effort.`;
+  return `No interactive terminal detected; selected ${target} effort: ${effort}. Pass --effort ${effortUsage(target, restrictedEfforts, restricted)} to choose a different effort.`;
 }

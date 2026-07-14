@@ -1,6 +1,6 @@
 import { loadConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
-import { EFFORT_VALUES, normalizeEffort } from "../shared/effort.js";
+import { EFFORT_VALUES, normalizeCodexEffort, normalizeEffort, resolveCodexEffort } from "../shared/effort.js";
 import {
   canonicalClaudeFamily,
   findCompatibleModel as findCompatibleModelShared,
@@ -8,35 +8,50 @@ import {
 } from "./model-catalog.js";
 import { withDefaultAnthropicCache, withDefaultPromptCache } from "./cache-policy.js";
 
-function openAIEffortRoute(model, effort) {
+function openAIEffortRoute(model, effort, supportedEfforts) {
   if (effort === undefined) return undefined;
-  const normalized = normalizeEffort(effort);
+  const normalized = normalizeCodexEffort(effort);
   if (!normalized) return undefined;
-  if (/^gpt-5-mini(?:-|$)/.test(model) && normalized === "xhigh") return "high";
-  if (normalized !== String(effort).trim().toLowerCase()) return normalized;
-  return undefined;
+  const requested = String(effort).trim().toLowerCase();
+  const resolved = resolveCodexEffort(normalized, supportedEfforts);
+  if (!resolved) return undefined;
+  const hasSupportedEffortMetadata = Array.isArray(supportedEfforts)
+    && supportedEfforts.some((value) => normalizeCodexEffort(value));
+  if (!hasSupportedEffortMetadata && /^gpt-5-mini(?:-|$)/.test(model) && resolved.wireEffort === "xhigh") {
+    return { effort: "high", reason: "model_compatibility" };
+  }
+  if (resolved.wireEffort === requested) return undefined;
+  return { effort: resolved.wireEffort, reason: resolved.reason };
 }
 
-function withSupportedOpenAIEffort(payload) {
+async function withSupportedOpenAIEffort(payload, loadModels) {
   const model = typeof payload?.model === "string" ? payload.model : "";
   const reasoningEffort = payload?.reasoning && typeof payload.reasoning === "object" ? payload.reasoning.effort : undefined;
-  const nextReasoningEffort = openAIEffortRoute(model, reasoningEffort);
-  const nextFlatEffort = openAIEffortRoute(model, payload?.reasoning_effort);
+  const flatEffort = payload?.reasoning_effort;
+  const hasKnownEffort = normalizeCodexEffort(reasoningEffort) || normalizeCodexEffort(flatEffort);
+  const models = hasKnownEffort && typeof loadModels === "function"
+    ? await loadModels().catch(() => undefined)
+    : undefined;
+  const selectedModel = Array.isArray(models) ? models.find((entry) => entry?.id === model) : undefined;
+  const supportedEfforts = selectedModel ? supportedReasoningEfforts(selectedModel) : undefined;
+  const nextReasoningEffort = openAIEffortRoute(model, reasoningEffort, supportedEfforts);
+  const nextFlatEffort = openAIEffortRoute(model, flatEffort, supportedEfforts);
   if (!nextReasoningEffort && !nextFlatEffort) return payload;
 
   const next = { ...payload };
-  if (nextReasoningEffort) next.reasoning = { ...payload.reasoning, effort: nextReasoningEffort };
-  if (nextFlatEffort) next.reasoning_effort = nextFlatEffort;
+  if (nextReasoningEffort) next.reasoning = { ...payload.reasoning, effort: nextReasoningEffort.effort };
+  if (nextFlatEffort) next.reasoning_effort = nextFlatEffort.effort;
   logEvent("openai_effort_route", {
     model,
-    effort: reasoningEffort ?? payload?.reasoning_effort,
-    routedEffort: nextReasoningEffort ?? nextFlatEffort
+    effort: reasoningEffort ?? flatEffort,
+    routedEffort: nextReasoningEffort?.effort ?? nextFlatEffort?.effort,
+    reason: nextReasoningEffort?.reason ?? nextFlatEffort?.reason
   });
   return next;
 }
 
-export function withOpenAIDefaults(payload) {
-  return withDefaultPromptCache(withSupportedOpenAIEffort(payload));
+export async function withOpenAIDefaults(payload, loadModels) {
+  return withDefaultPromptCache(await withSupportedOpenAIEffort(payload, loadModels));
 }
 
 function objectOrEmpty(value) {

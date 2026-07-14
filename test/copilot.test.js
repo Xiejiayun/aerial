@@ -55,6 +55,26 @@ function mockMessagesFetch({ models = [] } = {}) {
   return { forwarded };
 }
 
+function openAIEffortModel(id, efforts) {
+  return {
+    id,
+    supported_endpoints: ["/responses", "/chat/completions"],
+    capabilities: { supports: { reasoning_effort: efforts } }
+  };
+}
+
+function mockOpenAIFetch({ models = [] } = {}) {
+  const forwarded = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    if (u.endsWith("/models")) return Response.json({ data: models });
+    forwarded.push(parseForwardedJson(init));
+    return Response.json({ ok: true });
+  };
+  return { forwarded };
+}
+
 test("proxyModels annotates Aerial route support", async () => {
   let calls = 0;
   globalThis.fetch = async () => Response.json({
@@ -255,45 +275,116 @@ test("proxyResponses respects cache opt-out", async () => {
   }
 });
 
-test("proxyResponses maps OpenAI max effort to xhigh", async () => {
-  let forwarded;
-  globalThis.fetch = async (url, init) => {
-    if (String(url).endsWith("/models")) return Response.json({ data: [] });
-    forwarded = parseForwardedJson(init);
-    return Response.json({ ok: true });
-  };
+test("proxyResponses preserves max when the selected model supports it", async () => {
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5.6-sol", ["none", "low", "medium", "high", "xhigh", "max"])]
+  });
+
+  const request = responsesRequest({ model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "max" } });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  assert.equal(capture.forwarded[0].reasoning.effort, "max");
+});
+
+test("proxyResponses downgrades ultra to model-supported max", async () => {
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5.6-sol", ["none", "low", "medium", "high", "xhigh", "max"])]
+  });
+
+  const request = responsesRequest({ model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  assert.equal(capture.forwarded[0].reasoning.effort, "max");
+});
+
+test("proxyResponses maps Codex minimal to catalog wire effort none", async () => {
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5.6-sol", ["none", "low", "medium", "high", "xhigh", "max"])]
+  });
+
+  const request = responsesRequest({ model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "minimal" } });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  assert.equal(capture.forwarded[0].reasoning.effort, "none");
+});
+
+test("proxyResponses routes nested and flat efforts from one model catalog lookup", async () => {
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5.6-sol", ["none", "low", "medium", "high", "xhigh", "max"])]
+  });
+
+  const request = responsesRequest({
+    model: "gpt-5.6-sol",
+    input: "hello",
+    reasoning: { effort: "minimal" },
+    reasoning_effort: "ultra"
+  });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  assert.equal(capture.forwarded[0].reasoning.effort, "none");
+  assert.equal(capture.forwarded[0].reasoning_effort, "max");
+});
+
+test("proxyResponses applies deterministic ultra fallback without catalog metadata", async () => {
+  const capture = mockOpenAIFetch({ models: [] });
+
+  const request = responsesRequest({ model: "gpt-future", input: "hello", reasoning: { effort: "ultra" } });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  assert.equal(capture.forwarded[0].reasoning.effort, "max");
+});
+
+test("proxyResponses downgrades max to xhigh for models without max", async () => {
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5.5", ["none", "low", "medium", "high", "xhigh"])]
+  });
 
   const request = responsesRequest({ model: "gpt-5.5", input: "hello", reasoning: { effort: "max" } });
   const response = await proxyResponses(request);
   assert.equal(response.status, 200);
-  assert.equal(forwarded.reasoning.effort, "xhigh");
+  assert.equal(capture.forwarded[0].reasoning.effort, "xhigh");
 });
 
 test("proxyResponses maps gpt-5-mini xhigh effort to high", async () => {
-  let forwarded;
-  globalThis.fetch = async (url, init) => {
-    if (String(url).endsWith("/models")) return Response.json({ data: [] });
-    forwarded = parseForwardedJson(init);
-    return Response.json({ ok: true });
-  };
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5-mini", ["low", "medium", "high"])]
+  });
 
   const request = responsesRequest({ model: "gpt-5-mini", input: "hello", reasoning: { effort: "xhigh" } });
   const response = await proxyResponses(request);
   assert.equal(response.status, 200);
-  assert.equal(forwarded.reasoning.effort, "high");
+  assert.equal(capture.forwarded[0].reasoning.effort, "high");
+});
+
+test("proxyResponses trusts catalog support over legacy gpt-5-mini fallback", async () => {
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5-mini", ["low", "medium", "high", "xhigh"])]
+  });
+
+  const request = responsesRequest({ model: "gpt-5-mini", input: "hello", reasoning: { effort: "xhigh" } });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  assert.equal(capture.forwarded[0].reasoning.effort, "xhigh");
+});
+
+test("proxyResponses keeps legacy gpt-5-mini fallback when catalog metadata is missing", async () => {
+  const capture = mockOpenAIFetch({ models: [] });
+
+  const request = responsesRequest({ model: "gpt-5-mini", input: "hello", reasoning: { effort: "xhigh" } });
+  const response = await proxyResponses(request);
+  assert.equal(response.status, 200);
+  assert.equal(capture.forwarded[0].reasoning.effort, "high");
 });
 
 test("proxyChatCompletions maps flat OpenAI max effort to xhigh", async () => {
-  let forwarded;
-  globalThis.fetch = async (_url, init) => {
-    forwarded = parseForwardedJson(init);
-    return Response.json({ ok: true });
-  };
+  const capture = mockOpenAIFetch({
+    models: [openAIEffortModel("gpt-5.5", ["none", "low", "medium", "high", "xhigh"])]
+  });
 
   const request = chatRequest({ model: "gpt-5.5", messages: [{ role: "user", content: "hello" }], reasoning_effort: "max" });
   const response = await proxyChatCompletions(request);
   assert.equal(response.status, 200);
-  assert.equal(forwarded.reasoning_effort, "xhigh");
+  assert.equal(capture.forwarded[0].reasoning_effort, "xhigh");
 });
 
 test("proxyMessages injects Anthropic cache_control on system content", async () => {

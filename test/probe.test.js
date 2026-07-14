@@ -25,7 +25,7 @@ test("runProbe returns annotated model matrix without live route checks", async 
   globalThis.fetch = async () => Response.json(calls++ === 0
     ? { token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" }
     : { data: [
-        { id: "gpt", supported_endpoints: ["/responses", "/chat/completions", "ws:/responses"], capabilities: { type: "chat" } },
+        { id: "gpt", supported_endpoints: ["/responses", "/chat/completions", "ws:/responses"], capabilities: { type: "chat", supports: { reasoning_effort: ["none", "low", "max"] } } },
         { id: "claude", supported_endpoints: ["/v1/messages"], capabilities: { type: "chat" } },
         { id: "embed", capabilities: { type: "embeddings" } }
       ] });
@@ -38,7 +38,8 @@ test("runProbe returns annotated model matrix without live route checks", async 
   assert.equal(report.summary.websocketResponses, 1);
   assert.equal(report.summary.embeddings, 1);
   assert.equal(report.routes.length, 0);
-  assert.match(formatProbeReport(report), /Model matrix/);
+  assert.deepEqual(report.models[0].efforts, ["none", "low", "max"]);
+  assert.match(formatProbeReport(report), /gpt: routes=responses,responses_websocket,chat efforts=none,low,max/);
 });
 
 test("runProbe live checks first model for each route", async () => {

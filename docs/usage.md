@@ -93,7 +93,7 @@ The local key is generated and stored by Aerial automatically. Users do not need
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-To skip the prompts, pass `--model <responses-model-id>` and/or `--effort <low|medium|high|xhigh|max>` (`max` is an alias for `xhigh`). The chosen effort is written as root-level `model_reasoning_effort = "<effort>"` and is also persisted as Aerial-wide `defaultEffort` in `~/.aerial/config.json`. Under non-TTY (CI/pipes) the wizard does not prompt and falls back to the default effort `medium`.
+To skip the prompts, pass `--model <responses-model-id>` and/or `--effort <minimal|low|medium|high|xhigh|max|ultra>`. `none` is accepted as an alias for Codex `minimal`. Aerial resolves the request against the selected model's live Copilot capabilities: supported values are preserved, while unsupported values fall back to the nearest usable level (`ultra` currently becomes `max` on GPT-5.6 models, and `minimal` is sent as Copilot `none`). The resolved Codex value is written as root-level `model_reasoning_effort = "<effort>"`. Codex setup does not change Aerial `defaultEffort`, which remains the Claude proxy fallback. Under non-TTY (CI/pipes) the wizard does not prompt and falls back to `medium` when the selected model supports it.
 
 ## 6. Configure Claude Code
 
