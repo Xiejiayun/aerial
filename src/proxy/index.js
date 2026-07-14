@@ -24,7 +24,7 @@ export async function proxyModels(request) {
 }
 
 export async function proxyResponses(request) {
-  const payload = withOpenAIDefaults(await request.json());
+  const payload = await withOpenAIDefaults(await request.json(), fetchModelsCatalogForCopilot);
   const body = Buffer.from(JSON.stringify(payload));
 
   if (payload?.stream && isResponsesWebSocketOptIn()) {
@@ -67,8 +67,8 @@ export async function proxyMessages(request) {
 }
 
 export async function proxyChatCompletions(request) {
-  const upstreamRequest = await requestWithJsonBody(request, (payload) => {
-    payload = withOpenAIDefaults(payload);
+  const upstreamRequest = await requestWithJsonBody(request, async (payload) => {
+    payload = await withOpenAIDefaults(payload, fetchModelsCatalogForCopilot);
     if (payload.max_tokens !== undefined && payload.max_completion_tokens === undefined) {
       const { max_tokens, ...rest } = payload;
       return { ...rest, max_completion_tokens: max_tokens };

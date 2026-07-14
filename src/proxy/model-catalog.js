@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { logEvent } from "../shared/log.js";
 
 const TTL_MS = 30000;
 const cache = new Map();
@@ -8,14 +9,21 @@ export function tokenFingerprintOf(token) {
   return crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
-export async function fetchModelsCatalog({ fetchImpl, tokenFingerprint } = {}) {
+export async function fetchModelsCatalog({ fetchImpl, tokenFingerprint, now = Date.now() } = {}) {
   if (typeof fetchImpl !== "function") return undefined;
   const key = tokenFingerprint || "anonymous";
   const cached = cache.get(key);
-  const now = Date.now();
   if (cached && cached.expiresAt > now) return cached.models;
-  const models = await fetchImpl();
-  if (!Array.isArray(models)) return undefined;
+  let models;
+  try {
+    models = await fetchImpl();
+  } catch {
+    models = undefined;
+  }
+  if (!Array.isArray(models)) {
+    if (cached) logEvent("model_catalog_stale", { reason: "refresh_failed" });
+    return cached?.models;
+  }
   cache.set(key, { models, expiresAt: now + TTL_MS });
   return models;
 }

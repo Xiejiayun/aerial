@@ -17,8 +17,8 @@ Code's effort settings.
 ## Goals
 
 - Preserve an effort exactly when the selected Copilot model supports it.
-- For an unsupported Codex effort, route to the highest supported effort that
-  does not exceed the request.
+- For an unsupported Codex effort, prefer the highest supported effort that
+  does not exceed the request and otherwise use the model's lowest effort.
 - Treat Codex `minimal` and Copilot `none` as the same semantic tier while using
   the spelling required at each boundary.
 - Keep Claude Code's existing `max` to `xhigh` compatibility behavior separate.
@@ -64,12 +64,15 @@ Resolution rules are:
 
 1. If the catalog contains the requested semantic tier, use its exact catalog
    spelling.
-2. Otherwise choose the highest advertised semantic tier below the request.
+2. Otherwise choose the highest advertised semantic tier below the request. If
+   no lower tier exists, choose the lowest advertised tier so the request stays
+   usable.
 3. If the catalog has no recognized efforts, apply only deterministic boundary
    aliases (`minimal` to `none`, `ultra` to `max`) and preserve other values.
 
-The resolver never selects a higher effort than requested. Unknown catalog
-values are ignored for ranking rather than rejected or guessed.
+The resolver selects a higher tier only when the model advertises no tier at or
+below the request. Unknown catalog values are ignored for ranking rather than
+rejected or guessed.
 
 ### Setup Flow
 

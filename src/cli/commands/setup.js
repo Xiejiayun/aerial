@@ -1,13 +1,24 @@
 import { loadConfig } from "../../shared/config.js";
 import { configPath } from "../../shared/paths.js";
 import { restoreAllClients, restoreClient, setupClaude, setupCodex, setupStatus } from "../../setup/index.js";
-import { chooseSetupModel, discoverModelsForRoute, formatModelChoices, assertValidEffort, chooseSetupEffort, formatEffortSelection } from "../select.js";
+import {
+  assertValidCodexEffort,
+  assertValidEffort,
+  chooseSetupEffort,
+  chooseSetupModel,
+  discoverModelsForRoute,
+  formatEffortSelection,
+  formatModelChoices
+} from "../select.js";
 import { requiredArgValue, claudeApiKeyHelper, codexAuthCommand } from "../helpers.js";
 import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
 
 async function selectSetupOptions(target, route, args) {
   const explicitEffort = requiredArgValue(args, "--effort");
-  if (explicitEffort !== undefined) assertValidEffort(explicitEffort);
+  if (explicitEffort !== undefined) {
+    if (target === "Codex") assertValidCodexEffort(explicitEffort);
+    else assertValidEffort(explicitEffort);
+  }
   const selected = await chooseSetupModel({ target, route, explicitModel: requiredArgValue(args, "--model") });
   if (!selected.displayed) {
     for (const line of formatModelChoices({ target, route, choices: selected.choices, selectedModel: selected.model, source: selected.source, recommended: selected.recommended })) {
@@ -81,7 +92,10 @@ export async function runSetupCli(subcommand, rest) {
       aerialDefaultEffort: config.defaultEffort || "missing",
       backup: result.backup,
       auth: "command-backed local Aerial key",
-      notes: ["restart Codex if it was already running so it reloads the profile."]
+      notes: [
+        "Aerial defaultEffort is the Claude proxy fallback and was left unchanged.",
+        "restart Codex if it was already running so it reloads the profile."
+      ]
     });
     return;
   }

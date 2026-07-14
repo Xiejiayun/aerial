@@ -149,7 +149,7 @@ test("setup codex prints the full completion summary block", () => {
   assert.match(result.stdout, /proxy: http:\/\/127\.0\.0\.1:18181\/v1/);
   assert.match(result.stdout, /config: .*\.codex.*config\.toml/);
   assert.match(result.stdout, /aerial config: /);
-  assert.match(result.stdout, /aerial defaultEffort: high/);
+  assert.match(result.stdout, /aerial defaultEffort: medium/);
   assert.match(result.stdout, /backup: none/);
   assert.match(result.stdout, /auth: command-backed local Aerial key/);
   assert.match(result.stdout, /note: restart Codex/);
@@ -183,7 +183,7 @@ test("setup status --json includes additive effort field on codex and claude", (
   const status = JSON.parse(result.stdout);
   assert.equal(status.schema, "aerial.setup-status.v1");
   assert.equal(status.clients.codex.effort, "xhigh");
-  assert.equal(status.clients.claude.effort, "xhigh");
+  assert.equal(status.clients.claude.effort, "medium");
 });
 
 test("setup status text shows effort=missing when no client has effort", () => {
@@ -196,10 +196,10 @@ test("setup status text shows effort=missing when no client has effort", () => {
   assert.match(result.stdout, /claude.*effort=medium/);
 });
 
-test("aerial --help lists max alias on setup codex and claude", () => {
+test("aerial --help lists separate Codex and Claude effort vocabularies", () => {
   const result = runCli(["--help"], { env: { ...process.env, AERIAL_API_KEY: "" }, cwd: repoRoot });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /setup codex.*--effort <low\|medium\|high\|xhigh\|max>/);
+  assert.match(result.stdout, /setup codex.*--effort <minimal\|low\|medium\|high\|xhigh\|max\|ultra>/);
   assert.match(result.stdout, /setup claude.*--effort <low\|medium\|high\|xhigh\|max>/);
   assert.match(result.stdout, /proxy status\|enable\|disable/);
 });

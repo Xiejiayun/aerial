@@ -119,6 +119,41 @@ test("fetchModelsCatalog does not cache failure (undefined)", async () => {
   assert.equal(second[0].id, "claude-opus-4.7");
 });
 
+test("fetchModelsCatalog uses stale models when refresh fails after TTL", async () => {
+  let value = [makeModel("gpt-5.6-sol", { route: "/responses", efforts: ["none", "low", "max"] })];
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return value;
+  };
+
+  const fresh = await fetchModelsCatalog({ fetchImpl, tokenFingerprint: "fp-stale", now: 1000 });
+  value = undefined;
+  const stale = await fetchModelsCatalog({ fetchImpl, tokenFingerprint: "fp-stale", now: 31001 });
+
+  assert.equal(calls, 2);
+  assert.equal(fresh[0].id, "gpt-5.6-sol");
+  assert.equal(stale[0].id, "gpt-5.6-sol");
+});
+
+test("fetchModelsCatalog retries refresh after serving stale models", async () => {
+  let value = [makeModel("gpt-5.6-sol", { route: "/responses" })];
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return value;
+  };
+
+  await fetchModelsCatalog({ fetchImpl, tokenFingerprint: "fp-retry", now: 1000 });
+  value = undefined;
+  await fetchModelsCatalog({ fetchImpl, tokenFingerprint: "fp-retry", now: 31001 });
+  value = [makeModel("gpt-5.6-terra", { route: "/responses" })];
+  const refreshed = await fetchModelsCatalog({ fetchImpl, tokenFingerprint: "fp-retry", now: 31002 });
+
+  assert.equal(calls, 3);
+  assert.equal(refreshed[0].id, "gpt-5.6-terra");
+});
+
 test("tokenFingerprintOf is deterministic, length 16, and never echoes raw token", () => {
   const a = tokenFingerprintOf("github-test-token-aaa");
   const b = tokenFingerprintOf("github-test-token-aaa");

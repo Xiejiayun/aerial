@@ -1,6 +1,7 @@
 import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses } from "../proxy/index.js";
 import { readJsonSafely } from "../shared/utils.js";
 import { aerialRoutes, usageSummary } from "../proxy/models.js";
+import { supportedReasoningEfforts } from "../proxy/model-catalog.js";
 
 function modelRoutes(model) {
   return aerialRoutes(model);
@@ -59,6 +60,7 @@ export async function runProbe({ live = false } = {}) {
     models: models.map((model) => ({
       id: model.id,
       routes: modelRoutes(model),
+      efforts: supportedReasoningEfforts(model),
       notes: model.aerial?.notes || [],
       supported: Boolean(model.aerial?.supported)
     }))
@@ -117,8 +119,9 @@ export function formatProbeReport(report) {
   lines.push("", "Model matrix:");
   for (const model of report.models) {
     const routes = model.routes.length ? model.routes.join(",") : "-";
+    const efforts = model.efforts.length ? ` efforts=${model.efforts.join(",")}` : "";
     const notes = model.notes.length ? ` notes=${model.notes.join(",")}` : "";
-    lines.push(`- ${model.id}: routes=${routes}${notes}`);
+    lines.push(`- ${model.id}: routes=${routes}${efforts}${notes}`);
   }
   return lines.join("\n");
 }

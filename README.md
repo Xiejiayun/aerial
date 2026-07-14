@@ -93,9 +93,11 @@ aerial setup claude
 To skip the prompts:
 
 ```bash
-aerial setup codex --model <responses-model-id> --effort <low|medium|high|xhigh|max>
+aerial setup codex --model <responses-model-id> --effort <minimal|low|medium|high|xhigh|max|ultra>
 aerial setup claude --model <messages-model-id> --effort <low|medium|high|xhigh|max>
 ```
+
+Codex effort is model-aware. Aerial preserves an effort when the selected Copilot model advertises it and otherwise selects the nearest usable effort, preferring the highest level below the request. Codex `minimal` maps to Copilot `none`; `none` is also accepted as an input alias. Claude Code keeps its own effort semantics, where `max` is an alias for `xhigh`.
 
 To inspect the full model matrix:
 

@@ -25,10 +25,15 @@ const {
   pickRecommended,
   viewportStart,
   EFFORT_VALUES,
+  CODEX_EFFORT_VALUES,
   DEFAULT_EFFORT,
   normalizeEffort,
+  normalizeCodexEffort,
   normalizeEffortCandidates,
+  normalizeCodexEffortCandidates,
   assertValidEffort,
+  assertValidCodexEffort,
+  resolveCodexEffort,
   chooseSetupEffort,
   formatEffortSelection
 } = await import("../src/cli/select.js");
@@ -97,13 +102,13 @@ test("up arrow moves the cursor then Enter selects", async () => {
 test("up arrow wraps around from the top row", async () => {
   const { inputStream, outputStream } = fakeStreams("\x1b[A\x1b[A\n");
   const result = await chooseSetupEffort({ target: "Codex", input: inputStream, output: outputStream });
-  assert.equal(result.effort, "xhigh");
+  assert.equal(result.effort, "minimal");
 });
 
 test("number key jumps to that 1-based row", async () => {
   const { inputStream, outputStream } = fakeStreams("3\n");
   const result = await chooseSetupEffort({ target: "Codex", input: inputStream, output: outputStream });
-  assert.equal(result.effort, "high");
+  assert.equal(result.effort, "medium");
 });
 
 test("default tag is rendered on the default row", async () => {
@@ -158,10 +163,12 @@ test("effort selector marks the configured effort as current and starts on it", 
 
 // --- effort selection ---
 
-test("EFFORT_VALUES and DEFAULT_EFFORT exposed and frozen", () => {
+test("Claude and Codex effort values are separate and frozen", () => {
   assert.deepEqual([...EFFORT_VALUES], ["low", "medium", "high", "xhigh"]);
+  assert.deepEqual([...CODEX_EFFORT_VALUES], ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
   assert.equal(DEFAULT_EFFORT, "medium");
   assert.throws(() => EFFORT_VALUES.push("max"));
+  assert.throws(() => CODEX_EFFORT_VALUES.push("turbo"));
 });
 
 test("normalizeEffort accepts canonical values", () => {
@@ -177,6 +184,14 @@ test("normalizeEffort aliases 'max' to 'xhigh'", () => {
   assert.equal(normalizeEffort("MAX"), "xhigh");
 });
 
+test("normalizeCodexEffort preserves max and ultra and aliases none to minimal", () => {
+  assert.equal(normalizeCodexEffort("max"), "max");
+  assert.equal(normalizeCodexEffort("ULTRA"), "ultra");
+  assert.equal(normalizeCodexEffort("minimal"), "minimal");
+  assert.equal(normalizeCodexEffort("none"), "minimal");
+  assert.equal(normalizeCodexEffort("turbo"), undefined);
+});
+
 test("normalizeEffort returns undefined for invalid input", () => {
   assert.equal(normalizeEffort("turbo"), undefined);
   assert.equal(normalizeEffort(""), undefined);
@@ -188,6 +203,14 @@ test("normalizeEffort returns undefined for invalid input", () => {
 test("normalizeEffortCandidates canonicalizes aliases and preserves global effort order", () => {
   assert.deepEqual(normalizeEffortCandidates(["HIGH", "max", "medium", "turbo"]), ["medium", "high", "xhigh"]);
   assert.deepEqual(normalizeEffortCandidates(undefined), []);
+});
+
+test("normalizeCodexEffortCandidates preserves Codex order and displays none as minimal", () => {
+  assert.deepEqual(
+    normalizeCodexEffortCandidates(["max", "none", "HIGH", "ultra", "turbo"]),
+    ["minimal", "high", "max", "ultra"]
+  );
+  assert.deepEqual(normalizeCodexEffortCandidates(undefined), []);
 });
 
 test("assertValidEffort throws with allowed values listed", () => {
@@ -202,6 +225,41 @@ test("assertValidEffort returns normalized for valid input including max", () =>
   assert.equal(assertValidEffort("max"), "xhigh");
 });
 
+test("assertValidCodexEffort accepts the extended Codex vocabulary", () => {
+  assert.equal(assertValidCodexEffort("none"), "minimal");
+  assert.equal(assertValidCodexEffort("max"), "max");
+  assert.equal(assertValidCodexEffort("ultra"), "ultra");
+  assert.throws(() => assertValidCodexEffort("turbo"), /Invalid --effort/);
+});
+
+test("resolveCodexEffort preserves supported max and maps minimal to catalog none", () => {
+  assert.deepEqual(resolveCodexEffort("max", ["low", "xhigh", "max"]), {
+    requestedEffort: "max",
+    resolvedEffort: "max",
+    wireEffort: "max",
+    reason: "exact"
+  });
+  assert.deepEqual(resolveCodexEffort("minimal", ["none", "low"]), {
+    requestedEffort: "minimal",
+    resolvedEffort: "minimal",
+    wireEffort: "none",
+    reason: "alias"
+  });
+});
+
+test("resolveCodexEffort finds the nearest usable model effort", () => {
+  assert.equal(resolveCodexEffort("ultra", ["low", "xhigh", "max"]).resolvedEffort, "max");
+  assert.equal(resolveCodexEffort("max", ["low", "xhigh"]).resolvedEffort, "xhigh");
+  assert.equal(resolveCodexEffort("minimal", ["low", "medium"]).resolvedEffort, "low");
+  assert.equal(resolveCodexEffort("max", ["turbo", "high"]).resolvedEffort, "high");
+});
+
+test("resolveCodexEffort applies deterministic aliases without model metadata", () => {
+  assert.equal(resolveCodexEffort("ultra", []).wireEffort, "max");
+  assert.equal(resolveCodexEffort("minimal", []).wireEffort, "none");
+  assert.equal(resolveCodexEffort("max", []).wireEffort, "max");
+});
+
 test("chooseSetupEffort respects explicit effort without prompting", async () => {
   const result = await chooseSetupEffort({ target: "Codex", explicitEffort: "high", prompt: true });
   assert.equal(result.effort, "high");
@@ -209,13 +267,13 @@ test("chooseSetupEffort respects explicit effort without prompting", async () =>
   assert.equal(result.displayed, false);
 });
 
-test("chooseSetupEffort normalizes explicit max -> xhigh", async () => {
+test("chooseSetupEffort preserves explicit Codex max without model metadata", async () => {
   const result = await chooseSetupEffort({ target: "Codex", explicitEffort: "max", prompt: true });
-  assert.equal(result.effort, "xhigh");
+  assert.equal(result.effort, "max");
   assert.equal(result.source, "explicit");
 });
 
-test("chooseSetupEffort accepts explicit max when the selected model supports xhigh", async () => {
+test("chooseSetupEffort downgrades explicit Codex max when the selected model only supports xhigh", async () => {
   const result = await chooseSetupEffort({
     target: "Codex",
     model: "gpt-max",
@@ -224,6 +282,28 @@ test("chooseSetupEffort accepts explicit max when the selected model supports xh
     prompt: true
   });
   assert.equal(result.effort, "xhigh");
+});
+
+test("chooseSetupEffort downgrades Codex ultra to model-supported max", async () => {
+  const result = await chooseSetupEffort({
+    target: "Codex",
+    model: "gpt-5.6-sol",
+    supportedEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+    explicitEffort: "ultra",
+    prompt: true
+  });
+  assert.equal(result.effort, "max");
+});
+
+test("chooseSetupEffort writes Codex minimal when the model advertises none", async () => {
+  const result = await chooseSetupEffort({
+    target: "Codex",
+    model: "gpt-5.6-sol",
+    supportedEfforts: ["none", "low"],
+    explicitEffort: "minimal",
+    prompt: true
+  });
+  assert.equal(result.effort, "minimal");
 });
 
 test("chooseSetupEffort rejects explicit efforts unsupported by the selected model", async () => {
@@ -272,7 +352,7 @@ test("formatEffortSelection differentiates non-TTY default", () => {
   assert.match(explicit, /Selected Codex effort: high/);
   assert.match(prompt, /Selected Codex effort: low/);
   assert.match(nonTty, /No interactive terminal/);
-  assert.match(nonTty, /--effort <low\|medium\|high\|xhigh\|max>/);
+  assert.match(nonTty, /--effort <minimal\|low\|medium\|high\|xhigh\|max\|ultra>/);
 });
 
 test("formatEffortSelection narrows non-TTY --effort help when model efforts are known", () => {
