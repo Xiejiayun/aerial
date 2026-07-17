@@ -397,11 +397,13 @@ confuses tooling that distinguishes prerelease from stable identifiers.
   comfortable headroom above both floors, and runs an explicit
   Node-side Node/npm version guard before `npm ci` that hard-fails
   when either the observed `node --version` is below `22.14.0` or
-  the observed `npm --version` is below `11.5.1`. The `test` job
-  intentionally stays on `actions/setup-node@v4` and covers Node 20.18.1
-  plus Node 22 to validate `package.json` `engines.node` and the current
-  LTS line — that is what we ship to users. The publish-job runtime split
-  exists solely so npm's trusted publishing exchange has a satisfying CLI.
+  the observed `npm --version` is below `11.5.1`. Test and package jobs use
+  `actions/checkout@v6` and `actions/setup-node@v6` so the actions themselves
+  run on GitHub's supported Node 24 runtime, while the test matrix still
+  installs Node 20.18.1 plus Node 22 to validate `package.json` `engines.node`
+  and the current LTS line — that is what we ship to users. The publish-job
+  runtime split exists solely so npm's trusted publishing exchange has a
+  satisfying CLI.
   See §9 for the failure mode that can arise when the publish-job CLI is too old (a
   confusing `404` from `npm publish` even though sigstore provenance
   signing succeeded); §9 is a documented troubleshooting case, not
