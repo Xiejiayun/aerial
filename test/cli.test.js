@@ -74,7 +74,7 @@ test("setup codex and setup claude keep separate model choices", () => {
   assert.doesNotMatch(claude.apiKeyHelper, /^aerial key print$/);
 });
 
-test("config set defaultEffort accepts low/medium/high/xhigh and max alias", () => {
+test("config set defaultEffort accepts native Claude effort values", () => {
   const { env: baseEnv } = configEnv("cli-effort-config");
   runCli(["key", "generate"], { env: baseEnv });
 
@@ -86,7 +86,7 @@ test("config set defaultEffort accepts low/medium/high/xhigh and max alias", () 
   const setMax = runCli(["config", "set", "defaultEffort", "max"], { env: baseEnv });
   assert.equal(setMax.status, 0, setMax.stderr);
   const showMax = runCli(["config"], { env: baseEnv });
-  assert.match(showMax.stdout, /"defaultEffort":\s*"xhigh"/);
+  assert.match(showMax.stdout, /"defaultEffort":\s*"max"/);
 });
 
 test("config set defaultEffort rejects invalid values", () => {
@@ -200,6 +200,6 @@ test("aerial --help lists separate Codex and Claude effort vocabularies", () => 
   const result = runCli(["--help"], { env: { ...process.env, AERIAL_API_KEY: "" }, cwd: repoRoot });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /setup codex.*--effort <minimal\|low\|medium\|high\|xhigh\|max\|ultra>/);
-  assert.match(result.stdout, /setup claude.*--effort <low\|medium\|high\|xhigh\|max>/);
+  assert.match(result.stdout, /setup claude.*--effort <low\|medium\|high\|xhigh\|max\|ultracode>/);
   assert.match(result.stdout, /proxy status\|enable\|disable/);
 });

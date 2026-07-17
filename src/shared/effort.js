@@ -1,4 +1,4 @@
-export const EFFORT_VALUES = Object.freeze(["low", "medium", "high", "xhigh"]);
+export const EFFORT_VALUES = Object.freeze(["low", "medium", "high", "xhigh", "max", "ultracode"]);
 export const CODEX_EFFORT_VALUES = Object.freeze(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 export const DEFAULT_EFFORT = "medium";
 
@@ -11,7 +11,6 @@ function lower(value) {
 export function normalizeEffort(value) {
   const trimmed = lower(value);
   if (!trimmed) return undefined;
-  if (trimmed === "max") return "xhigh";
   if (EFFORT_VALUES.includes(trimmed)) return trimmed;
   return undefined;
 }
@@ -27,7 +26,7 @@ export function normalizeCodexEffort(value) {
 export function assertValidEffort(raw) {
   const normalized = normalizeEffort(raw);
   if (!normalized) {
-    throw new Error(`Invalid --effort ${JSON.stringify(raw)}. Allowed: ${EFFORT_VALUES.join(", ")} (or alias 'max' for xhigh).`);
+    throw new Error(`Invalid --effort ${JSON.stringify(raw)}. Allowed: ${EFFORT_VALUES.join(", ")}.`);
   }
   return normalized;
 }
@@ -52,6 +51,46 @@ function codexCatalogEfforts(values) {
     efforts.push({ resolvedEffort, wireEffort, rank: CODEX_EFFORT_VALUES.indexOf(resolvedEffort) });
   }
   return efforts.sort((a, b) => a.rank - b.rank);
+}
+
+function claudeCatalogEfforts(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const efforts = [];
+  for (const value of values) {
+    const wireEffort = lower(value);
+    const resolvedEffort = normalizeEffort(wireEffort);
+    if (!resolvedEffort || seen.has(resolvedEffort)) continue;
+    seen.add(resolvedEffort);
+    efforts.push({ resolvedEffort, wireEffort, rank: EFFORT_VALUES.indexOf(resolvedEffort) });
+  }
+  return efforts.sort((a, b) => a.rank - b.rank);
+}
+
+export function resolveClaudeEffort(requested, supportedEfforts) {
+  const requestedEffort = normalizeEffort(requested);
+  if (!requestedEffort) return undefined;
+  const requestedRank = EFFORT_VALUES.indexOf(requestedEffort);
+  const supported = claudeCatalogEfforts(supportedEfforts);
+
+  if (supported.length) {
+    const exact = supported.find((entry) => entry.resolvedEffort === requestedEffort);
+    const lowerOrEqual = supported.filter((entry) => entry.rank <= requestedRank);
+    const selected = exact || lowerOrEqual.at(-1) || supported[0];
+    return {
+      requestedEffort,
+      resolvedEffort: selected.resolvedEffort,
+      wireEffort: selected.wireEffort,
+      reason: selected.resolvedEffort === requestedEffort
+        ? (selected.wireEffort === requestedEffort ? "exact" : "alias")
+        : (selected.rank < requestedRank ? "downgraded" : "nearest_supported")
+    };
+  }
+
+  if (requestedEffort === "max" || requestedEffort === "ultracode") {
+    return { requestedEffort, resolvedEffort: "xhigh", wireEffort: "xhigh", reason: "fallback" };
+  }
+  return { requestedEffort, resolvedEffort: requestedEffort, wireEffort: requestedEffort, reason: "exact" };
 }
 
 export function resolveCodexEffort(requested, supportedEfforts) {

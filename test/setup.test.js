@@ -171,13 +171,18 @@ test("setupClaude writes native effortLevel and updates Aerial defaultEffort", (
   assert.equal(loadConfig().defaultEffort, "low");
 });
 
-test("setupClaude normalizes max effort to xhigh in Claude settings", () => {
+test("setupClaude preserves max and normalizes ultracode for compatible settings", () => {
   saveConfig({ ...loadConfig(), defaultEffort: "medium" });
   const result = setupClaude({ model: "claude-test", effort: "max" });
   const settings = JSON.parse(fs.readFileSync(result.file, "utf8"));
-  assert.equal(settings.effortLevel, "xhigh");
-  assert.equal(result.effort, "xhigh");
-  assert.equal(loadConfig().defaultEffort, "xhigh");
+  assert.equal(settings.effortLevel, "max");
+  assert.equal(result.effort, "max");
+  assert.equal(loadConfig().defaultEffort, "max");
+
+  const ultracode = setupClaude({ model: "claude-test", effort: "ultracode" });
+  const nextSettings = JSON.parse(fs.readFileSync(ultracode.file, "utf8"));
+  assert.equal(nextSettings.effortLevel, "max");
+  assert.equal(ultracode.effort, "max");
 });
 
 test("setupStatus exposes additive effort field with canonical or 'missing'", () => {
@@ -186,7 +191,7 @@ test("setupStatus exposes additive effort field with canonical or 'missing'", ()
   const status = setupStatus();
   assert.equal(status.schema, "aerial.setup-status.v1");
   assert.equal(status.clients.codex.effort, "xhigh");
-  assert.equal(status.clients.claude.effort, "xhigh");
+  assert.equal(status.clients.claude.effort, "max");
 });
 
 test("setupStatus prefers Claude effortLevel over Aerial defaultEffort", () => {

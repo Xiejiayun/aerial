@@ -107,9 +107,9 @@ If Claude Code was previously pointed at another Anthropic-compatible gateway, s
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
-To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|medium|high|xhigh|max>`. `setup claude --effort <value>` writes Claude Code's native `"effortLevel": "<effort>"` setting into `settings.json` and also updates Aerial-wide `defaultEffort` as a proxy fallback. Precedence for the Anthropic effort applied to a Claude Opus 4.7 request, in order:
+To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|medium|high|xhigh|max|ultracode>`. Aerial resolves the request against the selected model's live Copilot capabilities. Native `max` is preserved when supported; `ultracode` is accepted as input but setup persists `max` or the nearest lower supported effort for compatibility with older Claude Code releases. `setup claude --effort <value>` writes Claude Code's native `"effortLevel": "<effort>"` setting into `settings.json` and also updates Aerial-wide `defaultEffort` as a proxy fallback. Precedence for the Anthropic effort applied to a Claude Opus 4.7 request, in order:
 
-1. An explicit `output_config.effort` in the request body is preserved verbatim.
+1. An explicit `output_config.effort` in the request body takes precedence, then is resolved against the live model catalog when capability metadata is available.
 2. A legacy `thinking: { type: "enabled", budget_tokens }` is translated to `thinking: { type: "adaptive" }` with a derived `output_config.effort`.
 3. `thinking: { type: "adaptive" }` without an explicit effort is preserved as-is; Aerial does not inject a default.
 4. Otherwise Aerial injects Aerial `defaultEffort` from `~/.aerial/config.json` as `output_config.effort`.
