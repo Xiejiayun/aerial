@@ -92,14 +92,13 @@ post-publish smoke passes.
 - The only release branch is `main`. Feature branches must merge into `main`
   before becoming a release candidate.
 - **Stable version source.** `package.json`'s `version` field is the source
-  of truth for stable releases. The version MUST be a clean
-  `X.Y.Z` (matching the regex `^[0-9]+\.[0-9]+\.[0-9]+$`); no prerelease
-  suffix (e.g. `-rc.1`) and no build metadata (e.g. `+build.N`) is
-  permitted. `release.yml` enforces the clean-semver shape via its
-  "Validate package version is clean stable semver" step before any
-  publish work; if it fails, the publish job hard fails. The release tag
-  must equal `v<version>` exactly; `release.yml` enforces that equality
-  at the tag-trigger path.
+  of truth and must agree with both version locations in `package-lock.json`.
+  Aerial versions follow `0.A.B`, where `A` is a non-negative integer and
+  `B` is 1 through 9. After `0.A.9`, the next version is `0.(A+1).1`.
+  Prerelease suffixes and build metadata are forbidden. The shared
+  `scripts/release-preflight.mjs` gate enforces this policy, monotonicity
+  against every published stable version, manifest agreement, and exact
+  release-tag identity.
 
 ## §4 Daily Workflow (PR → main → CI)
 
@@ -121,10 +120,16 @@ post-publish smoke passes.
 
 ## §5 Stable Release Flow (tag-triggered, recommended path)
 
-1. On `main`: bump `package.json.version` to a clean `X.Y.Z` (e.g. `0.1.0`
-   → `0.1.1`; no prerelease or build suffix — see §3), commit, and push.
-2. Tag the commit: `git tag v<version> && git push origin v<version>`.
-3. The pushed `v*` tag triggers `release.yml`. Three jobs run in this order:
+1. On a release branch, run `npm version <version> --no-git-tag-version` so
+   both manifests move together, update release notes, and merge the tested
+   release commit to `main`.
+2. On clean, synchronized `main`, run
+   `npm run release:preflight -- --expected-version <version>`. This local
+   `new-release` mode refuses an existing npm version or tag even when its
+   `gitHead` matches.
+3. Create an annotated tag and push it:
+   `git tag -a v<version> -m "Aerial v<version>" && git push origin v<version>`.
+4. The pushed `v*` tag triggers `release.yml`. Three jobs run in this order:
 
    a. **`test` matrix** (Node 20.18.1 and Node 22 × Ubuntu / Windows /
       macOS), `package & secret scan` (Ubuntu, Node 22) — run in **parallel** as prerequisites
@@ -135,16 +140,11 @@ post-publish smoke passes.
       `verify-package.mjs`).
 
    b. **`publish` job** (Ubuntu only, after both prerequisites are green):
-      - `actions/checkout@v4` + `setup-node@v4` (Node 22,
+      - `actions/checkout@v6` with full history + `setup-node@v6` (Node 24,
         `registry-url: https://registry.npmjs.org`) + `npm ci`.
-      - **Read package version** into a step output.
-      - **Validate package version is clean stable semver**: refuse any
-        version not matching `^[0-9]+\.[0-9]+\.[0-9]+$` (prerelease /
-        build-metadata suffixes are not allowed).
-      - **Strict tag/version check** (tag-trigger only): `vX.Y.Z` must
-        equal `package.json.version`; mismatch fails before publish.
-      - **Idempotency precheck** (§7): tri-state — publish vs. skip-but-
-        smoke vs. hard fail.
+      - **Deterministic release preflight** (§7): validate `0.A.B`, manifest
+        agreement, monotonic registry history, explicit-E404 tri-state,
+        `main`/`origin/main`/tag identity, and same-commit idempotency.
       - **`npm publish --access public --tag latest --provenance`** via
         OIDC trusted publishing (skipped when the precheck output says
         `should_publish=false`).
@@ -170,11 +170,9 @@ post-publish smoke passes.
   2 is in place.
 - `release.yml`'s `workflow_dispatch` trigger requires `github.ref ==
   refs/heads/main` (the job fails fast otherwise).
-- The clean-stable-semver guard (§3, §5) also applies to manual dispatch:
-  the same "Validate package version is clean stable semver" step rejects
-  any `package.json.version` that carries a prerelease or build-metadata
-  suffix, before any publish work runs. This keeps the `@latest` channel
-  free of malformed versions even when the tag-trigger path is bypassed.
+- The shared preflight (§3, §5) also applies to manual dispatch and rejects
+  malformed versions, mismatched manifests, stale `main`, non-monotonic
+  targets, and ambiguous registry failures before any publish work runs.
 - The publish job runs the **idempotency precheck** described in §7 on
   every trigger, including manual dispatch. So if you push the matching
   `v<version>` tag immediately after a successful manual dispatch (which
@@ -184,7 +182,7 @@ post-publish smoke passes.
   re-publishing. No E409, no destructive overwrite.
 - After a successful manual dispatch, manually create and push
   the matching git tag so the tag/registry pair stays consistent:
-  `git tag v<version> && git push origin v<version>`.
+  `git tag -a v<version> -m "Aerial v<version>" && git push origin v<version>`.
 
 ## §7 CI / Workflow File Structure
 
@@ -201,14 +199,10 @@ post-publish smoke passes.
   The same `test` matrix and `package & secret scan` gates as CI run as
   parallel prerequisites, then a single Ubuntu `publish` job with
   `id-token: write` whose steps are, in order:
-    - checkout + setup-node + `npm ci`,
-    - **Validate dispatch context** (`refs/heads/main` only; gated on
-      `workflow_dispatch`),
-    - read package version, validate clean stable semver
-      `^[0-9]+\.[0-9]+\.[0-9]+$` (rejects prerelease / build-metadata
-      suffixes), strict tag/version match on push, idempotency
-      precheck, conditional `npm publish --access public --tag latest
-      --provenance`,
+    - full-history checkout + setup-node + `npm ci`,
+    - `node scripts/release-preflight.mjs workflow`, which validates dispatch
+      or tag context and emits `version` plus `should_publish`,
+    - conditional `npm publish --access public --tag latest --provenance`,
     - **Emit publish outcome**: a final bash-only step that normalizes
       the idempotency result into job outputs (`did_publish`,
       `published_version`). Bash conditionals are used here instead of
@@ -220,14 +214,12 @@ post-publish smoke passes.
   Release concurrency is a single global queue (`group: release`, no
   `${{ github.ref }}` suffix) so manual-dispatch + later tag-push runs
   serialize instead of racing on the same registry slot.
-  - **Idempotency precheck** (runs before publish):
-    `npm view @jiayunxie/aerial@<package.version> --json`.
-    `npm view` is classified into three outcomes: success with JSON →
-    compare `gitHead`; failure whose stderr/stdout matches `E404` /
-    `not found` / `No match` → treat as not published and proceed to
-    publish; any other failure (network, registry 5xx, auth/config
-    error) → hard fail and refuse to publish against an unknown
-    registry state. When the version is already published, its
+  - **Idempotency precheck** (inside the shared script): npm lookups are
+    classified into three outcomes: success with non-empty valid JSON →
+    inspect metadata; a failed command with an explicit `E404` → treat the
+    target as unpublished; every other result (including empty successful
+    output, invalid JSON, network failure, registry 5xx, or auth/config
+    error) → hard fail. When the version is already published, its
     `gitHead` is compared against the publish job's locally-checked-out
     HEAD (`git rev-parse HEAD`, not `$GITHUB_SHA`). If `gitHead` equals
     checked-out HEAD, skip the publish step and still run post-publish
@@ -237,6 +229,14 @@ post-publish smoke passes.
     and rerun-after-smoke-failure both recover without E409.
 
 ## §8 Scripts (`scripts/*`)
+
+- **`release-preflight.mjs`**: shared read-only release gate. `new-release`
+  mode requires clean synchronized local `main`, an absent tag, a strictly
+  newer unpublished registry version, and optional `--expected-version`.
+  `workflow` mode verifies tag/dispatch context and permits an existing target
+  only when npm `gitHead` equals the checked-out release commit. Both modes
+  enforce the `0.A.B` policy, lockfile agreement, tracked-worktree cleanliness,
+  explicit-E404 registry classification, and `origin/main` identity.
 
 - **`verify-package.mjs`**: runs `npm pack --dry-run --json`. Checks three
   layers: REQUIRED canary files present, FORBIDDEN categories absent (with

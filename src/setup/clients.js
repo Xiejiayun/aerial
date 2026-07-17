@@ -70,7 +70,8 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
 }
 
 export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPER } = {}) {
-  const normalizedEffort = effort === undefined ? undefined : assertValidEffort(effort);
+  const requestedEffort = effort === undefined ? undefined : assertValidEffort(effort);
+  const normalizedEffort = requestedEffort === "ultracode" ? "max" : requestedEffort;
   ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel;

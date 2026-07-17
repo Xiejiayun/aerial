@@ -12,6 +12,7 @@ import {
   assertValidEffort,
   normalizeCodexEffort,
   normalizeEffort,
+  resolveClaudeEffort,
   resolveCodexEffort
 } from "../shared/effort.js";
 
@@ -24,6 +25,7 @@ export {
   assertValidEffort,
   normalizeCodexEffort,
   normalizeEffort,
+  resolveClaudeEffort,
   resolveCodexEffort
 } from "../shared/effort.js";
 
@@ -31,7 +33,7 @@ const MAX_LISTED_MODELS = 20;
 const GPT_VERSION_RE = /^gpt-(\d+)(?:\.(\d+))?/i;
 const STABLE_GPT_RE = /^gpt-\d+(?:\.\d+)?$/i;
 const CODEX_EFFORT_USAGE = "<minimal|low|medium|high|xhigh|max|ultra>";
-const CLAUDE_EFFORT_USAGE = "<low|medium|high|xhigh|max>";
+const CLAUDE_EFFORT_USAGE = "<low|medium|high|xhigh|max|ultracode>";
 
 const CLEAR_LINE = "\x1b[2K";
 const CURSOR_UP = "\x1b[1A";
@@ -267,11 +269,13 @@ export function normalizeCodexEffortCandidates(values) {
 }
 
 function effortUsage(target, candidates, restricted) {
+  if (target !== "Codex") return CLAUDE_EFFORT_USAGE;
   if (!restricted) return target === "Codex" ? CODEX_EFFORT_USAGE : CLAUDE_EFFORT_USAGE;
-  if (target === "Codex") return `<${candidates.join("|")}>`;
-  const values = [...candidates];
-  if (values.includes("xhigh")) values.push("max");
-  return `<${values.join("|")}>`;
+  return `<${candidates.join("|")}>`;
+}
+
+function claudeSettingEffort(effort) {
+  return effort === "ultracode" ? "max" : effort;
 }
 
 function defaultEffortFor(candidates) {
@@ -379,12 +383,14 @@ export async function chooseSetupEffort({
         supportedEfforts: restricted ? candidates : undefined
       };
     }
-    const effort = assertValidEffort(explicitEffort);
-    if (restricted && !candidates.includes(effort)) {
-      const subject = model ? `${target} model ${model}` : `${target} model`;
-      throw new Error(`Effort ${JSON.stringify(explicitEffort)} is not supported by ${subject}. Allowed: ${effortUsage(target, candidates, true)}.`);
-    }
-    return { effort, source: "explicit", displayed: false, supportedEfforts: restricted ? candidates : undefined };
+    const requested = assertValidEffort(explicitEffort);
+    const resolved = resolveClaudeEffort(requested, supportedEfforts);
+    return {
+      effort: claudeSettingEffort(resolved.resolvedEffort),
+      source: "explicit",
+      displayed: false,
+      supportedEfforts: restricted ? candidates : undefined
+    };
   }
   const shouldPrompt = prompt === undefined ? Boolean(inputStream.isTTY) : prompt;
   if (!shouldPrompt) {
@@ -410,7 +416,7 @@ export async function chooseSetupEffort({
   if (cancelled) throw new Error(`${target} setup cancelled.`);
   const effort = isCodex
     ? resolveCodexEffort(item.value, supportedEfforts).resolvedEffort
-    : item.value;
+    : claudeSettingEffort(resolveClaudeEffort(item.value, supportedEfforts).resolvedEffort);
   return { effort, source: "prompt", displayed: true, supportedEfforts: restricted ? candidates : undefined };
 }
 

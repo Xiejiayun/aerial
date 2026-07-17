@@ -33,6 +33,7 @@ const {
   normalizeCodexEffortCandidates,
   assertValidEffort,
   assertValidCodexEffort,
+  resolveClaudeEffort,
   resolveCodexEffort,
   chooseSetupEffort,
   formatEffortSelection
@@ -164,7 +165,7 @@ test("effort selector marks the configured effort as current and starts on it", 
 // --- effort selection ---
 
 test("Claude and Codex effort values are separate and frozen", () => {
-  assert.deepEqual([...EFFORT_VALUES], ["low", "medium", "high", "xhigh"]);
+  assert.deepEqual([...EFFORT_VALUES], ["low", "medium", "high", "xhigh", "max", "ultracode"]);
   assert.deepEqual([...CODEX_EFFORT_VALUES], ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
   assert.equal(DEFAULT_EFFORT, "medium");
   assert.throws(() => EFFORT_VALUES.push("max"));
@@ -172,16 +173,11 @@ test("Claude and Codex effort values are separate and frozen", () => {
 });
 
 test("normalizeEffort accepts canonical values", () => {
-  for (const value of ["low", "medium", "high", "xhigh"]) {
+  for (const value of ["low", "medium", "high", "xhigh", "max", "ultracode"]) {
     assert.equal(normalizeEffort(value), value);
     assert.equal(normalizeEffort(value.toUpperCase()), value);
     assert.equal(normalizeEffort(`  ${value}  `), value);
   }
-});
-
-test("normalizeEffort aliases 'max' to 'xhigh'", () => {
-  assert.equal(normalizeEffort("max"), "xhigh");
-  assert.equal(normalizeEffort("MAX"), "xhigh");
 });
 
 test("normalizeCodexEffort preserves max and ultra and aliases none to minimal", () => {
@@ -200,8 +196,8 @@ test("normalizeEffort returns undefined for invalid input", () => {
   assert.equal(normalizeEffort(null), undefined);
 });
 
-test("normalizeEffortCandidates canonicalizes aliases and preserves global effort order", () => {
-  assert.deepEqual(normalizeEffortCandidates(["HIGH", "max", "medium", "turbo"]), ["medium", "high", "xhigh"]);
+test("normalizeEffortCandidates preserves the extended Claude effort order", () => {
+  assert.deepEqual(normalizeEffortCandidates(["HIGH", "max", "medium", "ultracode", "turbo"]), ["medium", "high", "max", "ultracode"]);
   assert.deepEqual(normalizeEffortCandidates(undefined), []);
 });
 
@@ -221,8 +217,16 @@ test("assertValidEffort throws with allowed values listed", () => {
 
 test("assertValidEffort returns normalized for valid input including max", () => {
   assert.equal(assertValidEffort("medium"), "medium");
-  assert.equal(assertValidEffort("MAX"), "xhigh");
-  assert.equal(assertValidEffort("max"), "xhigh");
+  assert.equal(assertValidEffort("MAX"), "max");
+  assert.equal(assertValidEffort("ultracode"), "ultracode");
+});
+
+test("resolveClaudeEffort preserves supported max and safely falls back", () => {
+  assert.equal(resolveClaudeEffort("max", ["low", "xhigh", "max"]).wireEffort, "max");
+  assert.equal(resolveClaudeEffort("ultracode", ["xhigh", "max"]).wireEffort, "max");
+  assert.equal(resolveClaudeEffort("max", ["medium"]).wireEffort, "medium");
+  assert.equal(resolveClaudeEffort("max", []).wireEffort, "xhigh");
+  assert.equal(resolveClaudeEffort("ultracode", []).wireEffort, "xhigh");
 });
 
 test("assertValidCodexEffort accepts the extended Codex vocabulary", () => {
@@ -306,17 +310,16 @@ test("chooseSetupEffort writes Codex minimal when the model advertises none", as
   assert.equal(result.effort, "minimal");
 });
 
-test("chooseSetupEffort rejects explicit efforts unsupported by the selected model", async () => {
-  await assert.rejects(
-    () => chooseSetupEffort({
-      target: "Claude Code",
-      model: "claude-opus-4.8",
-      supportedEfforts: ["medium"],
-      explicitEffort: "high",
-      prompt: true
-    }),
-    /not supported by Claude Code model claude-opus-4\.8.*<medium>/
-  );
+test("chooseSetupEffort resolves explicit Claude effort against the selected model", async () => {
+  const result = await chooseSetupEffort({
+    target: "Claude Code",
+    model: "claude-opus-4.8",
+    supportedEfforts: ["medium"],
+    explicitEffort: "ultracode",
+    prompt: true
+  });
+  assert.equal(result.effort, "medium");
+  assert.deepEqual(result.supportedEfforts, ["medium"]);
 });
 
 test("chooseSetupEffort rejects invalid explicit effort", async () => {
@@ -355,14 +358,14 @@ test("formatEffortSelection differentiates non-TTY default", () => {
   assert.match(nonTty, /--effort <minimal\|low\|medium\|high\|xhigh\|max\|ultra>/);
 });
 
-test("formatEffortSelection narrows non-TTY --effort help when model efforts are known", () => {
+test("formatEffortSelection keeps the full resolvable Claude effort vocabulary", () => {
   const nonTty = formatEffortSelection({
     target: "Claude Code",
     effort: "medium",
     source: "default_non_tty",
     supportedEfforts: ["medium", "xhigh"]
   });
-  assert.match(nonTty, /--effort <medium\|xhigh\|max>/);
+  assert.match(nonTty, /--effort <low\|medium\|high\|xhigh\|max\|ultracode>/);
 });
 
 // --- model discovery / ranking / selection ---

@@ -519,6 +519,41 @@ test("proxyMessages maps max effort to xhigh on a live catalog Claude Opus 4.7 m
   assert.equal(forwarded.output_config.effort, "xhigh");
 });
 
+test("proxyMessages preserves max when a live Claude model supports it", async () => {
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-max", ["xhigh", "max"])] });
+
+  const response = await proxyMessages(messagesRequest({
+    model: "claude-opus-4.7",
+    max_tokens: 32,
+    output_config: { effort: "max" },
+    messages: [{ role: "user", content: "hello" }]
+  }));
+  const forwarded = capture.forwarded[0];
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.model, "claude-opus-4.7-max");
+  assert.equal(forwarded.output_config.effort, "max");
+});
+
+test("proxyMessages resolves ultracode and catalog-free max conservatively", async () => {
+  const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.7-max", ["xhigh", "max"])] });
+  await proxyMessages(messagesRequest({
+    model: "claude-opus-4.7",
+    max_tokens: 32,
+    output_config: { effort: "ultracode" },
+    messages: [{ role: "user", content: "hello" }]
+  }));
+  assert.equal(capture.forwarded[0].output_config.effort, "max");
+
+  const noCatalog = mockMessagesFetch({ models: undefined });
+  await proxyMessages(messagesRequest({
+    model: "claude-sonnet-4.6",
+    max_tokens: 32,
+    output_config: { effort: "max" },
+    messages: [{ role: "user", content: "hello" }]
+  }));
+  assert.equal(noCatalog.forwarded[0].output_config.effort, "xhigh");
+});
+
 test("proxyMessages clamps Claude Opus 4.8 high effort to selected model supported effort", async () => {
   const capture = mockMessagesFetch({ models: [anthropicEffortModel("claude-opus-4.8", ["medium"])] });
 

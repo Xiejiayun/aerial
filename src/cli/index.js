@@ -19,7 +19,7 @@ Usage:
   aerial --version
   aerial login
   aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>]
-  aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max>]
+  aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>]
   aerial service install
   aerial status [--json]
   aerial proxy status|enable|disable [--json]
