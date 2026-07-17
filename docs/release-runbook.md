@@ -150,9 +150,9 @@ post-publish smoke passes.
         `should_publish=false`).
       - **Post-publish smoke**: install `@jiayunxie/aerial@<version>`
         exactly (never via the floating `@latest` dist-tag) in a clean
-        temp directory, with an initial install attempt plus 4 retries
-        at 10/20/30/30 s waits between them (~90 s of waiting before
-        the final attempt) to absorb registry propagation delay, then
+        temp directory from `https://registry.npmjs.org`, with an initial
+        attempt plus 6 retries at 10/20/30/60/120/120 s waits (6 minutes
+        before the final attempt) to absorb registry propagation delay, then
         assert `aerial --version` equals the published version and
         run `aerial --help`.
 
@@ -236,7 +236,8 @@ post-publish smoke passes.
   `workflow` mode verifies tag/dispatch context and permits an existing target
   only when npm `gitHead` equals the checked-out release commit. Both modes
   enforce the `0.A.B` policy, lockfile agreement, tracked-worktree cleanliness,
-  explicit-E404 registry classification, and `origin/main` identity.
+  explicit-E404 classification against the authoritative npm registry, and
+  `origin/main` identity.
 
 - **`verify-package.mjs`**: runs `npm pack --dry-run --json`. Checks three
   layers: REQUIRED canary files present, FORBIDDEN categories absent (with
@@ -293,9 +294,10 @@ post-publish smoke passes.
   @jiayunxie/aerial@<version>` despite the preceding publish step
   finishing green, the cause is npm registry / CDN propagation lag: the
   version is committed but the install-side view has not caught up yet.
-  The retry budget is an initial install attempt plus 4 retries at
-  10/20/30/30 s waits (~90 s of waiting before the final attempt); if
-  the entire window still misses propagation, the publish is not lost:
+  The retry budget is an initial install attempt plus 6 retries at
+  10/20/30/60/120/120 s waits (6 minutes before the final attempt), using
+  the official npm registry with online metadata preferred. If the entire
+  window still misses propagation, the publish is not lost:
   the package, gitHead, shasum/integrity, and provenance are all on the
   registry already. Rerun the failed jobs and the publish job will take
   its idempotency skip path (`should_publish=false`) and the smoke will
@@ -322,10 +324,10 @@ metadata bookkeeping failed.
   `git rev-parse HEAD`, not `$GITHUB_SHA`), skips `npm publish`, and
   proceeds straight to post-publish smoke. Fix whatever caused smoke to
   fail (registry propagation, environmental flake) and rerun until smoke
-  is green. The smoke step itself runs an initial install attempt plus 4
-  retries with 10/20/30/30 s waits between them (~90 s of waiting before
-  the final attempt) to absorb short propagation delays; if the entire
-  window still misses propagation, rerun the failed jobs and the
+  is green. The smoke step itself runs an initial install attempt plus 6
+  retries with 10/20/30/60/120/120 s waits (6 minutes before the final
+  attempt), using the official npm registry with online metadata preferred.
+  If the entire window still misses propagation, rerun the failed jobs and the
   idempotency path skips republish and re-runs the smoke against the
   now-visible artifact.
 - **Do not** call `npm unpublish` for retry. Unpublish is reserved for the
@@ -397,11 +399,13 @@ confuses tooling that distinguishes prerelease from stable identifiers.
   comfortable headroom above both floors, and runs an explicit
   Node-side Node/npm version guard before `npm ci` that hard-fails
   when either the observed `node --version` is below `22.14.0` or
-  the observed `npm --version` is below `11.5.1`. The `test` job
-  intentionally stays on `actions/setup-node@v4` and covers Node 20.18.1
-  plus Node 22 to validate `package.json` `engines.node` and the current
-  LTS line — that is what we ship to users. The publish-job runtime split
-  exists solely so npm's trusted publishing exchange has a satisfying CLI.
+  the observed `npm --version` is below `11.5.1`. Test and package jobs use
+  `actions/checkout@v6` and `actions/setup-node@v6` so the actions themselves
+  run on GitHub's supported Node 24 runtime, while the test matrix still
+  installs Node 20.18.1 plus Node 22 to validate `package.json` `engines.node`
+  and the current LTS line — that is what we ship to users. The publish-job
+  runtime split exists solely so npm's trusted publishing exchange has a
+  satisfying CLI.
   See §9 for the failure mode that can arise when the publish-job CLI is too old (a
   confusing `404` from `npm publish` even though sigstore provenance
   signing succeeded); §9 is a documented troubleshooting case, not
