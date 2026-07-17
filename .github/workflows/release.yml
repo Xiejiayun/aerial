@@ -153,6 +153,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js 24 with npm registry (trusted publishing runtime)
         # npm trusted publishing requires npm CLI >= 11.5.1 and Node
@@ -231,134 +233,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate dispatch context (main only)
-        if: github.event_name == 'workflow_dispatch'
-        # Manual dispatch must originate from refs/heads/main. The
-        # tag-trigger path does NOT go through this check because the tag
-        # ref (refs/tags/v*) is itself the gate for the stable path.
-        run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "::error::workflow_dispatch is only allowed from refs/heads/main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
-          echo "Dispatch context OK: ref=${GITHUB_REF}."
-
       # ---------------- stable path ----------------
 
-      - name: Read package version
-        id: pkg
-        # Single-line read to avoid shell parsing edge cases.
-        run: |
-          PKG_VERSION="$(node -p "require('./package.json').version")"
-          echo "version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Package version: ${PKG_VERSION}"
-
-      - name: Validate package version is clean stable semver
-        # Stable releases via release.yml MUST be a clean X.Y.Z; any
-        # prerelease suffix (e.g. -rc.1, +build.X) would otherwise be
-        # publishable to the `latest` dist-tag through either the
-        # tag-trigger path (if someone pushed a matching v<prerelease>
-        # tag) or the manual-dispatch path. See release-runbook §3
-        # ("stable version source") and §5/§6.
-        run: |
-          PKG_VERSION="${{ steps.pkg.outputs.version }}"
-          if ! echo "${PKG_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::package.json version '${PKG_VERSION}' is not a clean stable semver (X.Y.Z). Stable releases via release.yml may not include prerelease or build-metadata suffixes. See docs/release-runbook.md §3, §5, §6." >&2
-            exit 1
-          fi
-          echo "Stable version check OK: ${PKG_VERSION}"
-
-      - name: Validate tag matches package version
-        if: github.event_name == 'push'
-        # Tag must be exactly v<package.json.version>. Anything else is a typo
-        # or someone pushing the wrong tag; fail hard before publishing.
-        run: |
-          TAG_REF="${GITHUB_REF#refs/tags/}"
-          PKG_VERSION="${{ steps.pkg.outputs.version }}"
-          EXPECTED="v${PKG_VERSION}"
-          if [ "${TAG_REF}" != "${EXPECTED}" ]; then
-            echo "::error::Tag '${TAG_REF}' does not match expected '${EXPECTED}' (package.json version=${PKG_VERSION})." >&2
-            exit 1
-          fi
-          echo "Tag check OK: ${TAG_REF} == ${EXPECTED}."
-
-      - name: Idempotency precheck
-        id: idempotency
-        # Tri-state check shared by tag-trigger AND manual-dispatch paths.
-        # The common case after a manual dispatch is the operator pushing
-        # v<version> to tag the commit, which re-triggers this workflow
-        # against an already-published version. Without idempotency that
-        # rerun would always E409 — see release-runbook §6 + §10.
-        #
-        # `npm view` is classified into three outcomes:
-        #   - succeeded with JSON                       → compare gitHead
-        #   - failed with stderr/stdout matching E404 /
-        #     "not found" / "No match"                  → version not on
-        #                                                 registry; publish
-        #   - any other failure (network, registry 5xx,
-        #     auth/config error, parse error, etc.)     → hard fail; we
-        #                                                 refuse to publish
-        #                                                 against an unknown
-        #                                                 registry state
-        #
-        # `should_publish` output:
-        #   - "true"  : version not yet on the registry; do publish.
-        #   - "false" : same gitHead is already published; skip publish
-        #               but still run the post-publish smoke as verification.
-        #   - script exits non-zero : a different commit owns this version
-        #     slot, gitHead is missing, or `npm view` failed for a reason
-        #     other than 404. Refuse to proceed.
-        #
-        # HEAD_SHA is taken from the local checkout (`git rev-parse HEAD`).
-        # We deliberately do not use $GITHUB_SHA: it usually matches HEAD on
-        # `push` and `workflow_dispatch`, but annotated-tag events and other
-        # edge cases can diverge subtly, and the comparison against npm's
-        # `gitHead` only makes sense against the same SHA the publish would
-        # actually stamp into the manifest — which is the checked-out HEAD.
-        run: |
-          PKG_VERSION="${{ steps.pkg.outputs.version }}"
-          SPEC="@jiayunxie/aerial@${PKG_VERSION}"
-          HEAD_SHA="$(git rev-parse HEAD)"
-          echo "Idempotency precheck: spec=${SPEC} HEAD=${HEAD_SHA}"
-          STDERR_FILE="${RUNNER_TEMP:-/tmp}/idempotency-view-stderr.txt"
-          set +e
-          VIEW_JSON="$(npm view "${SPEC}" --json 2>"${STDERR_FILE}")"
-          VIEW_STATUS=$?
-          VIEW_STDERR="$(cat "${STDERR_FILE}" 2>/dev/null || true)"
-          set -e
-          if [ "${VIEW_STATUS}" -ne 0 ]; then
-            COMBINED="${VIEW_JSON} ${VIEW_STDERR}"
-            if echo "${COMBINED}" | grep -Eqi 'E404|code E404|not found|No match'; then
-              echo "Idempotency precheck: ${SPEC} not yet published (E404); will publish."
-              echo "should_publish=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "::error::npm view ${SPEC} failed with status ${VIEW_STATUS} (not E404). Refusing to publish against unknown registry state." >&2
-            echo "::error::npm view stdout: ${VIEW_JSON}" >&2
-            echo "::error::npm view stderr: ${VIEW_STDERR}" >&2
-            exit 1
-          fi
-          if [ -z "${VIEW_JSON}" ]; then
-            # Some npm versions print empty stdout for a 404 even with status 0.
-            echo "Idempotency precheck: ${SPEC} not yet published (empty view); will publish."
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          PUBLISHED_GIT_HEAD="$(node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((j&&typeof j.gitHead==="string")?j.gitHead:"")' <<< "${VIEW_JSON}")"
-          if [ -z "${PUBLISHED_GIT_HEAD}" ]; then
-            echo "::error::${SPEC} is already published but has no gitHead in its registry manifest; cannot verify idempotency. Bump package.json version." >&2
-            exit 1
-          fi
-          if [ "${PUBLISHED_GIT_HEAD}" = "${HEAD_SHA}" ]; then
-            echo "Idempotency precheck: ${SPEC} already published from this commit (${HEAD_SHA}); skipping npm publish and proceeding to smoke."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::error::${SPEC} is already published from a DIFFERENT commit (gitHead=${PUBLISHED_GIT_HEAD}, local HEAD=${HEAD_SHA}). Bump package.json version to publish anew." >&2
-          exit 1
+      - name: Deterministic release preflight
+        id: preflight
+        # The shared script validates the 0.A.B version policy, lockfile
+        # agreement, monotonic registry history, explicit-E404 tri-state,
+        # main/origin/tag identity, and same-commit workflow idempotency.
+        run: node scripts/release-preflight.mjs workflow
 
       - name: Publish to npm with provenance
-        if: steps.idempotency.outputs.should_publish == 'true'
+        if: steps.preflight.outputs.should_publish == 'true'
         # OIDC via setup-node's id-token:write permission supplies publish
         # auth automatically. No NODE_AUTH_TOKEN env is set here: trusted
         # publisher is the only authenticated path. If OIDC breaks, the
@@ -387,8 +272,8 @@ jobs:
         #               and skipped the publish step. Smoke still runs.
         #   - ""      : something failed earlier; the job is already red.
         run: |
-          STABLE_SHOULD_PUBLISH="${{ steps.idempotency.outputs.should_publish }}"
-          PUBLISHED_VERSION="${{ steps.pkg.outputs.version }}"
+          STABLE_SHOULD_PUBLISH="${{ steps.preflight.outputs.should_publish }}"
+          PUBLISHED_VERSION="${{ steps.preflight.outputs.version }}"
           DID_PUBLISH=""
           if [ "${STABLE_SHOULD_PUBLISH}" = "true" ]; then
             DID_PUBLISH="true"
@@ -422,7 +307,7 @@ jobs:
         # already-published version so a stale registry or broken
         # artifact surfaces on every rerun.
         run: |
-          PKG_VERSION="${{ steps.pkg.outputs.version }}"
+          PKG_VERSION="${{ steps.preflight.outputs.version }}"
           SPEC="@jiayunxie/aerial@${PKG_VERSION}"
           SMOKE_DIR="$(mktemp -d)"
           cd "${SMOKE_DIR}"

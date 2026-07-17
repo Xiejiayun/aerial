@@ -35,6 +35,7 @@
     "start": "node src/cli/index.js start",
     "doctor": "node src/cli/index.js doctor",
     "test": "node --test",
+    "release:preflight": "node scripts/release-preflight.mjs new-release",
     "prepublishOnly": "npm test"
   },
   "engines": {
