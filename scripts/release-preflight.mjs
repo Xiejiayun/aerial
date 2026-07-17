@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 export const PACKAGE_NAME = "@jiayunxie/aerial";
+export const NPM_REGISTRY = "https://registry.npmjs.org";
 const VERSION_POLICY = /^0\.(0|[1-9]\d*)\.([1-9])$/;
 
 function fail(message) {
@@ -163,7 +164,7 @@ function publishedVersionsFrom(value) {
 }
 
 function registryLookup(runCommand, ...viewArgs) {
-  return classifyRegistryLookup(runCommand("npm", ["view", ...viewArgs, "--json"]));
+  return classifyRegistryLookup(runCommand("npm", ["view", ...viewArgs, "--json", `--registry=${NPM_REGISTRY}`]));
 }
 
 function requireRegistryResult(lookup, label) {

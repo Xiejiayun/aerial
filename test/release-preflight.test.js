@@ -41,8 +41,8 @@ function fakeRunner({
     if (key === "git rev-parse --verify refs/heads/main") return localMain ? result(0, `${localMain}\n`) : result(128, "", "missing");
     if (key === "git symbolic-ref --quiet --short HEAD") return branch ? result(0, `${branch}\n`) : result(1, "", "detached");
     if (key === "git rev-parse --verify refs/tags/v0.3.1^{commit}") return tagCommit ? result(0, `${tagCommit}\n`) : result(128, "", "missing");
-    if (key === "npm view @jiayunxie/aerial versions --json") return result(0, JSON.stringify(versions));
-    if (key === "npm view @jiayunxie/aerial@0.3.1 --json") return target;
+    if (key === "npm view @jiayunxie/aerial versions --json --registry=https://registry.npmjs.org") return result(0, JSON.stringify(versions));
+    if (key === "npm view @jiayunxie/aerial@0.3.1 --json --registry=https://registry.npmjs.org") return target;
     throw new Error(`unexpected command: ${key}`);
   };
 }

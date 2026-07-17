@@ -293,14 +293,13 @@ jobs:
         # mirror cannot accidentally turn this into a no-op or test the
         # wrong build.
         #
-        # Retry shape: an initial install attempt plus 4 retries with
-        # 10/20/30/30s waits between them (~90s of waiting before the
-        # final attempt). Just-published versions can take tens of
-        # seconds to propagate to all registry edges, and we don't want
-        # a transient 404 to red the workflow. The 35s window
-        # (5/10/20) we used originally undershot observed CDN
-        # propagation on multiple real runs; see docs/release-runbook.md
-        # §9 ("Smoke install ETARGET after publish succeeds") and §10.
+        # Retry shape: an initial install attempt plus 6 retries with
+        # 10/20/30/60/120/120s waits between them (6 minutes before the
+        # final attempt). The v0.3.1 publish took longer than the previous
+        # 90-second window to reach install-side registry views. Pin the
+        # authoritative npm registry and prefer online metadata so a local
+        # mirror or stale cache cannot extend that propagation delay. See
+        # docs/release-runbook.md §9 and §10.
         #
         # Smoke runs unconditionally, NOT gated on `did_publish`. An
         # idempotency skip (did_publish=false) still smokes the
@@ -312,13 +311,13 @@ jobs:
           SMOKE_DIR="$(mktemp -d)"
           cd "${SMOKE_DIR}"
           npm init -y >/dev/null
-          DELAYS="10 20 30 30"
+          DELAYS="10 20 30 60 120 120"
           INSTALLED=0
           ATTEMPT=0
           for DELAY in ${DELAYS}; do
             ATTEMPT=$((ATTEMPT + 1))
             echo "Smoke install attempt ${ATTEMPT}: npm install ${SPEC}"
-            if npm install "${SPEC}"; then
+            if npm install --registry=https://registry.npmjs.org --prefer-online --no-audit --no-fund "${SPEC}"; then
               INSTALLED=1
               break
             fi
@@ -328,7 +327,7 @@ jobs:
           if [ "${INSTALLED}" != "1" ]; then
             ATTEMPT=$((ATTEMPT + 1))
             echo "Smoke install final attempt ${ATTEMPT}: npm install ${SPEC}"
-            npm install "${SPEC}"
+            npm install --registry=https://registry.npmjs.org --prefer-online --no-audit --no-fund "${SPEC}"
           fi
           OUT="$(npx --no-install aerial --version)"
           echo "aerial --version output: ${OUT}"
