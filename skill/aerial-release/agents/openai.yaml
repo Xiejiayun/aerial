@@ -1,0 +1,4 @@
+interface:
+  display_name: "Aerial Release"
+  short_description: "Audit, upgrade, publish, and verify Aerial releases"
+  default_prompt: "Use $aerial-release to audit Aerial compatibility and complete a safe, verified release."
