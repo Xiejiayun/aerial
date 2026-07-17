@@ -1,85 +1,85 @@
-# Aerial Service Resilience Design
+# Aerial 服务韧性修复设计
 
-Date: 2026-07-18
+日期：2026-07-18
 
-## Problem
+## 问题
 
-An installed Aerial background service can become temporarily or permanently unavailable after running for some time.
+Aerial 后台服务安装并运行一段时间后，可能暂时或永久不可用。
 
-The local service logs contain repeated fatal `ERR_HTTP_HEADERS_SENT` exceptions from `src/proxy/server.js`. The failure sequence is:
+本机服务日志中记录了多次来自 `src/proxy/server.js` 的致命 `ERR_HTTP_HEADERS_SENT` 异常。故障过程如下：
 
-1. A proxied Fetch `Response` starts streaming to the Node `ServerResponse`, so the status and headers are committed.
-2. Reading or writing the response body fails after that point.
-3. The outer request error handler tries to replace the partial response with a JSON error and calls `setHeader` again.
-4. Node throws `ERR_HTTP_HEADERS_SENT` from inside the error handler. The rejected async server callback is unhandled and terminates the process.
+1. 代理生成的 Fetch `Response` 开始向 Node `ServerResponse` 传输数据，此时 HTTP 状态码和响应头已经提交。
+2. 随后读取或写入响应体时发生异常。
+3. 外层请求错误处理器试图用 JSON 错误替换已经发送了一部分的响应，并再次调用 `setHeader`。
+4. Node 在错误处理器内部抛出 `ERR_HTTP_HEADERS_SENT`。HTTP 服务器的异步回调由此产生未处理的 Promise 拒绝，最终导致整个进程退出。
 
-On macOS, launchd currently restarts Aerial only after an unsuccessful or signal-based exit. That has recovered the observed crashes, but it still permits a loaded service to remain stopped after a clean exit. Windows Task Scheduler has no equivalent process-level recovery in the current task definition, so preventing this crash is important on both platforms.
+在 macOS 上，launchd 目前只会在非零退出或进程被信号终止后重启 Aerial。它确实恢复了本机观察到的崩溃，但如果服务以退出码 0 结束，已经加载的服务仍可能一直处于停止状态。现有 Windows Task Scheduler 任务也没有等价的进程故障恢复配置，因此从根源上消除崩溃对两个平台都很重要。
 
-## Goals
+## 目标
 
-- A response-body failure after headers are committed must not terminate the Aerial process.
-- A client disconnect while the server is waiting for backpressure must not leave a request handler stuck indefinitely.
-- Errors that happen before headers are committed must continue to return the existing structured JSON error response.
-- A loaded macOS LaunchAgent must remain continuously supervised until `aerial service stop` or uninstall explicitly unloads it.
-- Streaming behavior, authentication, status codes, and service lifecycle commands must retain their current contracts.
+- 提交响应头之后发生响应体错误时，不得导致 Aerial 进程退出。
+- 当服务正等待写入背压解除时，如果客户端断开连接，请求处理器不得永久卡住。
+- 响应头提交之前发生的错误，必须继续返回现有的结构化 JSON 错误响应。
+- 已加载的 macOS LaunchAgent 必须持续受 launchd 监管，直到用户通过 `aerial service stop` 或卸载操作明确将其移出 launchd。
+- 流式传输、身份验证、状态码及服务生命周期命令必须保持现有契约。
 
-## Non-goals
+## 非目标
 
-- Buffering complete upstream responses before sending them.
-- Adding a new retry policy for individual inference requests.
-- Replacing launchd or Task Scheduler with an Aerial-specific daemon.
-- Redesigning Windows Task Scheduler recovery in this change.
-- Refactoring unrelated proxy or service lifecycle code.
+- 在发送前缓冲完整的上游响应。
+- 为单个推理请求增加新的重试策略。
+- 用 Aerial 自有守护进程替换 launchd 或 Task Scheduler。
+- 在本次改动中重新设计 Windows Task Scheduler 的恢复机制。
+- 重构无关的代理或服务生命周期代码。
 
-## Design
+## 设计
 
-### Response ownership
+### 响应生命周期归属
 
-`writeNodeResponse` remains the only function that commits and streams a Fetch `Response` to Node's `ServerResponse`.
+`writeNodeResponse` 继续作为唯一负责将 Fetch `Response` 提交并流式写入 Node `ServerResponse` 的函数。
 
-The outer request handler will distinguish two error phases:
+外层请求处理器按以下两个阶段处理错误：
 
-- Before `res.headersSent`: return the existing JSON error with status 413, 503, or 500.
-- After `res.headersSent`: do not change status, headers, or append a second JSON document. Log the request failure, then destroy the incomplete response when it is still open. The affected client observes a truncated/failed request and can retry, while the server remains available for later requests.
+- `res.headersSent` 为 `false`：继续返回现有 JSON 错误，状态码为 413、503 或 500。
+- `res.headersSent` 为 `true`：不得修改状态码、响应头，也不得追加第二份 JSON 文档。记录请求失败；如果未完成的响应仍然打开，则将其销毁。当前客户端会观察到响应被截断或请求失败，并可自行重试；服务器进程则继续处理后续请求。
 
-The handler will also treat an already destroyed response or an abort-shaped error as a request abort and avoid writing to it.
+如果响应已经销毁，或错误属于请求中止，处理器同样不会继续向该响应写入内容。
 
-### Backpressure and disconnects
+### 背压与客户端断开
 
-When `res.write` returns `false`, the current implementation waits only for `drain`. The replacement wait will settle on `drain`, response `close`, response `error`, or request abort. All temporary listeners will be removed when one outcome wins.
+当 `res.write` 返回 `false` 时，当前实现只等待 `drain` 事件。新的等待逻辑会在 `drain`、响应 `close`、响应 `error` 或请求中止中的任一事件发生时结束，并在其中一个结果确定后移除全部临时监听器。
 
-- `drain` resumes streaming.
-- `close` or abort stops streaming and cancels the Fetch body reader.
-- `error` propagates to the outer phase-aware error handler.
+- `drain`：恢复流式写入。
+- `close` 或请求中止：停止写入并取消 Fetch 响应体读取器。
+- `error`：将错误交给外层按响应阶段处理的错误逻辑。
 
-This keeps the normal streaming path unchanged while preventing disconnected clients from stranding an async request handler.
+该设计不改变正常的流式传输路径，同时避免客户端断开后遗留永久等待的异步请求处理器。
 
-### macOS supervision
+### macOS 服务监管
 
-The generated LaunchAgent will use boolean `KeepAlive = true` instead of the conditional `SuccessfulExit`/`Crashed` dictionary. `RunAtLoad` and `ThrottleInterval = 10` remain unchanged.
+生成的 LaunchAgent 将使用布尔值 `KeepAlive = true`，替换当前包含 `SuccessfulExit` 和 `Crashed` 条件的字典。`RunAtLoad` 和 `ThrottleInterval = 10` 保持不变。
 
-This means launchd keeps the job running regardless of the previous exit status. Explicit service stop and uninstall remain valid because both use `launchctl bootout`, which unloads the job rather than merely signaling its process. Reinstall continues to regenerate the plist.
+这意味着无论上一次退出状态如何，launchd 都会保持任务运行。显式停止和卸载仍然有效，因为这两个操作使用 `launchctl bootout` 卸载任务，而不是只向进程发送信号。重新安装服务时仍会重新生成 plist。
 
-### Observability
+### 可观测性
 
-Existing `request_end` error logging remains the authoritative record of the failed request. No request bodies, credentials, or new sensitive fields will be logged. A post-header failure will include the original error message in the existing redacted structured log path.
+现有包含错误信息的 `request_end` 结构化日志继续作为请求失败的权威记录。不会记录请求体、凭据或新增敏感字段。响应头提交后的失败会通过现有的字段脱敏日志路径记录原始错误消息。
 
-## Testing
+## 测试
 
-Add regression coverage that proves:
+新增回归测试，证明以下行为：
 
-1. A response stream that emits a chunk and then errors does not crash the process; the partial request fails and a subsequent `/health` request still returns 200.
-2. A failure before headers are sent still returns the current structured JSON error response.
-3. A disconnect/backpressure wait terminates without waiting forever or trying to write a second response.
-4. The generated macOS plist contains boolean `KeepAlive` and no conditional `SuccessfulExit` or `Crashed` entries.
-5. Existing service start, stop, restart, install, and proxy server tests continue to pass.
+1. 响应流先输出一个数据块再报错时，Aerial 进程不会崩溃；当前请求失败后，同一进程仍能让后续 `/health` 请求返回 200。
+2. 响应头发送前发生的错误仍会返回现有结构化 JSON 错误。
+3. 背压等待期间发生断开连接时，请求能结束，不会永久等待，也不会尝试写入第二份响应。
+4. 新生成的 macOS plist 包含布尔值 `KeepAlive`，且不再包含 `SuccessfulExit` 或 `Crashed` 条目。
+5. 现有服务安装、启动、停止、重启及代理服务器测试继续通过。
 
-Run the focused server/service tests first, followed by the complete `npm test` suite using the repository's available Node binary.
+先运行服务器和服务相关的聚焦测试，再使用仓库可用的 Node 二进制运行完整 `npm test` 测试套件。
 
-## Success criteria
+## 成功标准
 
-- The captured `ERR_HTTP_HEADERS_SENT` failure mode has a regression test that fails before the fix and passes after it.
-- After a mid-stream failure, the same server process answers a health request successfully.
-- No code path calls `setHeader` after `res.headersSent` is true.
-- A freshly rendered macOS plist expresses unconditional supervision.
-- The full test suite passes with no unrelated worktree changes included.
+- 已捕获的 `ERR_HTTP_HEADERS_SENT` 故障模式必须有一项修复前失败、修复后通过的回归测试。
+- 发生响应流中途错误后，同一个服务器进程仍能成功响应健康检查。
+- 当 `res.headersSent` 为 `true` 时，不再有任何代码路径调用 `setHeader`。
+- 新渲染的 macOS plist 明确表达无条件持续监管。
+- 完整测试套件通过，并且不包含任何无关的工作区改动。
