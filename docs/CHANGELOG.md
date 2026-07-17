@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-17
+
+### Added
+
+- Added a reusable release preflight with local `new-release` and GitHub Actions `workflow` modes. It enforces the `0.A.B` version policy, manifest agreement, monotonic registry history, explicit-E404 handling, clean synchronized `main`, immutable tag identity, and same-commit workflow recovery.
+
+### Changed
+
+- Claude effort handling is now model-aware across setup and Messages requests. Native `max` is preserved when the live Copilot model advertises it; otherwise Aerial selects the nearest lower supported effort.
+- Claude Code setup and the proxy accept `ultracode` intent while persisting the compatible native `max` setting, or a lower catalog-supported effort, instead of writing the alias literally.
+- Explicit Messages effort requests for non-Opus Claude models now use selected-model capability metadata when available, with the same conservative catalog-free fallback.
+
+### Fixed
+
+- Prevented Claude effort fallback metadata from switching ordinary effort requests to an unrelated same-family model that only advertises a lower effort.
+- Hardened release recovery so empty or malformed registry output, network failures, authentication failures, and server errors can no longer be mistaken for an unpublished version.
+
 ## [0.2.7] - 2026-07-14
 
 ### Changed
@@ -191,6 +208,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Windows real-OS service install end-to-end lifecycle requires non-medium-IL or otherwise unfiltered UAC on corporate machines; CI and the in-tree test runner exercise the same code paths against dry-run fakes via `AERIAL_SERVICE_DRYRUN`, `AERIAL_SERVICE_DRYRUN_INSTALLED`, and `AERIAL_SERVICE_DRYRUN_FAIL`.
 - macOS `launchctl bootstrap` / `bootout` is exercised in tests and dry-run runners but a manual real-OS lifecycle on a developer Mac is still recommended; see `docs/release-runbook.md` §17.
 
+[0.3.1]: https://github.com/Xiejiayun/aerial/compare/v0.2.7...v0.3.1
+[0.2.7]: https://github.com/Xiejiayun/aerial/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/Xiejiayun/aerial/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/Xiejiayun/aerial/compare/v0.2.3...v0.2.5
 [0.2.3]: https://github.com/Xiejiayun/aerial/compare/v0.2.2...v0.2.3
