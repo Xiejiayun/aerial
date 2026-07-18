@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-18
+
+### Fixed
+
+- Prevented upstream response-stream failures, including connections terminated across macOS sleep and wake, from triggering `ERR_HTTP_HEADERS_SENT` and terminating the Aerial process after response headers were already committed.
+- Made response backpressure waits abort when the client disconnects so abandoned requests cancel their upstream stream instead of remaining stuck.
+- Changed the macOS LaunchAgent to unconditional `KeepAlive = true`, while preserving explicit stop and uninstall through `launchctl bootout`, so a loaded service is supervised regardless of its previous exit status.
+
 ## [0.3.1] - 2026-07-17
 
 ### Added

@@ -39,6 +39,18 @@ function readSocketData(socket, timeoutMs = 1000) {
   });
 }
 
+function waitFor(predicate, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      if (predicate()) return resolve();
+      if (Date.now() - started > timeoutMs) return reject(new Error("timed out waiting for condition"));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
+
 test("server rejects websocket upgrade explicitly", async () => {
   const server = createServer();
   server.listen(0, "127.0.0.1");
@@ -263,6 +275,104 @@ test("GET /v1/models returns upstream_auth_failed when copilot_internal token ex
     assert.equal(body.error.aerial.status, "upstream_auth_failed");
     assert.equal(body.error.aerial.upstream_status, 403);
   } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.AERIAL_GITHUB_TOKEN;
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("mid-stream upstream failure does not crash the server after headers are sent", async () => {
+  process.env.AERIAL_GITHUB_TOKEN = "github-test-token-stream-error";
+  ensureApiKey();
+  const originalFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  let upstreamController;
+  const upstreamBody = new ReadableStream({
+    start(controller) {
+      upstreamController = controller;
+      controller.enqueue(encoder.encode("data: {\"type\":\"response.in_progress\"}\n\n"));
+    }
+  });
+  globalThis.fetch = async (url, init) => {
+    const target = String(url);
+    if (target.startsWith("http://127.0.0.1:")) return originalFetch(url, init);
+    if (target.includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    if (target.endsWith("/models")) return Response.json({ data: [] });
+    if (target.endsWith("/responses")) {
+      return new Response(upstreamBody, { headers: { "content-type": "text/event-stream" } });
+    }
+    throw new Error(`unexpected fetch in test: ${target}`);
+  };
+
+  const server = createServer();
+  const port = await listenOnRandomPort(server);
+  try {
+    const response = await originalFetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers: { authorization: "Bearer aerial_test_key", "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-test", input: "hello", stream: true })
+    });
+    upstreamController.error(new Error("simulated upstream stream failure"));
+    await assert.rejects(response.text());
+
+    const health = await originalFetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(health.status, 200);
+    assert.equal((await health.json()).service, "aerial");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.AERIAL_GITHUB_TOKEN;
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("client disconnect during response backpressure cancels the upstream stream", async () => {
+  process.env.AERIAL_GITHUB_TOKEN = "github-test-token-backpressure";
+  ensureApiKey();
+  const originalFetch = globalThis.fetch;
+  let upstreamCanceled = false;
+  let sentChunk = false;
+  const upstreamBody = new ReadableStream({
+    pull(controller) {
+      if (sentChunk) return;
+      sentChunk = true;
+      controller.enqueue(new Uint8Array(4 * 1024 * 1024));
+    },
+    cancel() {
+      upstreamCanceled = true;
+    }
+  });
+  globalThis.fetch = async (url, init) => {
+    const target = String(url);
+    if (target.startsWith("http://127.0.0.1:")) return originalFetch(url, init);
+    if (target.includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    if (target.endsWith("/models")) return Response.json({ data: [] });
+    if (target.endsWith("/responses")) {
+      return new Response(upstreamBody, { headers: { "content-type": "application/octet-stream" } });
+    }
+    throw new Error(`unexpected fetch in test: ${target}`);
+  };
+
+  const server = createServer();
+  const port = await listenOnRandomPort(server);
+  const socket = net.createConnection({ host: "127.0.0.1", port });
+  try {
+    const body = JSON.stringify({ model: "gpt-test", input: "hello", stream: true });
+    socket.write([
+      "POST /v1/responses HTTP/1.1",
+      `Host: 127.0.0.1:${port}`,
+      "Authorization: Bearer aerial_test_key",
+      "Content-Type: application/json",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "",
+      body
+    ].join("\r\n"));
+    await once(socket, "data");
+    socket.destroy();
+    await waitFor(() => upstreamCanceled);
+  } finally {
+    socket.destroy();
     globalThis.fetch = originalFetch;
     delete process.env.AERIAL_GITHUB_TOKEN;
     server.close();
