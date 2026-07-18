@@ -170,6 +170,13 @@ async function writeNodeResponse(res, fetchResponse, signal) {
     return;
   }
   const reader = fetchResponse.body.getReader();
+  let cancelPromise;
+  const cancelReader = () => {
+    cancelPromise ||= reader.cancel().catch(() => {});
+    return cancelPromise;
+  };
+  signal?.addEventListener("abort", cancelReader, { once: true });
+  if (signal?.aborted) cancelReader();
   try {
     while (!signal?.aborted) {
       const { done, value } = await reader.read();
@@ -179,7 +186,8 @@ async function writeNodeResponse(res, fetchResponse, signal) {
       }
     }
   } finally {
-    if (signal?.aborted) await reader.cancel().catch(() => {});
+    signal?.removeEventListener("abort", cancelReader);
+    if (signal?.aborted) await cancelReader();
   }
   if (!res.destroyed) res.end();
 }
