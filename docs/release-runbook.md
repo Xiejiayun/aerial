@@ -547,12 +547,13 @@ recorded with an explicit, signed-off risk acceptance does not block.
   `health.supervisor = "service-managed"`,
   `summary = "running (service-managed)"`.
 - [ ] Kill the live `aerial` process; launchd respawns it within
-  `ThrottleInterval` (10s) per the `KeepAlive = { Crashed = true }`
-  rule. Confirm the new `pid` differs.
+  `ThrottleInterval` (10s) per the `KeepAlive = true` rule. Confirm the
+  new `pid` differs. Repeat with a clean exit and confirm launchd still
+  respawns the process.
 - [ ] `aerial service stop` invokes `launchctl bootout gui/<uid>
   <plist>` (NOT `launchctl kill`). `aerial service status` then
   shows `service.loaded = false`; the process is NOT respawned by
-  launchd because `SuccessfulExit = false` only respawns on crash.
+  launchd because bootout unloads the job before `KeepAlive` can apply.
 - [ ] `aerial service stop` again is idempotent: exit 0 with `note =
   "not running"`.
 - [ ] `aerial service restart` while running rotates pids; if a

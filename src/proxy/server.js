@@ -97,6 +97,41 @@ async function readBody(req, maxBytes = MAX_BODY_BYTES) {
   return Buffer.concat(chunks);
 }
 
+function responseAbortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("Response closed");
+  error.name = "AbortError";
+  return error;
+}
+
+function waitForDrain(res, signal) {
+  if (signal?.aborted || res.destroyed) return Promise.reject(responseAbortError(signal));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      res.off("drain", onDrain);
+      res.off("close", onClose);
+      res.off("error", onError);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const settle = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const onDrain = () => settle(resolve);
+    const onClose = () => settle(reject, responseAbortError(signal));
+    const onError = (error) => settle(reject, error);
+    const onAbort = () => settle(reject, responseAbortError(signal));
+    res.once("drain", onDrain);
+    res.once("close", onClose);
+    res.once("error", onError);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted || res.destroyed) onAbort();
+  });
+}
+
 async function handle(fetchRequest, runtime = {}) {
   const url = new URL(fetchRequest.url);
   const config = runtime.config || loadConfig();
@@ -140,7 +175,7 @@ async function writeNodeResponse(res, fetchResponse, signal) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!res.write(Buffer.from(value))) {
-        await new Promise((resolve) => res.once("drain", resolve));
+        await waitForDrain(res, signal);
       }
     }
   } finally {
@@ -174,12 +209,16 @@ export function createServer(runtime = {}) {
       await writeNodeResponse(res, fetchResponse, controller.signal);
       logEvent("request_end", { method: req.method, path: req.url, status: fetchResponse.status, ms: Date.now() - started });
     } catch (error) {
-      if (error.name === "AbortError" || res.destroyed) {
+      if (error.name === "AbortError" || res.destroyed || controller.signal.aborted) {
         logEvent("request_aborted", { method: req.method, path: req.url, ms: Date.now() - started });
         return;
       }
       const status = error.statusCode || (error.message?.includes("Missing GitHub token") ? 503 : 500);
       logEvent("request_end", { method: req.method, path: req.url, status, ms: Date.now() - started, error: error.message });
+      if (res.headersSent || res.writableEnded) {
+        if (!res.destroyed) res.destroy(error);
+        return;
+      }
       res.statusCode = status;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ error: { type: status === 413 ? "request_entity_too_large" : "aerial_error", message: error.message } }));
