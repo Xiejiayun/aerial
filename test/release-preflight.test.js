@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   assertReleaseVersion,
   classifyRegistryLookup,
+  commandRunner,
   compareReleaseVersions,
   readManifestVersions,
   runReleasePreflight
@@ -69,6 +70,34 @@ test("registry lookup distinguishes explicit E404 from ambiguous failures", () =
   assert.equal(classifyRegistryLookup(result(0, "")).state, "error");
   assert.equal(classifyRegistryLookup(result(0, "not-json")).state, "error");
   assert.deepEqual(classifyRegistryLookup(result(0, '{"gitHead":"abc"}')), { state: "found", value: { gitHead: "abc" } });
+});
+
+test("registry lookup fails closed when npm did not report an exit status", () => {
+  for (const status of [null, undefined]) {
+    for (const output of ['{"gitHead":"abc"}', "npm ERR! code E404"]) {
+      const lookup = classifyRegistryLookup(result(status, output));
+      assert.equal(lookup.state, "error");
+      assert.match(lookup.message, /status unknown/);
+    }
+  }
+});
+
+test("Windows command runner executes npm with and without npm_execpath", { skip: process.platform !== "win32" }, async (t) => {
+  const originalNpmExecPath = process.env.npm_execpath;
+  t.after(() => {
+    if (originalNpmExecPath === undefined) delete process.env.npm_execpath;
+    else process.env.npm_execpath = originalNpmExecPath;
+  });
+  const npmCli = originalNpmExecPath || path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  for (const withNpmExecPath of [true, false]) {
+    await t.test(withNpmExecPath ? "npm lifecycle environment" : "direct Node invocation", () => {
+      if (withNpmExecPath) process.env.npm_execpath = npmCli;
+      else delete process.env.npm_execpath;
+      const execution = commandRunner(process.cwd())("npm", ["--version"]);
+      assert.equal(execution.status, 0, execution.stderr);
+      assert.match(execution.stdout.trim(), /^\d+\.\d+\.\d+$/);
+    });
+  }
 });
 
 test("manifest versions must agree in both lockfile locations", () => {
