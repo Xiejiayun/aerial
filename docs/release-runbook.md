@@ -512,10 +512,11 @@ on the registry)
 ## §16 Service Manual Lifecycle Checklist (manual validation, not CI-gated)
 
 `src/service/index.js` wraps platform service primitives (macOS launchd,
-Windows Task Scheduler). Automated tests deliberately stub the
-subprocess runner via dependency injection so CI never calls
-`launchctl`, `schtasks`, or PowerShell against the runner's real
-system — that means the end-to-end behavior must be validated by hand
+Windows Task Scheduler). Service-manager tests stub the subprocess runner
+so CI never registers or stops real `launchctl` or `schtasks` jobs. Windows
+wrapper tests do run isolated PowerShell and Windows Script Host processes
+with temporary fixtures and config directories. Task Scheduler integration
+and window visibility must still be validated by hand
 before any release that touches `src/service/index.js`, `src/shared/log.js`, or the
 service docs.
 
@@ -595,7 +596,12 @@ recorded with an explicit, signed-off risk acceptance does not block.
 
 - [ ] `aerial service install` (on an idle host) writes the wrapper
   at `%APPDATA%\aerial\bin\aerial-service.ps1` AND registers a Task
-  Scheduler task named `AerialLocalProxy`.
+  Scheduler task named `AerialLocalProxy` with `wscript.exe` as the action,
+  the packaged `src/service/windows-launcher.js`, and the wrapper path as
+  separately quoted arguments. The wrapper has a UTF-8 BOM for PowerShell 5.1.
+- [ ] With Windows Terminal configured as the default terminal, installing
+  and starting the service creates no visible terminal window. Closing the
+  installation terminal leaves the service healthy.
 - [ ] `powershell -NoProfile -Command "Get-Content
   '$env:APPDATA\aerial\bin\aerial-service.ps1' -Raw |
   Out-Null"` exits 0 (PowerShell parses the wrapper without running
@@ -609,7 +615,10 @@ recorded with an explicit, signed-off risk acceptance does not block.
   `service.status = "Running"`, `health.aerial = true`,
   `health.supervisor = "service-managed"`,
   `summary = "running (service-managed)"`.
-- [ ] `aerial service stop` calls `schtasks /End`; `aerial service
+- [ ] `aerial service stop` obtains the task instance's process IDs, validates
+  the action process type, and calls `taskkill /PID <pid> /T /F` before
+  `schtasks /End`. Confirm the launcher, PowerShell, and Node processes all
+  exit and the health endpoint stops responding. `aerial service
   status` reports `service.loaded = false`. Repeating `aerial
   service stop` is idempotent: exit 0 with `note = "not running"`.
 - [ ] `aerial service restart` rotates pids when running; with a
@@ -636,11 +645,13 @@ recorded with an explicit, signed-off risk acceptance does not block.
     install` exits 1 with `reason = managed_definition_refresh_failed`,
     a `message` pointing at the schtasks error, and the running task
     is left untouched.
-- [ ] `aerial service uninstall` does a best-effort `schtasks /End`
-  before `schtasks /Delete /F`, then removes the wrapper `.ps1` from
+- [ ] `aerial service uninstall` stops the complete process tree and ends
+  the task before `schtasks /Delete /F`, then removes the wrapper `.ps1` from
   `%APPDATA%\aerial\bin\` on success. Repeated invocation when
   nothing is installed is idempotent: exit 0 with `note = "no
   service installed"`.
+- [ ] If task process lookup or tree termination fails, uninstall exits 1
+  with `reason = "stop_failed"` and preserves both the task and wrapper.
 - [ ] If `schtasks /Delete` fails, `aerial service uninstall` exits
   1 with `reason = "delete_failed"`, the wrapper `.ps1` is
   PRESERVED, and the message tells the user to retry.

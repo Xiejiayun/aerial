@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-14
+
+### Fixed
+
+- Start the Windows background service without opening a blank Windows Terminal window, using a hidden Windows Script Host launcher that waits for the proxy to exit.
+- Stop and restart the complete Windows service process tree, including PowerShell and Node. If stopping fails, uninstall preserves the task and wrapper for retry.
+- Keep native stderr output from prematurely stopping the Windows wrapper, and propagate the proxy's exit code to Task Scheduler.
+- Preserve non-ASCII paths in the generated Windows PowerShell wrapper with UTF-8 encoding detection.
+
+### Upgrade
+
+- Existing Windows installations must run `aerial service install` from an Administrator terminal, followed by `aerial service restart`, to apply the new launcher. The installation terminal can then be closed.
+
+### Known limitations
+
+- The configured dependency audit feed reports three pre-existing high-severity advisories in `ip-address`, `smol-toml`, and `undici`. Compatible patched versions were unavailable from the official registry during release verification. This release preserves the Node.js 20.18.1 support floor and does not resolve those advisories; malformed local Codex TOML files remain a potential CLI denial-of-service input.
+
 ## [0.3.2] - 2026-07-18
 
 ### Fixed

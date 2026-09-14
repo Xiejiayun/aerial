@@ -170,6 +170,7 @@ test("renderWindowsWrapper rotates stdio.log, sets log env vars, and runs node w
   assert.match(wrapper, /\$env:AERIAL_LOG_FILE = \$aerialLog/);
   assert.match(wrapper, /\$env:AERIAL_LOG_MAX_BYTES = "\$maxBytes"/);
   assert.match(wrapper, /& \$node \$cli start --host \$serviceHost --port \$servicePort \*>> \$stdioLog/);
+  assert.match(wrapper, /exit \$LASTEXITCODE/);
   assert.ok(!/AERIAL_CONFIG_DIR/.test(wrapper), "no AERIAL_CONFIG_DIR embed when not explicitly set");
 });
 
@@ -228,20 +229,18 @@ test("buildSchtasksCreateArgs passes /TR without shell-escaped quotes", () => {
     const trIndex = args.indexOf("/TR");
     assert.ok(trIndex > 0);
     const tr = args[trIndex + 1];
-    assert.ok(tr.startsWith("powershell.exe "), `expected /TR to start with powershell.exe but was: ${tr}`);
+    assert.ok(tr.startsWith("wscript.exe //B //NoLogo //E:JScript "), `expected a windowless script host but was: ${tr}`);
     assert.ok(!tr.includes('\\"'), `expected /TR to contain real quotes, not backslash-escaped quotes: ${tr}`);
     assert.ok(tr.includes(wrapper));
-    assert.ok(tr.includes("-WindowStyle Hidden"));
-    assert.ok(tr.includes("-File"));
+    assert.match(tr, /"[^"]*windows-launcher\.js"/);
   }
 });
 
-test("buildSchtasksCreateArgs quotes the -File operand separately so Task Scheduler parses paths with spaces", () => {
+test("buildSchtasksCreateArgs quotes the launcher and wrapper separately so Task Scheduler parses paths with spaces", () => {
   const wrapper = "C:\\Users\\Jeremy Xie\\AppData\\Roaming\\aerial\\bin\\aerial-service.ps1";
   const args = buildSchtasksCreateArgs({ wrapperPath: wrapper });
   const tr = args[args.indexOf("/TR") + 1];
-  assert.ok(tr.includes(`-File "${wrapper}"`), `expected -File operand wrapped in quotes, but /TR was: ${tr}`);
-  assert.ok(!/-File C:\\Users\\Jeremy /.test(tr), "must not register an unquoted path that would be split at the first space");
+  assert.ok(tr.endsWith(`" "${wrapper}"`), `expected separate quoted launcher and wrapper paths, but /TR was: ${tr}`);
 });
 
 test("serviceInstall throws unsupportedPlatform on linux with actionable message", { skip: process.platform === "darwin" || process.platform === "win32" }, async () => {
@@ -612,6 +611,20 @@ test("serviceStop on macOS uses launchctl bootout (not kill SIGTERM)", { skip: p
   cleanupServiceArtifacts();
 });
 
+test("serviceStop on Windows terminates each task process tree before ending the task", { skip: process.platform !== "win32" }, () => {
+  const run = makeRunner();
+  run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+  run.queue.push({ status: 0, stdout: "[4321,8765]", stderr: "" });
+  const result = serviceStop({ run });
+  assert.equal(result.ok, true);
+  assert.deepEqual(run.calls.map((call) => call.file), [
+    "schtasks.exe", "powershell.exe", "taskkill.exe", "taskkill.exe", "schtasks.exe"
+  ]);
+  assert.deepEqual(run.calls[2].args, ["/PID", "4321", "/T", "/F"]);
+  assert.deepEqual(run.calls[3].args, ["/PID", "8765", "/T", "/F"]);
+  assert.deepEqual(run.calls[4].args, ["/End", "/TN", "AerialLocalProxy"]);
+});
+
 test("serviceRestart blocks start when stop fails", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
   if (process.platform === "darwin") {
     fs.mkdirSync(path.dirname(_internal.plistPath()), { recursive: true });
@@ -623,6 +636,7 @@ test("serviceRestart blocks start when stop fails", { skip: process.platform !==
     run.queue.push({ status: 1, stdout: "", stderr: "bootout refused" });
   } else {
     run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+    run.queue.push({ status: 0, stdout: "[]", stderr: "" });
     run.queue.push({ status: 1, stdout: "", stderr: "/End failed" });
   }
   const result = await serviceRestart({ run, healthFetch: absentHealth() });
@@ -632,11 +646,34 @@ test("serviceRestart blocks start when stop fails", { skip: process.platform !==
   cleanupServiceArtifacts();
 });
 
-test("serviceUninstall does best-effort stop on Windows before /Delete", { skip: process.platform !== "win32" }, () => {
+test("serviceRestart on Windows refuses to start after a process query, PID validation, or tree termination failure", { skip: process.platform !== "win32" }, async (t) => {
+  for (const scenario of [
+    { name: "task process query fails", query: { status: 5, stdout: "", stderr: "Access denied" } },
+    { name: "one invalid PID rejects the entire process list", query: { status: 0, stdout: "[4321,0]", stderr: "" } },
+    { name: "process tree termination fails", query: { status: 0, stdout: "[4321]", stderr: "" }, kill: { status: 5, stdout: "", stderr: "Access denied" } }
+  ]) {
+    await t.test(scenario.name, async () => {
+      const run = makeRunner();
+      run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+      run.queue.push(scenario.query);
+      if (scenario.kill) run.queue.push(scenario.kill);
+      const result = await serviceRestart({ run, healthFetch: absentHealth() });
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, "stop_failed");
+      assert.equal(result.start, undefined);
+      assert.equal(run.calls.length, scenario.kill ? 3 : 2);
+      assert.equal(run.calls.some((call) => call.args.includes("/End") || call.args.includes("/Run")), false);
+      assert.equal(run.calls.filter((call) => call.file === "taskkill.exe").length, scenario.kill ? 1 : 0);
+    });
+  }
+});
+
+test("serviceUninstall stops the Windows service before /Delete", { skip: process.platform !== "win32" }, () => {
   fs.mkdirSync(path.dirname(_internal.winWrapperPath()), { recursive: true });
   fs.writeFileSync(_internal.winWrapperPath(), "rem placeholder");
   const run = makeRunner();
   run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+  run.queue.push({ status: 0, stdout: "[]", stderr: "" });
   run.queue.push({ status: 0, stdout: "", stderr: "" });
   run.queue.push({ status: 0, stdout: "", stderr: "" });
   const result = serviceUninstall({ run });
@@ -646,6 +683,25 @@ test("serviceUninstall does best-effort stop on Windows before /Delete", { skip:
   assert.ok(endIdx >= 0, "expected /End to be called");
   assert.ok(delIdx > endIdx, "expected /Delete to follow /End");
   cleanupServiceArtifacts();
+});
+
+test("serviceUninstall on Windows preserves the task and wrapper when process tree termination fails", { skip: process.platform !== "win32" }, (t) => {
+  cleanupServiceArtifacts();
+  t.after(cleanupServiceArtifacts);
+  const wrapper = _internal.winWrapperPath();
+  fs.mkdirSync(path.dirname(wrapper), { recursive: true });
+  fs.writeFileSync(wrapper, "preserve installed wrapper");
+  const run = makeRunner();
+  run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+  run.queue.push({ status: 0, stdout: "[4321]", stderr: "" });
+  run.queue.push({ status: 5, stdout: "", stderr: "Access denied" });
+  const result = serviceUninstall({ run });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "stop_failed");
+  assert.equal(result.stop.status, 5);
+  assert.equal(fs.readFileSync(wrapper, "utf8"), "preserve installed wrapper");
+  assert.equal(run.calls.some((call) => call.args.includes("/Delete") || call.args.includes("/End")), false);
+  assert.match(result.message, /preserved/);
 });
 
 test("serviceUninstall on darwin returns ok:false with bootout_failed when launchctl bootout fails", { skip: process.platform !== "darwin" }, () => {

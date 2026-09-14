@@ -54,6 +54,40 @@ function windowsServiceState(ctx) {
   return { installed: true, loaded: status === "Running", status };
 }
 
+function windowsStop(ctx) {
+  // /End only terminates the action process, leaving its children running.
+  // Ask Task Scheduler for this task's root PIDs instead of matching processes
+  // by name or port, then terminate each complete tree before ending the task.
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$scheduler = New-Object -ComObject 'Schedule.Service'",
+    "$scheduler.Connect()",
+    `$task = $scheduler.GetFolder('\\').GetTask('${WIN_TASK_NAME}')`,
+    "$roots = @($task.GetInstances(0) | ForEach-Object {",
+    "  $root = Get-Process -Id $_.EnginePID -ErrorAction SilentlyContinue",
+    "  if ($null -ne $root) {",
+    "    if ($root.ProcessName -notin @('wscript', 'powershell')) { throw 'Unexpected Aerial task process; refusing to terminate it.' }",
+    "    $root.Id",
+    "  }",
+    "})",
+    "ConvertTo-Json -InputObject $roots -Compress"
+  ].join("\r\n");
+  const query = ctx.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
+  if (query.status !== 0) return query;
+  let roots;
+  try {
+    roots = JSON.parse(query.stdout || "[]");
+    if (!Array.isArray(roots) || !roots.every((pid) => Number.isSafeInteger(pid) && pid > 0)) throw new Error();
+  } catch {
+    return { status: 1, stderr: "Could not read Aerial task process IDs; service was not stopped." };
+  }
+  for (const pid of roots) {
+    const stopped = ctx.run("taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
+    if (stopped.status !== 0) return stopped;
+  }
+  return ctx.run("schtasks.exe", buildSchtasksArgs("end"));
+}
+
 function darwinWriteDefinition() {
   const wrapper = darwinWrapperPath();
   const config = loadConfig();
@@ -152,7 +186,14 @@ function darwinUninstall(ctx, state) {
 
 function windowsUninstall(ctx, state) {
   if (state.loaded) {
-    ctx.run("schtasks.exe", buildSchtasksArgs("end"));
+    const stop = windowsStop(ctx);
+    if (stop.status !== 0) {
+      return {
+        ok: false, action: "uninstall", platform: "win32", reason: "stop_failed",
+        stop: { status: stop.status, stderr: stop.stderr },
+        message: "Could not stop the Aerial process tree. Task and wrapper were preserved. Retry with `aerial service uninstall`."
+      };
+    }
   }
   const del = ctx.run("schtasks.exe", buildSchtasksArgs("delete"));
   const wrapper = winWrapperPath();
@@ -205,7 +246,7 @@ export function serviceAdapter(ctx) {
         return { ok: written.create.status === 0, info };
       },
       triggerStart: () => ctx.run("schtasks.exe", buildSchtasksArgs("run")),
-      triggerStop: () => ctx.run("schtasks.exe", buildSchtasksArgs("end")),
+      triggerStop: () => windowsStop(ctx),
       startFailureReason: "run_failed",
       startResultKey: "run",
       uninstall: (state) => windowsUninstall(ctx, state)
