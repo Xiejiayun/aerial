@@ -145,7 +145,7 @@ Advanced service lifecycle commands are documented in `docs/usage.md`.
 ## Notes
 
 - macOS background service support uses a user LaunchAgent.
-- Windows background service support uses a user Task Scheduler task. Run `aerial service install` from an Administrator terminal to register it.
+- Windows background service support uses a user Task Scheduler task and runs without a terminal window. Run `aerial service install` from an Administrator terminal to register it. After upgrading an older installation, run `aerial service install` and `aerial service restart` to apply the windowless launcher.
 - Linux service management is not built in yet; run `aerial start` or use your own init system.
 - Copilot inference routes are an observed compatibility target and may change upstream.
 

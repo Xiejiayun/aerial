@@ -192,9 +192,15 @@ export function renderWindowsWrapper({ nodePath, cliPath, host, port, stdioLog, 
     "$env:AERIAL_LOG_BACKUPS = \"$backups\""
   ];
   if (cfg) lines.push(`$env:AERIAL_CONFIG_DIR = ${psEscape(cfg)}`);
+  // Windows PowerShell treats native stderr as an error stream. It must be
+  // captured in the log without terminating an otherwise healthy proxy.
+  lines.push("$ErrorActionPreference = 'Continue'");
+  lines.push("$LASTEXITCODE = 1");
   lines.push("& $node $cli start --host $serviceHost --port $servicePort *>> $stdioLog");
+  lines.push("exit $LASTEXITCODE");
   lines.push("");
-  return lines.join("\r\n");
+  // Windows PowerShell 5.1 needs a BOM to read non-ASCII paths as UTF-8.
+  return "\uFEFF" + lines.join("\r\n");
 }
 
 export function formatSchtasksTR(command) {
@@ -202,7 +208,8 @@ export function formatSchtasksTR(command) {
 }
 
 export function buildSchtasksCreateArgs({ taskName = WIN_TASK_NAME, wrapperPath: wrapper }) {
-  const cmd = `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${wrapper}"`;
+  const launcher = fileURLToPath(new URL("./windows-launcher.js", import.meta.url));
+  const cmd = `wscript.exe //B //NoLogo //E:JScript "${launcher}" "${wrapper}"`;
   return [
     "/Create",
     "/TN", taskName,
