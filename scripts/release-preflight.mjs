@@ -55,7 +55,7 @@ function explicitE404(output) {
 }
 
 export function classifyRegistryLookup(result) {
-  const status = Number(result?.status);
+  const status = Number.isInteger(result?.status) ? result.status : undefined;
   const stdout = String(result?.stdout || "").trim();
   const stderr = String(result?.stderr || "").trim();
   if (status === 0) {
@@ -67,7 +67,7 @@ export function classifyRegistryLookup(result) {
     }
   }
   const combined = `${stdout}\n${stderr}`;
-  if (explicitE404(combined)) return { state: "missing" };
+  if (status !== undefined && explicitE404(combined)) return { state: "missing" };
   return {
     state: "error",
     message: `registry lookup failed with status ${Number.isFinite(status) ? status : "unknown"}: ${combined.trim() || "no diagnostic output"}`
@@ -90,7 +90,15 @@ export function readManifestVersions(cwd) {
 
 export function commandRunner(cwd) {
   return (command, args) => {
-    const result = spawnSync(command, args, { cwd, encoding: "utf8" });
+    // Windows cannot execute npm's .cmd shim without a shell. Run its CLI
+    // with Node directly so registry arguments never need shell quoting.
+    const windowsNpm = process.platform === "win32" && command === "npm";
+    const npmCli = windowsNpm
+      ? process.env.npm_execpath || path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")
+      : undefined;
+    const result = spawnSync(windowsNpm ? process.execPath : command, windowsNpm ? [npmCli, ...args] : args, {
+      cwd, encoding: "utf8", windowsHide: true
+    });
     if (result.error) {
       return { status: null, stdout: result.stdout || "", stderr: result.error.message };
     }
