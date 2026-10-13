@@ -30,8 +30,8 @@ const clients = [
 for (const { target, setup, relative, parse, original } of clients) {
   test(`${target}: repeated fresh setup then teardown removes generated configuration`, () => {
     const file = path.join(home, relative);
-    setup({ model: "first", effort: "medium" });
-    setup({ model: "second", effort: "high" });
+    setup({ model: target === "claude" ? "claude-opus-4.7" : "first", effort: "medium" });
+    setup({ model: target === "claude" ? "claude-opus-4.8" : "second", effort: "high" });
     assert.equal(JSON.parse(fs.readFileSync(takeoverPath(file), "utf8")).original, null);
     const result = detachAllClients();
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -44,8 +44,8 @@ for (const { target, setup, relative, parse, original } of clients) {
     const file = path.join(home, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, original);
-    setup({ model: "first", effort: "medium" });
-    setup({ model: "second", effort: "high" });
+    setup({ model: target === "claude" ? "claude-opus-4.7" : "first", effort: "medium" });
+    setup({ model: target === "claude" ? "claude-opus-4.8" : "second", effort: "high" });
     assert.equal(JSON.parse(fs.readFileSync(takeoverPath(file), "utf8")).original, original);
     assert.equal(detachAllClients().ok, true);
     assert.equal(fs.readFileSync(file, "utf8"), original);
@@ -55,7 +55,7 @@ for (const { target, setup, relative, parse, original } of clients) {
     const file = path.join(home, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, original);
-    setup({ model: "first", effort: "medium" });
+    setup({ model: target === "claude" ? "claude-opus-4.7" : "first", effort: "medium" });
     if (target === "codex") {
       let content = fs.readFileSync(file, "utf8");
       content = setTomlValue(content, ["model"], "user-choice");
@@ -126,6 +126,31 @@ test("legacy setup without a backup detaches to defaults and keeps unrelated set
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.results.claude.baseline, "legacy-defaults");
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { permissions: { allow: ["Read"] } });
+});
+
+test("Claude legacy fallback removes generated native mappings and effort without dropping unrelated settings", () => {
+  const { file } = setupClaude({ model: "claude-opus-4.7", effort: "medium" });
+  fs.unlinkSync(takeoverPath(file));
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  doc.modelOverrides.custom = "keep-custom-deployment";
+  doc.modelSettings["claude-opus-4-7"].autoCompactWindow = 200000;
+  fs.writeFileSync(file, JSON.stringify(doc));
+  assert.equal(detachAllClients().ok, true);
+  const detached = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual(detached.modelOverrides, { custom: "keep-custom-deployment" });
+  assert.deepEqual(detached.modelSettings, { "claude-opus-4-7": { autoCompactWindow: 200000 } });
+});
+
+test("three-way teardown restores original empty containers after unrelated user edits", () => {
+  const file = path.join(home, ".claude", "settings.json");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ model: "original", modelOverrides: {} }));
+  setupClaude({ model: "custom" });
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  doc.permissions = { allow: ["Read"] };
+  fs.writeFileSync(file, JSON.stringify(doc));
+  assert.equal(detachAllClients().ok, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { model: "original", modelOverrides: {}, permissions: { allow: ["Read"] } });
 });
 
 test("teardown refuses to uninstall when user edits introduce another Aerial dependency", () => {

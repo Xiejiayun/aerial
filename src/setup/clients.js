@@ -97,6 +97,9 @@ export function setupClaude({ model, effort, supportedEfforts, models, apiKeyHel
     next.effortLevel = normalizedEffort;
     next.modelSettings[key] = { ...modelSettings, effortLevel: normalizedEffort };
   }
+  if (!Object.keys(next.modelOverrides || {}).length) delete next.modelOverrides;
+  if (key && !Object.keys(next.modelSettings[key] || {}).length) delete next.modelSettings[key];
+  if (!Object.keys(next.modelSettings).length) delete next.modelSettings;
   const backup = backupIfExists(file);
   const takeover = writeClientTakeover({ target: "claude", file, original, next: `${JSON.stringify(next, null, 2)}\n`, backups: backupPathsFor(file) });
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
