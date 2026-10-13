@@ -5,6 +5,7 @@ import { parse as parseToml } from "smol-toml";
 import { writePrivateFile } from "../shared/paths.js";
 import { loadConfig } from "../shared/config.js";
 import { setTomlValue } from "./toml.js";
+import { isAerialKeyHelper } from "./auth-helper.js";
 
 const SCHEMA = "aerial.takeover.v1";
 export const takeoverPath = file => `${file}.aerial-state.json`;
@@ -76,7 +77,7 @@ export function dependsOnAerial(target, doc) {
   }
   const config = loadConfig();
   const host = config.host.includes(":") ? `[${config.host}]` : config.host;
-  return typeof doc.apiKeyHelper === "string" && /\bkey["']?\s+["']?print\b/.test(doc.apiKeyHelper)
+  return isAerialKeyHelper(doc.apiKeyHelper)
     || doc.env?.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "1"
       && doc.env?.ANTHROPIC_BASE_URL === `http://${host}:${config.port}`;
 }

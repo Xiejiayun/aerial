@@ -1,4 +1,7 @@
 import test from "node:test";
+
+process.env.CODEX_HOME = "";
+process.env.CLAUDE_CONFIG_DIR = "";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";

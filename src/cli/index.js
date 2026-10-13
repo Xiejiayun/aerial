@@ -11,7 +11,7 @@ import { runSetupCli } from "./commands/setup.js";
 import { runStartCli } from "./commands/start.js";
 import { doctor, renderDoctorText } from "./doctor.js";
 import { formatProbeReport, runProbe } from "./probe.js";
-import { validateCliArgs } from "./args.js";
+import { parseGlobalArgs, validateCliArgs } from "./args.js";
 
 function printHelp() {
   console.log(`Aerial local Copilot proxy
@@ -40,13 +40,18 @@ Debug:
   aerial config reset
   aerial key generate|print
 
+Use aerial --config-dir <directory> <command> to select an Aerial configuration.
 Add --help to any command to view help without making changes.`);
 }
 
+let longRunning = false;
 async function main() {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs.includes("--help") || rawArgs.includes("-h")) return printHelp();
+  const { args, configDir } = parseGlobalArgs(rawArgs);
   const [command, subcommand, ...rest] = args;
   if (validateCliArgs(args).help) return printHelp();
+  if (configDir) process.env.AERIAL_CONFIG_DIR = configDir;
   if (command === "--version") return printVersion();
 
   if (command === "status") {
@@ -71,6 +76,7 @@ async function main() {
 
   if (command === "start") {
     runStartCli(args);
+    longRunning = true;
     return;
   }
 
@@ -122,8 +128,7 @@ main()
     // bridge, or stdin open, which keeps the event loop alive and hangs the CLI
     // after the work is done. `start` is the only long-running command, so for
     // everything else exit explicitly once main() resolves.
-    const command = process.argv[2];
-    if (command !== "start") process.exit(process.exitCode ?? 0);
+    if (!longRunning) process.exit(process.exitCode ?? 0);
   })
   .catch((error) => {
     console.error(error.message);

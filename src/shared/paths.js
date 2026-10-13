@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { atomicWriteFile } from "./utils.js";
 
 export function configDir() {
-  if (process.env.AERIAL_CONFIG_DIR) return process.env.AERIAL_CONFIG_DIR;
+  if (process.env.AERIAL_CONFIG_DIR?.trim()) return path.resolve(process.env.AERIAL_CONFIG_DIR);
   if (process.platform === "darwin") {
     return path.join(os.homedir(), "Library", "Application Support", "aerial");
   }
@@ -12,6 +12,14 @@ export function configDir() {
     return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "aerial");
   }
   return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "aerial");
+}
+
+export function codexConfigFile() {
+  return path.join(process.env.CODEX_HOME?.trim() ? path.resolve(process.env.CODEX_HOME) : path.join(os.homedir(), ".codex"), "config.toml");
+}
+
+export function claudeSettingsFile() {
+  return path.join(process.env.CLAUDE_CONFIG_DIR?.trim() ? path.resolve(process.env.CLAUDE_CONFIG_DIR) : path.join(os.homedir(), ".claude"), "settings.json");
 }
 
 export function configPath() {

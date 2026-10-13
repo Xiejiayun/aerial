@@ -33,6 +33,14 @@ const commands = {
   }
 };
 
+export function parseGlobalArgs(args) {
+  if (args[0] !== "--config-dir") return { args };
+  const configDir = args[1];
+  if (!configDir || configDir.startsWith("-")) throw new Error("--config-dir requires a directory.");
+  if (args.length < 3) throw new Error("Usage: aerial --config-dir <directory> <command>");
+  return { args: args.slice(2), configDir };
+}
+
 export function validateCliArgs(args) {
   if (!args.length || args.includes("--help") || args.includes("-h")) return { help: true };
   const [command, ...tail] = args;

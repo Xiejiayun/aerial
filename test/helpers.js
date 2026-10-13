@@ -15,6 +15,8 @@ export function cliEnv(home, extraEnv = {}) {
     ...process.env,
     HOME: home,
     USERPROFILE: home,
+    CODEX_HOME: "",
+    CLAUDE_CONFIG_DIR: "",
     AERIAL_CONFIG_DIR: path.join(home, "config"),
     AERIAL_API_KEY: "",
     AERIAL_SKIP_ENV_PERSIST: "1",

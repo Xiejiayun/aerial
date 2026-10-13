@@ -170,6 +170,12 @@ Use `responses` models for Codex, `messages` models for Claude Code, and `chat` 
 
 ## 7.5 Manage Setup
 
+Setup, status, restore, and teardown honor `CODEX_HOME` and `CLAUDE_CONFIG_DIR`;
+otherwise they use `~/.codex` and `~/.claude`. Set `AERIAL_CONFIG_DIR` or use
+`aerial --config-dir <directory> <command>` to select Aerial's own configuration.
+Generated key helpers and service wrappers remember its absolute directory, so
+they work when a GUI client or a new terminal does not inherit that environment.
+
 ```bash
 aerial setup status [--json]
 aerial setup restore <codex|claude|all> --latest

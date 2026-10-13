@@ -83,8 +83,7 @@ export function uidString() {
 }
 
 export function explicitConfigDir() {
-  const v = process.env.AERIAL_CONFIG_DIR;
-  return v && v.trim() ? v : undefined;
+  return configDir();
 }
 
 export function renderPlist({ label = SERVICE_LABEL, wrapperPath: wrapper }) {

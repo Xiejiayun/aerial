@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
@@ -8,6 +7,8 @@ import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort, normal
 import { backupIfExists, backupPathsFor } from "./restore.js";
 import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection } from "./toml.js";
 import { writeClientTakeover } from "./takeover.js";
+import { codexConfigFile, claudeSettingsFile } from "../shared/paths.js";
+import { codexAuthCommand, claudeApiKeyHelper, isAerialKeyHelper } from "./auth-helper.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -15,7 +16,6 @@ const DEFAULT_CODEX_AUTH = Object.freeze({
   timeout_ms: 5000,
   refresh_interval_ms: 0
 });
-const DEFAULT_CLAUDE_API_KEY_HELPER = "aerial key print";
 
 function ensureParent(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -37,7 +37,7 @@ function claudeEnvForAerial(currentEnv, config) {
   };
 }
 
-export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } = {}) {
+export function setupCodex({ model, effort, authCommand = codexAuthCommand() } = {}) {
   const normalizedEffort = effort === undefined ? undefined : assertValidCodexEffort(effort);
   ensureApiKey();
   const config = loadConfig();
@@ -72,7 +72,7 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
-export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPER } = {}) {
+export function setupClaude({ model, effort, apiKeyHelper = claudeApiKeyHelper() } = {}) {
   const requestedEffort = effort === undefined ? undefined : assertValidEffort(effort);
   const normalizedEffort = requestedEffort === "ultracode" ? "max" : requestedEffort;
   ensureApiKey();
@@ -97,14 +97,6 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
   }
   logEvent("setup_write", { target: "claude", file, backup, model: selectedModel, effort: normalizedEffort });
   return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, apiKeyHelper };
-}
-
-function codexConfigFile() {
-  return path.join(os.homedir(), ".codex", "config.toml");
-}
-
-function claudeSettingsFile() {
-  return path.join(os.homedir(), ".claude", "settings.json");
 }
 
 function codexStateFromDoc(doc, expectedBaseUrl) {
@@ -168,7 +160,7 @@ export function codexStatus() {
 }
 
 function claudeStateFromDoc(doc, expectedBaseUrl) {
-  const helperIsAerial = typeof doc?.apiKeyHelper === "string" && /\bkey\s+print\b/.test(doc.apiKeyHelper);
+  const helperIsAerial = isAerialKeyHelper(doc?.apiKeyHelper);
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
   const baseUrlMatches = baseUrl === expectedBaseUrl;
   const baseUrlAerialShape = typeof baseUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+/.test(baseUrl);

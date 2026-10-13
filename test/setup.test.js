@@ -1,4 +1,7 @@
 import test from "node:test";
+
+process.env.CODEX_HOME = "";
+process.env.CLAUDE_CONFIG_DIR = "";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -49,12 +52,12 @@ test("setupCodex writes responses provider without deleting existing content", (
   assert.match(content, /approval_policy = "never"/);
   assert.match(content, /wire_api = "responses"/);
   assert.match(content, /\[model_providers\.aerial\.auth\]/);
-  assert.match(content, /command = "aerial"/);
-  assert.match(content, /args = \[ "key", "print" \]/);
+  assert.equal(parseToml(content).model_providers.aerial.auth.command, process.execPath);
+  assert.match(content, /args = \[.*"--config-dir".*"key", "print" \]/);
   assert.doesNotMatch(content, /env_key = "AERIAL_API_KEY"/);
   assert.ok(result.backup);
   assert.equal(result.auth.type, "command");
-  assert.equal(result.auth.command, "aerial");
+  assert.equal(result.auth.command, process.execPath);
 });
 
 test("setupCodex writes root model keys before existing TOML sections", () => {

@@ -1,4 +1,7 @@
 import test, { beforeEach, mock } from "node:test";
+
+process.env.CODEX_HOME = "";
+process.env.CLAUDE_CONFIG_DIR = "";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
