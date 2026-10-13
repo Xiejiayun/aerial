@@ -50,6 +50,7 @@ test("document text remains counted while binary documents receive an allowance"
   const long = await count(payload({ type: "text", media_type: "text/plain", data: "text ".repeat(10000) }));
   assert.ok(long > short + 10000);
   assert.ok(await count(payload({ type: "base64", media_type: "application/pdf", data: "A".repeat(1_000_000) })) < 20000);
+  assert.ok(await count(payload({ type: "url", url: "https://example.test/report.pdf" })) > short + 8000);
 });
 
 test("invalid token-count requests fail instead of returning a misleading count", async () => {

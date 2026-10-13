@@ -12,6 +12,11 @@ export function estimateInputTokens(payload) {
         const { source, image_url, url, data, ...metadata } = value;
         return metadata;
       }
+      if (value.type === "document" && ["base64", "url"].includes(value.source?.type)) {
+        mediaTokens += BINARY_DOCUMENT_TOKENS;
+        const { source, ...metadata } = value;
+        return metadata;
+      }
       if (value.type === "base64" && typeof value.data === "string") {
         mediaTokens += value.media_type?.startsWith("image/") ? IMAGE_TOKENS : BINARY_DOCUMENT_TOKENS;
         const { data, ...metadata } = value;
