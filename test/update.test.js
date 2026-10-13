@@ -64,7 +64,7 @@ test("update pins the checked release, verifies installation, and explains the W
   assert.ok(install.args.includes("--force=false"));
   assert.equal(install.options.stdio, "inherit");
   assert.match(fixture.lines.join("\n"), /Updated Aerial: 0\.3\.3 -> 0\.3\.4/);
-  assert.match(fixture.lines.join("\n"), /Administrator terminal/);
+  assert.doesNotMatch(fixture.lines.join("\n"), /Administrator terminal/);
   assert.match(fixture.lines.join("\n"), /aerial service install\n  aerial service restart/);
 });
 

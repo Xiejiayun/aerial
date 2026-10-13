@@ -123,7 +123,7 @@ export function runUpdateCli(args, {
   }
   log(`Updated Aerial: ${current} -> ${installed}.`);
   if (platform === "win32" || platform === "darwin") {
-    log(`If you use the background service, run${platform === "win32" ? " in an Administrator terminal" : ""}:\n  aerial service install\n  aerial service restart`);
+    log("If you use the background service, run:\n  aerial service install\n  aerial service restart");
   }
   log("Restart any foreground Aerial process or service you manage yourself to load the new version.");
 }

@@ -30,7 +30,7 @@ aerial update           # install the latest stable release
 
 Updates use your configured npm registry and proxy settings. A registry mirror may serve an older version than the official npm site.
 
-After updating, run `aerial service install` and `aerial service restart` to refresh an existing background service and load the new code. On Windows, use an Administrator terminal for these service commands. Restart foreground processes or services you manage yourself as well.
+After updating, run `aerial service install` and `aerial service restart` to refresh an existing background service and load the new code. Restart foreground processes or services you manage yourself as well.
 
 ## Quick Start
 
@@ -66,7 +66,7 @@ During setup, Aerial reads your Copilot model list, shows the models that work f
 aerial service install
 ```
 
-On Windows, run this command from an Administrator PowerShell or Command Prompt. Aerial registers its background service with Task Scheduler, and Windows requires elevation for that registration step.
+On Windows, Aerial registers a Task Scheduler task for your current user with limited privileges. A normal terminal is sufficient unless your local policy restricts task creation.
 
 4. Check everything from one place:
 
@@ -138,7 +138,7 @@ Advanced override: `AERIAL_UPSTREAM_PROXY` can be set to a bare `http://`, `http
 aerial status           # setup, login, service, and health summary
 aerial update           # check for and install the latest stable release
 aerial proxy status     # upstream proxy mode, egress, and route visibility
-aerial service install  # install and start the background service (Windows: Administrator terminal required)
+aerial service install  # install and start the background service
 aerial doctor           # local diagnostics
 aerial teardown          # restore client configs and uninstall the service
 ```
@@ -159,7 +159,7 @@ Advanced service lifecycle commands are documented in `docs/usage.md`.
 ## Notes
 
 - macOS background service support uses a user LaunchAgent.
-- Windows background service support uses a user Task Scheduler task and runs without a terminal window. Failed runs restart automatically; the task has no time limit or battery restriction. Run `aerial service install` from an Administrator terminal to register it. After upgrading an older installation, run `aerial service install` and `aerial service restart` to apply the launcher and recovery settings.
+- Windows background service support uses a user Task Scheduler task and runs without a terminal window. Failed runs restart automatically; the task has no time limit or battery restriction. Run `aerial service install` from your normal terminal to register it. After upgrading an older installation, run `aerial service install` and `aerial service restart` to apply the launcher and recovery settings.
 - Linux service management is not built in yet; run `aerial start` or use your own init system.
 - Copilot inference routes are an observed compatibility target and may change upstream.
 

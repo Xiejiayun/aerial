@@ -7,7 +7,7 @@ import {
   WIN_TASK_NAME,
   aerialLogPath,
   buildSchtasksArgs,
-  buildSchtasksCreateArgs,
+  buildWindowsTaskRegistrationScript,
   cliEntry,
   darwinWrapperPath,
   explicitConfigDir,
@@ -142,10 +142,11 @@ function darwinBootout(ctx) {
 }
 
 function windowsConfigureRecovery(ctx) {
-  // schtasks /Create cannot express these settings. Update only Settings so
-  // the registered user, logon trigger, and hidden launcher stay intact.
+  // Update only Settings so the registered user, logon trigger, and hidden
+  // launcher stay intact when refreshing a running service definition.
   const script = [
     "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
     `$task = Get-ScheduledTask -TaskName '${WIN_TASK_NAME}' -TaskPath '\\'`,
     "$settings = $task.Settings",
     "$settings.RestartInterval = 'PT1M'",
@@ -174,8 +175,8 @@ function windowsWriteDefinition(ctx) {
     backups: logCfg.backups
   });
   atomicWriteFile(wrapper, wrapperContent);
-  const args = buildSchtasksCreateArgs({ wrapperPath: wrapper });
-  const create = ctx.run("schtasks.exe", args);
+  const script = buildWindowsTaskRegistrationScript({ wrapperPath: wrapper });
+  const create = ctx.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
   const recovery = create.status === 0 ? windowsConfigureRecovery(ctx) : undefined;
   return { wrapper, create, recovery };
 }

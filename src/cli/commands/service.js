@@ -64,7 +64,7 @@ export async function runServiceCli(subcommand, rest) {
       if (r.taskName) console.log(`  task: ${r.taskName}`);
       if (r.wrapper) console.log(`  wrapper: ${r.wrapper}`);
       if (r.bootstrap?.stderr) console.log(`  bootstrap stderr: ${r.bootstrap.stderr.trim()}`);
-      if (r.create?.stderr) console.log(`  schtasks stderr: ${r.create.stderr.trim()}`);
+      if (r.create?.stderr) console.log(`  task registration: ${r.create.stderr.trim()}`);
       if (r.recovery?.stderr) console.log(`  recovery settings stderr: ${r.recovery.stderr.trim()}`);
       if (r.run?.stderr) console.log(`  schtasks /Run stderr: ${r.run.stderr.trim()}`);
       printServiceDiagnostics(r.diagnostics);
