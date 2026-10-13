@@ -168,7 +168,11 @@ export function verifyGitState({ mode, version, eventName, githubRef, runCommand
 
 function publishedVersionsFrom(value) {
   const raw = Array.isArray(value) ? value : [value];
-  return raw.filter((version) => typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version));
+  const historyVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+  if (!raw.length || raw.some((version) => typeof version !== "string" || !historyVersion.test(version))) {
+    fail("invalid published version history; registry state is unknown");
+  }
+  return raw.filter((version) => /^\d+\.\d+\.\d+$/.test(version));
 }
 
 function registryLookup(runCommand, ...viewArgs) {
@@ -214,6 +218,9 @@ export function runReleasePreflight({
   const targetSpec = `${PACKAGE_NAME}@${version}`;
   const targetLookup = requireRegistryResult(registryLookup(runCommand, targetSpec), `target lookup failed for ${targetSpec}`);
   if (targetLookup.state === "missing") {
+    if (publishedVersions.includes(version)) {
+      fail(`${targetSpec} already appears in npm version history; E404 does not make it reusable`);
+    }
     return { mode, version, head: git.head, shouldPublish: true, registryState: "missing", publishedVersions };
   }
   if (mode === "new-release") {

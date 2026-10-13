@@ -118,6 +118,35 @@ test("new-release rejects reuse even when npm gitHead matches", () => {
   assert.throws(() => runReleasePreflight({ cwd: tempManifests(), mode: "new-release", runCommand }), /never reuses/);
 });
 
+test("release preflight rejects an E404 target already present in version history", (t) => {
+  const cwd = tempManifests();
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  for (const mode of ["new-release", "workflow"]) {
+    assert.throws(() => runReleasePreflight({
+      cwd,
+      mode,
+      eventName: "workflow_dispatch",
+      githubRef: "refs/heads/main",
+      runCommand: fakeRunner({ versions: ["0.2.9", "0.3.1"] })
+    }), /already appears in npm version history/);
+  }
+});
+
+test("release preflight rejects malformed successful version histories", (t) => {
+  const cwd = tempManifests();
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  for (const versions of [null, {}, [], true, "", [42], ["0.2.9", "invalid"]]) {
+    assert.throws(() => runReleasePreflight({
+      cwd, mode: "new-release", runCommand: fakeRunner({ versions })
+    }), /invalid published version history/);
+  }
+  for (const versions of ["0.2.9", ["0.2.9", "0.3.1-rc.1"]]) {
+    assert.equal(runReleasePreflight({
+      cwd, mode: "new-release", runCommand: fakeRunner({ versions })
+    }).shouldPublish, true);
+  }
+});
+
 test("new-release rejects non-monotonic versions, dirty files, stale main, and existing tags", () => {
   assert.throws(() => runReleasePreflight({ cwd: tempManifests(), mode: "new-release", runCommand: fakeRunner({ versions: ["0.3.2"] }) }), /not newer/);
   assert.throws(() => runReleasePreflight({ cwd: tempManifests(), mode: "new-release", runCommand: fakeRunner({ dirty: true }) }), /dirty/);
