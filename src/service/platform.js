@@ -124,6 +124,23 @@ function darwinBootout(ctx) {
   return ctx.run("launchctl", ["bootout", `gui/${uidString()}`, file]);
 }
 
+function windowsConfigureRecovery(ctx) {
+  // schtasks /Create cannot express these settings. Update only Settings so
+  // the registered user, logon trigger, and hidden launcher stay intact.
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$task = Get-ScheduledTask -TaskName '${WIN_TASK_NAME}' -TaskPath '\\'`,
+    "$settings = $task.Settings",
+    "$settings.RestartInterval = 'PT1M'",
+    "$settings.RestartCount = 999",
+    "$settings.ExecutionTimeLimit = 'PT0S'",
+    "$settings.DisallowStartIfOnBatteries = $false",
+    "$settings.StopIfGoingOnBatteries = $false",
+    `Set-ScheduledTask -TaskName '${WIN_TASK_NAME}' -TaskPath '\\' -Settings $settings | Out-Null`
+  ].join("\r\n");
+  return ctx.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
+}
+
 function windowsWriteDefinition(ctx) {
   const wrapper = winWrapperPath();
   const config = loadConfig();
@@ -142,7 +159,8 @@ function windowsWriteDefinition(ctx) {
   atomicWriteFile(wrapper, wrapperContent);
   const args = buildSchtasksCreateArgs({ wrapperPath: wrapper });
   const create = ctx.run("schtasks.exe", args);
-  return { wrapper, create };
+  const recovery = create.status === 0 ? windowsConfigureRecovery(ctx) : undefined;
+  return { wrapper, create, recovery };
 }
 
 export function removeFileIfExists(file) {
@@ -241,9 +259,18 @@ export function serviceAdapter(ctx) {
         const info = {
           taskName: WIN_TASK_NAME,
           wrapper: written.wrapper,
-          create: { status: written.create.status, stderr: written.create.stderr }
+          create: { status: written.create.status, stderr: written.create.stderr },
+          ...(written.recovery ? { recovery: { status: written.recovery.status, stderr: written.recovery.stderr } } : {})
         };
-        return { ok: written.create.status === 0, info };
+        const recoveryFailed = written.create.status === 0 && written.recovery?.status !== 0;
+        return {
+          ok: written.create.status === 0 && !recoveryFailed,
+          ...(recoveryFailed ? {
+            reason: "recovery_configuration_failed",
+            message: "Task was registered, but its recovery settings could not be applied. Service was not started. Resolve the PowerShell error and rerun `aerial service install`."
+          } : {}),
+          info
+        };
       },
       triggerStart: () => ctx.run("schtasks.exe", buildSchtasksArgs("run")),
       triggerStop: () => windowsStop(ctx),

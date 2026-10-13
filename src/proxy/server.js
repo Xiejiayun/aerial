@@ -234,6 +234,12 @@ export function createServer(runtime = {}) {
   });
 
   server.on("upgrade", (req, socket) => {
+    // Node hands ownership of the raw socket to the upgrade handler. Keep an
+    // error listener until it closes, including while sending the rejection.
+    socket.on("error", (error) => {
+      socket.destroy();
+      logEvent("websocket_socket_error", { path: req.url, code: error.code, error: error.message });
+    });
     logEvent("websocket_unsupported", { path: req.url });
     socket.end("HTTP/1.1 501 Not Implemented\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n{\"error\":{\"type\":\"not_implemented\",\"message\":\"Aerial does not expose a client WebSocket. Use HTTP POST /v1/responses; the upstream ws:/responses path is an internal opt-in transport (AERIAL_RESPONSES_WEBSOCKET=on) and is never proxied to clients.\"}}");
   });

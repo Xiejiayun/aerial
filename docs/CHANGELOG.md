@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-13
+
+### Fixed
+
+- Handle client WebSocket upgrade socket errors, including `ECONNRESET` and `EPIPE`, so a failed connection is closed without terminating the proxy. The normal HTTP 501 rejection is unchanged.
+- Restart an unsuccessfully exited Windows service process after one minute, up to 999 retries. The wrapper stays under Task Scheduler supervision during the retry delay so explicitly stopping the service also stops recovery.
+- Configure the Windows task to retry startup failures every minute, up to 999 attempts, with no execution time limit and no battery-related start or stop restrictions.
+- Fail Windows service installation if recovery settings cannot be applied, report the configuration error, and avoid starting a task with incomplete settings.
+
+### Upgrade
+
+- Existing Windows installations must run `aerial service install` from an Administrator terminal, then `aerial service restart`, to apply the recovery settings and load the updated code.
+
 ## [0.3.3] - 2026-09-14
 
 ### Fixed

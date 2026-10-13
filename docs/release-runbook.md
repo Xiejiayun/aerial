@@ -602,6 +602,18 @@ recorded with an explicit, signed-off risk acceptance does not block.
 - [ ] With Windows Terminal configured as the default terminal, installing
   and starting the service creates no visible terminal window. Closing the
   installation terminal leaves the service healthy.
+- [ ] Inspect `Get-ScheduledTask -TaskName AerialLocalProxy -TaskPath '\'`:
+  its settings must contain `RestartInterval = PT1M`, `RestartCount = 999`,
+  `ExecutionTimeLimit = PT0S`, `DisallowStartIfOnBatteries = false`, and
+  `StopIfGoingOnBatteries = false`. Registration and recovery configuration
+  must both succeed before install attempts `/Run`. A failed settings update
+  must report `recovery_configuration_failed` and its PowerShell diagnostics.
+- [ ] On an isolated service instance, force the Node child to exit with a
+  non-zero status. Confirm the wrapper restarts Node after one minute with a
+  new PID and a healthy endpoint, while the scheduled task remains running.
+  After `aerial service stop`, wait longer than the restart interval and
+  confirm that it stays stopped. Repeat stop while the wrapper is waiting
+  to retry a failed Node process and confirm recovery is also stopped.
 - [ ] `powershell -NoProfile -Command "Get-Content
   '$env:APPDATA\aerial\bin\aerial-service.ps1' -Raw |
   Out-Null"` exits 0 (PowerShell parses the wrapper without running

@@ -172,6 +172,9 @@ export function renderWindowsWrapper({ nodePath, cliPath, host, port, stdioLog, 
     "$aerialDir = Split-Path -Parent $aerialLog",
     "if (-not (Test-Path -LiteralPath $stdioDir)) { New-Item -ItemType Directory -Path $stdioDir | Out-Null }",
     "if (-not (Test-Path -LiteralPath $aerialDir)) { New-Item -ItemType Directory -Path $aerialDir | Out-Null }",
+    "$retryCount = 0",
+    "while ($true) {",
+    "$ErrorActionPreference = 'Stop'",
     "if (Test-Path -LiteralPath $stdioLog) {",
     "  $size = (Get-Item -LiteralPath $stdioLog).Length",
     "  if ($size -gt $maxBytes) {",
@@ -197,7 +200,14 @@ export function renderWindowsWrapper({ nodePath, cliPath, host, port, stdioLog, 
   lines.push("$ErrorActionPreference = 'Continue'");
   lines.push("$LASTEXITCODE = 1");
   lines.push("& $node $cli start --host $serviceHost --port $servicePort *>> $stdioLog");
-  lines.push("exit $LASTEXITCODE");
+  // Task Scheduler recovery covers task launch failures but does not reliably
+  // retry a running program's nonzero exit. Keep the managed process tree alive
+  // while waiting so an explicit service stop also cancels the next attempt.
+  lines.push("if ($LASTEXITCODE -eq 0 -or $retryCount -ge 999) { exit $LASTEXITCODE }");
+  lines.push("$retryCount += 1");
+  lines.push("Add-Content -LiteralPath $stdioLog -Value (\"aerial: process exited {0}; retry {1}/999 in 60 seconds.\" -f $LASTEXITCODE, $retryCount)");
+  lines.push("Start-Sleep -Seconds 60");
+  lines.push("}");
   lines.push("");
   // Windows PowerShell 5.1 needs a BOM to read non-ASCII paths as UTF-8.
   return "\uFEFF" + lines.join("\r\n");

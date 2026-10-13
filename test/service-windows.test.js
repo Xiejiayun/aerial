@@ -10,7 +10,7 @@ import { renderWindowsWrapper } from "../src/service/wrapper-render.js";
 
 const windowsOnly = { skip: process.platform !== "win32", timeout: 30_000 };
 
-async function exerciseWrapper(t, directoryName, { viaLauncher = false, childExitCode = 23 } = {}) {
+async function exerciseWrapper(t, directoryName, { viaLauncher = false, childExitCode = 0 } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-windows-wrapper-"));
   const fixtureDir = path.join(temp, directoryName);
   const configDir = path.join(fixtureDir, "config");
@@ -119,14 +119,34 @@ const waitForRelease = setInterval(async () => {
   }
 }
 
-test("Windows wrapper waits, appends both output streams beyond pipe buffers, and preserves the child exit code", windowsOnly, async (t) => {
+test("Windows wrapper waits, appends both output streams beyond pipe buffers, and preserves a clean exit", windowsOnly, async (t) => {
   await exerciseWrapper(t, "O'Hara service");
 });
 
-test("Windows launcher waits, preserves a failure exit code, and passes Unicode paths and environment", windowsOnly, async (t) => {
+test("Windows launcher waits and passes Unicode paths and environment", windowsOnly, async (t) => {
   await exerciseWrapper(t, "O'Hara 中文 service", { viaLauncher: true });
 });
 
 test("Windows launcher returns success after the child finishes despite stderr output", windowsOnly, async (t) => {
   await exerciseWrapper(t, "successful service", { viaLauncher: true, childExitCode: 0 });
+});
+
+test("Windows launcher propagates a wrapper failure exit code", windowsOnly, async (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-launcher-failure-"));
+  const wrapperPath = path.join(temp, "failed wrapper.ps1");
+  fs.writeFileSync(wrapperPath, "\uFEFFexit 23\r\n");
+  const launcherPath = fileURLToPath(new URL("../src/service/windows-launcher.js", import.meta.url));
+  const wrapper = spawn("wscript.exe", ["//B", "//NoLogo", "//E:JScript", launcherPath, wrapperPath], {
+    stdio: "ignore", windowsHide: true
+  });
+  const closed = new Promise((resolve, reject) => {
+    wrapper.once("error", reject);
+    wrapper.once("close", resolve);
+  });
+  t.after(async () => {
+    if (wrapper.exitCode === null && wrapper.signalCode === null) wrapper.kill();
+    await closed;
+    fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  assert.equal(await closed, 23);
 });
