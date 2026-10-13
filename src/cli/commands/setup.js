@@ -45,6 +45,8 @@ async function selectSetupOptions(target, route, args) {
   console.log(formatEffortSelection({
     target,
     effort: effortChoice.effort,
+    requestedEffort: effortChoice.requestedEffort,
+    reason: effortChoice.reason,
     source: effortChoice.source,
     supportedEfforts: effortChoice.supportedEfforts
   }));
@@ -115,7 +117,7 @@ export async function runSetupCli(subcommand, rest) {
       aerialDefaultEffort: config.defaultEffort || "missing",
       backup: result.backup,
       auth: "apiKeyHelper local Aerial key",
-      notes: ["effort is written to Claude settings.json effortLevel and mirrored to Aerial defaultEffort for proxy fallback."]
+      notes: ["Restart Claude Code to reload the model mapping and saved per-model effort."]
     });
     return;
   }

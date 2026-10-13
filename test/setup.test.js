@@ -175,7 +175,7 @@ test("setupCodex/setupClaude with invalid effort have no side effects on a fresh
     assert.equal(fs.existsSync(freshConfigDir), false, "AERIAL_CONFIG_DIR must not be created");
     assert.equal(fs.existsSync(path.join(freshTemp, ".codex", "config.toml")), false, "codex config must not be written");
 
-    assert.throws(() => setupClaude({ model: "claude-test", effort: "turbo" }), /Invalid --effort/);
+    assert.throws(() => setupClaude({ model: "claude-opus-4.7", effort: "turbo" }), /Invalid --effort/);
     assert.equal(fs.existsSync(freshConfigDir), false, "AERIAL_CONFIG_DIR must not be created by setupClaude either");
     assert.equal(fs.existsSync(path.join(freshTemp, ".claude", "settings.json")), false, "claude settings must not be written");
   } finally {
@@ -185,11 +185,13 @@ test("setupCodex/setupClaude with invalid effort have no side effects on a fresh
   }
 });
 
-test("setupClaude writes native effortLevel and updates Aerial defaultEffort", () => {
+test("setupClaude writes native identity and per-model effort", () => {
   saveConfig({ ...loadConfig(), defaultEffort: "medium" });
-  const result = setupClaude({ model: "claude-test", effort: "low" });
+  const result = setupClaude({ model: "claude-opus-4.7", effort: "low" });
   const settings = JSON.parse(fs.readFileSync(result.file, "utf8"));
-  assert.equal(settings.model, "claude-test");
+  assert.equal(settings.model, "claude-opus-4-7");
+  assert.equal(settings.modelOverrides["claude-opus-4-7"], "claude-opus-4.7");
+  assert.equal(settings.modelSettings["claude-opus-4-7"].effortLevel, "low");
   assert.equal(settings.effortLevel, "low");
   assert.equal(settings.effort, undefined);
   assert.equal(settings.reasoning_effort, undefined);
@@ -197,18 +199,18 @@ test("setupClaude writes native effortLevel and updates Aerial defaultEffort", (
   assert.equal(loadConfig().defaultEffort, "low");
 });
 
-test("setupClaude preserves max and normalizes ultracode for compatible settings", () => {
+test("setupClaude resolves session-only efforts before writing persistent settings", () => {
   saveConfig({ ...loadConfig(), defaultEffort: "medium" });
-  const result = setupClaude({ model: "claude-test", effort: "max" });
+  const result = setupClaude({ model: "claude-opus-4.7", effort: "max" });
   const settings = JSON.parse(fs.readFileSync(result.file, "utf8"));
-  assert.equal(settings.effortLevel, "max");
-  assert.equal(result.effort, "max");
-  assert.equal(loadConfig().defaultEffort, "max");
+  assert.equal(settings.effortLevel, "xhigh");
+  assert.equal(result.effort, "xhigh");
+  assert.equal(loadConfig().defaultEffort, "xhigh");
 
-  const ultracode = setupClaude({ model: "claude-test", effort: "ultracode" });
+  const ultracode = setupClaude({ model: "claude-opus-4.7", effort: "ultracode" });
   const nextSettings = JSON.parse(fs.readFileSync(ultracode.file, "utf8"));
-  assert.equal(nextSettings.effortLevel, "max");
-  assert.equal(ultracode.effort, "max");
+  assert.equal(nextSettings.effortLevel, "xhigh");
+  assert.equal(ultracode.effort, "xhigh");
 });
 
 test("setupStatus exposes additive effort field with canonical or 'missing'", () => {
@@ -217,7 +219,7 @@ test("setupStatus exposes additive effort field with canonical or 'missing'", ()
   const status = setupStatus();
   assert.equal(status.schema, "aerial.setup-status.v1");
   assert.equal(status.clients.codex.effort, "xhigh");
-  assert.equal(status.clients.claude.effort, "max");
+  assert.equal(status.clients.claude.effort, "xhigh");
 });
 
 test("setupStatus prefers Claude effortLevel over Aerial defaultEffort", () => {

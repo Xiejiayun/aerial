@@ -4,6 +4,7 @@ import { proxyModels } from "../proxy/index.js";
 import { readJsonSafely } from "../shared/utils.js";
 import { modelsForRoute } from "../proxy/models.js";
 import { codexStatus, claudeStatus } from "../setup/clients.js";
+import { claudeSetupEfforts, resolveClaudeSetupEffort } from "../setup/claude-model.js";
 import {
   CODEX_EFFORT_VALUES,
   DEFAULT_EFFORT,
@@ -232,7 +233,7 @@ export async function discoverModelsForRoute(route) {
 function currentModelFor(target) {
   try {
     const status = target === "Codex" ? codexStatus() : claudeStatus();
-    return typeof status.model === "string" ? status.model : undefined;
+    return typeof status.model === "string" ? (status.upstreamModel || status.model) : undefined;
   } catch {
     return undefined;
   }
@@ -272,10 +273,6 @@ function effortUsage(target, candidates, restricted) {
   if (target !== "Codex") return CLAUDE_EFFORT_USAGE;
   if (!restricted) return target === "Codex" ? CODEX_EFFORT_USAGE : CLAUDE_EFFORT_USAGE;
   return `<${candidates.join("|")}>`;
-}
-
-function claudeSettingEffort(effort) {
-  return effort === "ultracode" ? "max" : effort;
 }
 
 function defaultEffortFor(candidates) {
@@ -368,9 +365,9 @@ export async function chooseSetupEffort({
   const isCodex = target === "Codex";
   const restrictedEfforts = isCodex
     ? normalizeCodexEffortCandidates(supportedEfforts)
-    : normalizeEffortCandidates(supportedEfforts);
+    : claudeSetupEfforts(model, supportedEfforts);
   const restricted = restrictedEfforts.length > 0;
-  const globalEfforts = isCodex ? CODEX_EFFORT_VALUES : EFFORT_VALUES;
+  const globalEfforts = isCodex ? CODEX_EFFORT_VALUES : [];
   const candidates = restricted ? restrictedEfforts : globalEfforts;
   if (explicitEffort !== undefined) {
     if (isCodex) {
@@ -378,20 +375,25 @@ export async function chooseSetupEffort({
       const resolved = resolveCodexEffort(requested, supportedEfforts);
       return {
         effort: resolved.resolvedEffort,
+        requestedEffort: requested,
+        reason: resolved.reason,
         source: "explicit",
         displayed: false,
         supportedEfforts: restricted ? candidates : undefined
       };
     }
     const requested = assertValidEffort(explicitEffort);
-    const resolved = resolveClaudeEffort(requested, supportedEfforts);
+    const resolved = resolveClaudeSetupEffort(requested, model, supportedEfforts);
     return {
-      effort: claudeSettingEffort(resolved.resolvedEffort),
+      effort: resolved.resolvedEffort,
+      requestedEffort: requested,
+      reason: resolved.reason,
       source: "explicit",
       displayed: false,
       supportedEfforts: restricted ? candidates : undefined
     };
   }
+  if (!candidates.length) return { effort: undefined, source: "model_default", reason: "no_verified_persistent_effort", displayed: false };
   const shouldPrompt = prompt === undefined ? Boolean(inputStream.isTTY) : prompt;
   if (!shouldPrompt) {
     return { effort: defaultEffortFor(candidates), source: "default_non_tty", displayed: false, supportedEfforts: restricted ? candidates : undefined };
@@ -416,11 +418,20 @@ export async function chooseSetupEffort({
   if (cancelled) throw new Error(`${target} setup cancelled.`);
   const effort = isCodex
     ? resolveCodexEffort(item.value, supportedEfforts).resolvedEffort
-    : claudeSettingEffort(resolveClaudeEffort(item.value, supportedEfforts).resolvedEffort);
+    : resolveClaudeSetupEffort(item.value, model, supportedEfforts).resolvedEffort;
   return { effort, source: "prompt", displayed: true, supportedEfforts: restricted ? candidates : undefined };
 }
 
-export function formatEffortSelection({ target, effort, source, supportedEfforts }) {
+export function formatEffortSelection({ target, effort, requestedEffort, reason, source, supportedEfforts }) {
+  if (source === "model_default") return `${target} effort: client default (no verified persistent effort support for this model).`;
+  if (requestedEffort && requestedEffort !== effort) {
+    const reasons = {
+      max_is_session_only: "max cannot be saved in Claude settings; use claude --effort max for a single session",
+      ultracode_is_workflow_mode: "ultracode is a Claude workflow mode; setup saves an API effort level",
+      client_and_model_capabilities: "limited by Claude Code and the selected model"
+    };
+    return `Selected ${target} effort: ${requestedEffort} -> ${effort} (${reasons[reason] || "limited by the selected model"}).`;
+  }
   if (source === "explicit") return `Selected ${target} effort: ${effort}`;
   if (source === "prompt") return `Selected ${target} effort: ${effort}`;
   const restrictedEfforts = target === "Codex"

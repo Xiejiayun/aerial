@@ -3,13 +3,14 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
-import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort, normalizeEffort } from "../shared/effort.js";
+import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort } from "../shared/effort.js";
 import { backupIfExists, backupPathsFor } from "./restore.js";
 import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection } from "./toml.js";
 import { writeClientTakeover } from "./takeover.js";
 import { codexConfigFile, claudeSettingsFile } from "../shared/paths.js";
 import { codexAuthCommand, claudeApiKeyHelper, isAerialKeyHelper } from "./auth-helper.js";
 import { localBaseUrl } from "../shared/urls.js";
+import { claudeNativeModel, claudeModelSettingsKey, claudeSavedEffort, resolveClaudeSetupEffort } from "./claude-model.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -73,12 +74,14 @@ export function setupCodex({ model, effort, authCommand = codexAuthCommand() } =
   return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
-export function setupClaude({ model, effort, apiKeyHelper = claudeApiKeyHelper() } = {}) {
+export function setupClaude({ model, effort, supportedEfforts, apiKeyHelper = claudeApiKeyHelper() } = {}) {
   const requestedEffort = effort === undefined ? undefined : assertValidEffort(effort);
-  const normalizedEffort = requestedEffort === "ultracode" ? "max" : requestedEffort;
-  ensureApiKey();
   const config = loadConfig();
   const selectedModel = model || config.defaultModel;
+  const clientModel = claudeNativeModel(selectedModel) || selectedModel;
+  const effortResolution = requestedEffort === undefined ? undefined : resolveClaudeSetupEffort(requestedEffort, selectedModel, supportedEfforts);
+  const normalizedEffort = effortResolution?.resolvedEffort;
+  ensureApiKey();
   const file = claudeSettingsFile();
   ensureParent(file);
   const original = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
@@ -89,15 +92,22 @@ export function setupClaude({ model, effort, apiKeyHelper = claudeApiKeyHelper()
     apiKeyHelper,
     env: claudeEnvForAerial(current.env, config)
   };
-  if (selectedModel) next.model = selectedModel;
-  if (normalizedEffort) next.effortLevel = normalizedEffort;
+  if (clientModel) {
+    next.model = clientModel;
+    next.modelOverrides = { ...current.modelOverrides, [clientModel]: selectedModel };
+  }
+  if (normalizedEffort) {
+    next.effortLevel = normalizedEffort;
+    const key = claudeModelSettingsKey(clientModel);
+    next.modelSettings = { ...current.modelSettings, [key]: { ...current.modelSettings?.[key], effortLevel: normalizedEffort } };
+  }
   const backup = backupIfExists(file);
   const takeover = writeClientTakeover({ target: "claude", file, original, next: `${JSON.stringify(next, null, 2)}\n`, backups: backupPathsFor(file) });
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
-    saveConfig({ ...config, defaultEffort: normalizedEffort });
+    saveConfig({ ...loadConfig(), defaultEffort: normalizedEffort });
   }
   logEvent("setup_write", { target: "claude", file, backup, model: selectedModel, effort: normalizedEffort });
-  return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, apiKeyHelper };
+  return { file, backup, ...takeover, model: selectedModel, clientModel, effort: normalizedEffort, effortResolution, apiKeyHelper };
 }
 
 function codexStateFromDoc(doc, expectedBaseUrl) {
@@ -177,20 +187,21 @@ export function claudeStatus() {
   const expectedBaseUrl = localBaseUrl(config);
   const file = claudeSettingsFile();
   const backups = backupPathsFor(file);
-  const fallbackEffort = typeof config.defaultEffort === "string" && config.defaultEffort.trim() ? config.defaultEffort.trim() : "missing";
-  if (!fs.existsSync(file)) return { target: "claude", state: "missing", file, backups, effort: fallbackEffort };
+  if (!fs.existsSync(file)) return { target: "claude", state: "missing", file, backups, effort: "missing" };
   let doc;
   try {
     doc = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (err) {
-    return { target: "claude", state: "invalid", file, backups, error: err.message, effort: fallbackEffort };
+    return { target: "claude", state: "invalid", file, backups, error: err.message, effort: "missing" };
   }
-  const state = claudeStateFromDoc(doc, expectedBaseUrl);
+  let state = claudeStateFromDoc(doc, expectedBaseUrl);
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
-  const settingsEffort = typeof doc?.effortLevel === "string" ? normalizeEffort(doc.effortLevel) : undefined;
-  const effort = settingsEffort || fallbackEffort;
-  return { target: "claude", state, file, backups, model, baseUrl, effort };
+  const savedEffort = claudeSavedEffort(doc);
+  const needsMigration = savedEffort.invalidEffort !== undefined || claudeNativeModel(model) && claudeNativeModel(model) !== model;
+  if (state === "aerial" && needsMigration) state = "aerial-drift";
+  return { target: "claude", state, file, backups, model, upstreamModel: doc?.modelOverrides?.[model] || model, baseUrl, ...savedEffort,
+    ...(needsMigration ? { migration: "run aerial setup claude" } : {}) };
 }
 
 function validateTomlBackup(content) {

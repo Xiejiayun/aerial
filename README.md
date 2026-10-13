@@ -110,7 +110,7 @@ aerial setup codex --model <responses-model-id> --effort <minimal|low|medium|hig
 aerial setup claude --model <messages-model-id> --effort <low|medium|high|xhigh|max|ultracode>
 ```
 
-Codex and Claude effort are model-aware. Aerial preserves an effort when the selected Copilot model advertises it and otherwise selects the nearest usable effort, preferring the highest level below the request. Codex `minimal` maps to Copilot `none`; `none` is also accepted as an input alias. Claude Code supports native `max` and accepts `ultracode`; setup persists `max` or the nearest model-supported lower effort so older Claude Code releases can still read the setting.
+Codex and Claude effort choices follow the selected model's capabilities, preferring the nearest supported lower level. Codex `minimal` maps to Copilot `none`; `none` is also accepted as an input alias. Claude setup uses a native model identity mapped to the Copilot ID and saves per-model effort (`low`, `medium`, `high`, or `xhigh`; Claude Code 2.1.251+). `max` is session-only: setup reports the requested-to-saved change, while `claude --effort max` still works when the upstream model supports it. The legacy `ultracode` setup input resolves to an effort up to `xhigh`; it does not enable Claude's workflow mode.
 
 To inspect the full model matrix:
 
