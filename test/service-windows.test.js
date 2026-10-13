@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { renderWindowsWrapper } from "../src/service/wrapper-render.js";
 
-// A cold PowerShell/Add-Type startup can exceed ten seconds on a busy hosted
+// A cold PowerShell startup can exceed ten seconds on a busy hosted
 // Windows runner. Budget startup separately from the fixture's 20s work limit.
 const startupTimeoutMs = 30_000;
 const windowsOnly = { skip: process.platform !== "win32", timeout: 60_000 };
