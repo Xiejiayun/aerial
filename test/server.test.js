@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { once } from "node:events";
+import { spawnSync } from "node:child_process";
 
 process.env.AERIAL_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-server-test-"));
 process.env.AERIAL_API_KEY = "aerial_test_key";
@@ -80,6 +81,59 @@ test("server rejects websocket upgrade explicitly", async () => {
   assert.match(data, /internal opt-in transport/);
   assert.doesNotMatch(data, /WebSocket Responses is not implemented/);
 });
+
+for (const timing of ["during response", "after response"]) {
+  test(`websocket socket errors ${timing} close only the failed connection`, () => {
+    // Run outside the test runner: an unhandled Socket error must really exit
+    // the child, not get intercepted by a test-level uncaughtException hook.
+    const script = `
+      import assert from "node:assert/strict";
+      import net from "node:net";
+      import { once } from "node:events";
+      import { createServer } from ${JSON.stringify(new URL("../src/proxy/server.js", import.meta.url).href)};
+      const server = createServer();
+      let failedSocket;
+      let injected;
+      const injection = new Promise((resolve) => { injected = resolve; });
+      server.prependOnceListener("upgrade", (_req, socket) => {
+        failedSocket = socket;
+        const fail = () => {
+          socket.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+          // Keep handling errors until the socket has fully closed.
+          socket.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+          injected();
+        };
+        if (${JSON.stringify(timing)} === "during response") {
+          socket.end = () => { fail(); return socket; };
+        } else {
+          setImmediate(fail);
+        }
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address();
+      const client = net.createConnection({ host: "127.0.0.1", port });
+      client.on("error", () => {});
+      client.resume();
+      client.write("GET /v1/responses HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n");
+      await injection;
+      assert.equal(failedSocket.destroyed, true);
+      const response = await fetch("http://127.0.0.1:" + port + "/health", { signal: AbortSignal.timeout(2000) });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).service, "aerial");
+      client.destroy();
+      server.close();
+      await once(server, "close");
+    `;
+    const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+      encoding: "utf8",
+      timeout: 10_000,
+      windowsHide: true
+    });
+    assert.ifError(child.error);
+    assert.equal(child.status, 0, child.stderr);
+  });
+}
 
 test("GET / serves friendly status without requiring the Aerial API key", async () => {
   const server = createServer();
