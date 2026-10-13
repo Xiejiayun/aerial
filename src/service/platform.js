@@ -46,12 +46,29 @@ function darwinServiceState(ctx) {
   };
 }
 
-function windowsServiceState(ctx) {
-  const r = ctx.run("schtasks.exe", buildSchtasksArgs("query"));
-  if (r.status !== 0) return { installed: false, loaded: false };
-  const statusMatch = /Status:\s*(\S+)/i.exec(r.stdout);
-  const status = statusMatch ? statusMatch[1].trim() : undefined;
-  return { installed: true, loaded: status === "Running", status };
+export function windowsServiceState(ctx) {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$scheduler = New-Object -ComObject 'Schedule.Service'",
+    "$scheduler.Connect()",
+    `$tasks = @($scheduler.GetFolder('\\').GetTasks(1) | Where-Object { $_.Name -eq '${WIN_TASK_NAME}' })`,
+    "if ($tasks.Count -eq 0) {",
+    "  @{ installed = $false } | ConvertTo-Json -Compress",
+    "} else {",
+    "  $task = $tasks[0]",
+    "  @{ installed = $true; state = [int]$task.State } | ConvertTo-Json -Compress",
+    "}"
+  ].join("\r\n");
+  const r = ctx.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
+  if (r.status !== 0) throw new Error(`Could not read Windows scheduled task state. No service action was performed. ${r.stderr || r.error?.message || `PowerShell exited ${r.status}`}`);
+  let result;
+  try { result = JSON.parse(r.stdout); } catch { /* Reject ambiguous state. */ }
+  if (result?.installed === false) return { installed: false, loaded: false };
+  const states = { 1: "Disabled", 2: "Queued", 3: "Ready", 4: "Running" };
+  if (result?.installed !== true || !Number.isInteger(result.state) || !states[result.state]) {
+    throw new Error("Could not read Windows scheduled task state: invalid numeric state. No service action was performed.");
+  }
+  return { installed: true, loaded: result.state === 4 || result.state === 2, status: states[result.state], state: result.state };
 }
 
 function windowsStop(ctx) {
