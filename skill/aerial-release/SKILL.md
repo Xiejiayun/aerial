@@ -130,7 +130,7 @@ Apply these recovery rules:
 | Workflow target exists with matching `gitHead` | Skip publish and rerun verification; this is the idempotent recovery path. |
 | Workflow target has missing or different `gitHead` | Stop; never overwrite or republish the slot. |
 | `npm publish` succeeds but install smoke reports ETARGET | Verify official-registry metadata and provenance, then rerun failed jobs against the same commit/tag. |
-| Tag exists or points elsewhere | Stop; never move it. |
+| A tag already exists in local `new-release` mode, or points elsewhere in either workflow path | Stop; never move it. Same-commit workflow recovery preserves the existing tag. |
 
 ## 7. Verify the public release
 

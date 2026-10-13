@@ -111,6 +111,14 @@ client compatibility and onboarding. Its final local full suite has 499 tests:
 CI matrix cover those Windows-host skips. Package, secret, syntax, CLI and
 dependency gates also pass. No version is published between milestones.
 
+PR #15 merged milestone 3 after all seven required checks passed. The final
+0.3.6 candidate adds the release safeguards above and passes 507 local tests
+(495 passed, 12 platform skips, zero failures), syntax/package/secret checks,
+pack and CLI smoke, dependency audit, and actionlint. GitHub's macOS ARM pool
+failed to acquire runners, so CI and Release use standard macOS 15 Intel
+runners with the same complete tests, native service lifecycle, and required
+check names. The PR checks remain mandatory before the final release.
+
 Tests use synthetic credentials and mock inference; they do not prove that
 every Copilot account has access to every route. Normal setup now verifies the
 selected route against the user's own running proxy. Project/managed client
