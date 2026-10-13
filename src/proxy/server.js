@@ -215,6 +215,10 @@ export function createServer(runtime = {}) {
       const fetchRequest = nodeRequestToFetch(req, body, controller.signal);
       const fetchResponse = await handle(fetchRequest, { ...runtime, localAuthValidated, config });
       await writeNodeResponse(res, fetchResponse, controller.signal);
+      if (controller.signal.aborted && !res.writableFinished) {
+        logEvent("request_aborted", { method: req.method, path: req.url, ms: Date.now() - started });
+        return;
+      }
       logEvent("request_end", { method: req.method, path: req.url, status: fetchResponse.status, ms: Date.now() - started });
     } catch (error) {
       if (error.name === "AbortError" || res.destroyed || controller.signal.aborted) {

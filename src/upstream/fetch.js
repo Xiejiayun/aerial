@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { ProxyAgent } from "undici";
+import { waitForPromise } from "../shared/abort.js";
 import { loadConfig, saveConfig } from "../shared/config.js";
 import { PROXY_MODE_AUTO, PROXY_MODE_DISABLED, isSocksProxyEndpoint, normalizeProxyEndpoint, normalizeProxyMode } from "./proxy-config.js";
 import { startSocks5Bridge, _closeSocks5BridgesForTests } from "./socks5-bridge.js";
@@ -239,12 +240,15 @@ export async function upstreamDispatcher(config = loadConfig()) {
 }
 
 export async function fetchWithProxyEndpoint(url, init = {}, endpoint, fetchImpl = globalThis.fetch) {
-  const dispatcher = await dispatcherForEndpoint(endpoint);
+  init.signal?.throwIfAborted();
+  const dispatcher = await waitForPromise(dispatcherForEndpoint(endpoint), init.signal);
+  init.signal?.throwIfAborted();
   if (!dispatcher) return fetchImpl(url, init);
   return fetchImpl(url, { ...init, dispatcher });
 }
 
 export async function upstreamFetch(url, init = {}) {
+  init.signal?.throwIfAborted();
   const state = upstreamProxyState();
   if (!state.enabled) return globalThis.fetch(url, init);
   return fetchWithProxyEndpoint(url, init, state.endpoint);

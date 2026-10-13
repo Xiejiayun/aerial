@@ -3,9 +3,10 @@ import { COPILOT_TOKEN_URL, GITHUB_CLIENT_ID } from "./constants.js";
 import { githubTokenPath, writePrivateFile } from "./paths.js";
 import { logEvent } from "./log.js";
 import { upstreamFetch } from "../upstream/fetch.js";
+import { waitForPromise } from "./abort.js";
 
 let cachedCopilotToken;
-let refreshPromise;
+let refresh;
 
 function formBody(values) {
   return new URLSearchParams(values).toString();
@@ -74,9 +75,11 @@ function jwtExpirySeconds(token) {
   }
 }
 
-export async function exchangeCopilotToken(githubToken = readGitHubToken()) {
+export async function exchangeCopilotToken(githubToken = readGitHubToken(), { signal } = {}) {
+  signal?.throwIfAborted();
   if (!githubToken) throw new Error("Missing GitHub token. Run: aerial login");
   const response = await upstreamFetch(COPILOT_TOKEN_URL, {
+    signal,
     headers: {
       authorization: `Bearer ${githubToken}`,
       accept: "application/json",
@@ -89,6 +92,7 @@ export async function exchangeCopilotToken(githubToken = readGitHubToken()) {
     throw err;
   }
   const payload = await response.json();
+  signal?.throwIfAborted();
   const token = payload.token;
   if (!token) throw new Error("Copilot token exchange response did not include token");
   cachedCopilotToken = { token, expiresAt: (payload.expires_at ? Date.parse(payload.expires_at) / 1000 : jwtExpirySeconds(token)) || Math.floor(Date.now() / 1000) + 1200 };
@@ -96,18 +100,30 @@ export async function exchangeCopilotToken(githubToken = readGitHubToken()) {
   return cachedCopilotToken.token;
 }
 
-export async function getCopilotToken({ force = false } = {}) {
+export async function getCopilotToken({ force = false, signal } = {}) {
+  signal?.throwIfAborted();
   const now = Math.floor(Date.now() / 1000);
   if (!force && cachedCopilotToken && cachedCopilotToken.expiresAt - now > 120) return cachedCopilotToken.token;
-  if (!refreshPromise) {
-    refreshPromise = exchangeCopilotToken().finally(() => {
-      refreshPromise = undefined;
+  if (!refresh || refresh.controller.signal.aborted) {
+    const operation = { controller: new AbortController(), waiters: 0, settled: false };
+    operation.promise = exchangeCopilotToken(undefined, { signal: operation.controller.signal }).finally(() => {
+      operation.settled = true;
+      if (refresh === operation) refresh = undefined;
     });
+    refresh = operation;
   }
-  return refreshPromise;
+  const operation = refresh;
+  operation.waiters += 1;
+  try {
+    return await waitForPromise(operation.promise, signal);
+  } finally {
+    operation.waiters -= 1;
+    if (!operation.settled && operation.waiters === 0) operation.controller.abort();
+  }
 }
 
 export function _resetCopilotTokenCacheForTests() {
   cachedCopilotToken = undefined;
-  refreshPromise = undefined;
+  refresh?.controller.abort();
+  refresh = undefined;
 }

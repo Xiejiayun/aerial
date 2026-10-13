@@ -1,5 +1,6 @@
 import { loadConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
+import { catalogFallback } from "../shared/abort.js";
 import { normalizeCodexEffort, normalizeEffort, resolveClaudeEffort, resolveCodexEffort } from "../shared/effort.js";
 import {
   canonicalClaudeFamily,
@@ -30,7 +31,7 @@ async function withSupportedOpenAIEffort(payload, loadModels) {
   const flatEffort = payload?.reasoning_effort;
   const hasKnownEffort = normalizeCodexEffort(reasoningEffort) || normalizeCodexEffort(flatEffort);
   const models = hasKnownEffort && typeof loadModels === "function"
-    ? await loadModels().catch(() => undefined)
+    ? await loadModels().catch(catalogFallback)
     : undefined;
   const selectedModel = Array.isArray(models) ? models.find((entry) => entry?.id === model) : undefined;
   const supportedEfforts = selectedModel ? supportedReasoningEfforts(selectedModel) : undefined;
@@ -170,7 +171,7 @@ export async function withAnthropicDefaults(payload, loadModels) {
   const thinkingApplied = withSupportedAnthropicThinking(cached);
   const next = withDefaultAnthropicEffort(thinkingApplied);
   const models = shouldLoadAnthropicCatalog(next)
-    ? await loadModels().catch(() => undefined)
+    ? await loadModels().catch(catalogFallback)
     : undefined;
   return withSupportedAnthropicEffort(next, models);
 }
