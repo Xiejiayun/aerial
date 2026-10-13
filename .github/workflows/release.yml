@@ -337,3 +337,6 @@ jobs:
           fi
           npx --no-install aerial --help >/dev/null
           echo "Smoke OK for ${SPEC}."
+          # Keep authoritative verification evidence in the log for maintainers
+          # whose local registry access is blocked or served by a stale mirror.
+          npm view --registry=https://registry.npmjs.org --prefer-online "${SPEC}" version gitHead dist-tags dist --json
