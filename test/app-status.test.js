@@ -89,3 +89,26 @@ test("missing client and api key: setup nextStep is not duplicated", () => {
   assert.deepEqual(setupSteps, ["run: aerial setup codex or aerial setup claude"]);
   assert.ok(!s.nextSteps.some((x) => /key generate/.test(x)));
 });
+
+test("Linux foreground proxy is healthy independently of background manager support", () => {
+  const status = computeAppStatus(makeSetup(), makeService({ supported: false, healthAerial: true }));
+  assert.equal(status.ok, true);
+  assert.deepEqual(status.nextSteps, []);
+  assert.ok(status.hints.some(hint => /foreground/.test(hint)));
+  assert.ok(!status.hints.some(hint => /service install/.test(hint)));
+});
+
+test("every failed service state offers an actionable next step", () => {
+  for (const service of [
+    makeService({ supported: false }),
+    makeService({ loaded: true }),
+    { ...makeService(), service: { installed: true, loaded: false } },
+    { ...makeService(), service: { reason: "status_query_failed", error: "Access denied" } },
+    { ...makeService(), health: { aerial: false, portConflict: true } }
+  ]) {
+    const status = computeAppStatus(makeSetup(), service);
+    assert.equal(status.ok, false);
+    assert.ok(status.nextSteps.length > 0);
+    assert.ok(status.nextSteps.some(step => /aerial/.test(step)));
+  }
+});

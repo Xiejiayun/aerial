@@ -69,13 +69,13 @@ test("empty config: api_key + github_token + client all fail with repair command
   assert.equal(report.ok, false);
   const apiKey = report.checks.find((c) => c.id === "auth.api_key");
   assert.equal(apiKey.severity, "fail");
-  assert.deepEqual(apiKey.repair, { command: "aerial", args: ["setup", "codex"] });
+  assert.deepEqual(apiKey.repairs, [{ command: "aerial", args: ["setup", "codex"] }, { command: "aerial", args: ["setup", "claude"] }]);
   const gh = report.checks.find((c) => c.id === "auth.github_token");
   assert.equal(gh.severity, "fail");
   assert.deepEqual(gh.repair, { command: "aerial", args: ["login"] });
   const client = report.checks.find((c) => c.id === "clients.aerial_client");
   assert.equal(client.severity, "fail");
-  assert.deepEqual(client.repair, { command: "aerial", args: ["setup", "codex"] });
+  assert.deepEqual(client.repairs, apiKey.repairs);
 });
 
 test("env-only github token: warn, not fail; ok remains true if nothing else fails", async () => {
@@ -161,15 +161,44 @@ test("renderRepairCommand handles missing or malformed repair gracefully", () =>
   assert.equal(renderRepairCommand({ command: "aerial" }), "aerial");
 });
 
-test("doctor.ok must align with status.ok: unsupported service is warn but app.ok=false", async () => {
+test("doctor reports a stopped Linux proxy as a health failure with foreground repair", async () => {
   const report = await doctor({
     setup: makeSetup(),
     service: makeService({ supported: false, platform: "linux" })
   });
-  assert.equal(report.status.ok, false, "computeAppStatus must report ok=false for unsupported service");
+  assert.equal(report.status.ok, false);
   const failures = report.checks.filter((c) => c.severity === "fail");
-  assert.equal(failures.length, 0, "no fail-severity checks in this scenario");
-  assert.equal(report.ok, false, "doctor.ok must be false when status.ok is false even without fail-severity checks");
+  assert.equal(failures.length, 1);
+  assert.equal(report.ok, false);
+  assert.deepEqual(failures[0].repair, { command: "aerial", args: ["start"] });
+});
+
+test("doctor accepts healthy Linux foreground mode without suggesting an unsupported service install", async () => {
+  const report = await doctor({ setup: makeSetup(), service: makeService({ supported: false, platform: "linux", healthAerial: true }) });
+  assert.equal(report.ok, true);
+  assert.doesNotMatch(renderDoctorText(report), /aerial service install/);
+});
+
+test("doctor repairs Claude users with the Claude setup command", async () => {
+  const report = await doctor({
+    setup: makeSetup({ apiKeyExists: false, codexState: "missing", claudeState: "aerial-drift" }),
+    service: makeService({ healthAerial: true })
+  });
+  for (const id of ["auth.api_key", "clients.aerial_client"]) {
+    assert.deepEqual(report.checks.find(c => c.id === id).repair, { command: "aerial", args: ["setup", "claude"] });
+  }
+  assert.doesNotMatch(renderDoctorText(report), /setup codex/);
+});
+
+test("doctor explains a running service with failed health and retains manager errors", async () => {
+  const service = makeService({ installed: true, loaded: true, healthAerial: false });
+  const report = await doctor({ setup: makeSetup(), service });
+  assert.deepEqual(report.checks.find(c => c.id === "service.health").repair, { command: "aerial", args: ["service", "restart"] });
+  assert.ok(report.status.nextSteps.some(s => s.includes("service restart")));
+  service.service = { reason: "status_query_failed", error: "Permission denied" };
+  const unknown = await doctor({ setup: makeSetup(), service });
+  assert.equal(unknown.ok, false);
+  assert.match(renderDoctorText(unknown), /Permission denied/);
 });
 
 test("invalid config.json is reported as a structured doctor failure", async () => {

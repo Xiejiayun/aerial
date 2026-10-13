@@ -9,15 +9,19 @@ export function tokenFingerprintOf(token) {
   return crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
-export async function fetchModelsCatalog({ fetchImpl, tokenFingerprint, now = Date.now() } = {}) {
+export async function fetchModelsCatalog({ fetchImpl, tokenFingerprint, now = Date.now(), signal } = {}) {
+  signal?.throwIfAborted();
   if (typeof fetchImpl !== "function") return undefined;
   const key = tokenFingerprint || "anonymous";
   const cached = cache.get(key);
   if (cached && cached.expiresAt > now) return cached.models;
   let models;
   try {
-    models = await fetchImpl();
-  } catch {
+    models = await fetchImpl({ signal });
+    signal?.throwIfAborted();
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error?.name === "AbortError") throw error;
     models = undefined;
   }
   if (!Array.isArray(models)) {

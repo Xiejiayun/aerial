@@ -57,8 +57,8 @@ function buildDefinitionRefreshFailure({ adapter, supervisor, config, definition
     };
   }
   const message = isManaged
-    ? `schtasks /Create failed (status ${status}) while refreshing the managed-service definition. The running service was not disturbed, but wrapper/env changes were NOT applied. Resolve the underlying schtasks error and rerun \`aerial service install\`.`
-    : `Aerial is already running in the foreground on port ${config.port}. The wrapper was rewritten but schtasks /Create failed (status ${status}), so the Task Scheduler definition was NOT refreshed. Resolve the underlying schtasks error and rerun \`aerial service install\`.`;
+    ? `Task registration failed (status ${status}) while refreshing the managed-service definition. Resolve the reported PowerShell error and rerun \`aerial service install\` before restarting the service.`
+    : `Aerial is already running in the foreground on port ${config.port}. The wrapper was rewritten but task registration failed (status ${status}). Resolve the reported PowerShell error and rerun \`aerial service install\`.`;
   return {
     ok: false,
     action: "install",

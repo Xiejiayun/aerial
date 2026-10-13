@@ -229,6 +229,21 @@ export function buildSchtasksCreateArgs({ taskName = WIN_TASK_NAME, wrapperPath:
   ];
 }
 
+export function buildWindowsTaskRegistrationScript({ taskName = WIN_TASK_NAME, wrapperPath: wrapper }) {
+  const launcher = fileURLToPath(new URL("./windows-launcher.js", import.meta.url));
+  const argumentsValue = `//B //NoLogo //E:JScript "${launcher}" "${wrapper}"`;
+  // Structured task registration avoids schtasks /TR's 261-character limit.
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "$identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name",
+    `$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ${psEscape(argumentsValue)}`,
+    "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity",
+    "$principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited",
+    `Register-ScheduledTask -TaskName ${psEscape(taskName)} -TaskPath '\\' -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null`
+  ].join("\r\n");
+}
+
 export function buildSchtasksArgs(action, taskName = WIN_TASK_NAME) {
   if (action === "delete") return ["/Delete", "/TN", taskName, "/F"];
   if (action === "run") return ["/Run", "/TN", taskName];

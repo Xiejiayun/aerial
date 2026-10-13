@@ -509,16 +509,16 @@ on the registry)
   release-candidate quality) if Aerial grows enough simultaneous tracks
   to need it.
 
-## §16 Service Manual Lifecycle Checklist (manual validation, not CI-gated)
+## §16 Service lifecycle verification
 
 `src/service/index.js` wraps platform service primitives (macOS launchd,
-Windows Task Scheduler). Service-manager tests stub the subprocess runner
-so CI never registers or stops real `launchctl` or `schtasks` jobs. Windows
-wrapper tests do run isolated PowerShell and Windows Script Host processes
-with temporary fixtures and config directories. Task Scheduler integration
-and window visibility must still be validated by hand
-before any release that touches `src/service/index.js`, `src/shared/log.js`, or the
-service docs.
+Windows Task Scheduler). Unit tests stub the subprocess runner. The Node 22
+Windows/macOS CI jobs additionally run `node scripts/smoke-native-service.mjs`
+against an isolated source copy, unique service identity, temporary credentials,
+and an ephemeral port. The smoke checks real installation, health, definition
+refresh, stop, repeated stop, start, restart, uninstall, and cleanup. It never
+changes the normal Aerial service. Additional recovery and window-visibility
+checks below remain manual.
 
 Record the result of this checklist in the release PR description (or
 attached note) for the commit that touches service code. A run that
@@ -640,7 +640,7 @@ recorded with an explicit, signed-off risk acceptance does not block.
   - With `aerial start` already running in the foreground, `aerial
     service install` exits 1 with `reason = foreground_running`,
     `definitionUpdated = true`, and the wrapper + task are still
-    rewritten. The schtasks call log shows `/Create` was invoked
+    rewritten. The PowerShell call log shows task registration was invoked
     but NOT `/Run`.
   - With a non-Aerial process bound to the port, `aerial service
     install` exits 1 with `reason = port_conflict` and NO file is
@@ -649,13 +649,13 @@ recorded with an explicit, signed-off risk acceptance does not block.
     `ok = true` with `definitionUpdated = true` and `note = "already
     running (service-managed); definition refreshed; run \`aerial
     service restart\` to apply wrapper/env changes"`. The wrapper
-    `.ps1` is rewritten and `schtasks /Create /F` is invoked, but
+    `.ps1` is rewritten and `Register-ScheduledTask -Force` is invoked, but
     `/Run` is NOT called and the live task is not recycled. Use
     `aerial service restart` to swap the live process onto the
     regenerated wrapper.
-  - If the `schtasks /Create` refresh itself fails, `aerial service
+  - If the PowerShell task registration refresh itself fails, `aerial service
     install` exits 1 with `reason = managed_definition_refresh_failed`,
-    a `message` pointing at the schtasks error, and the running task
+    a `message` pointing at the PowerShell error, and the running task
     is left untouched.
 - [ ] `aerial service uninstall` stops the complete process tree and ends
   the task before `schtasks /Delete /F`, then removes the wrapper `.ps1` from
@@ -671,14 +671,11 @@ recorded with an explicit, signed-off risk acceptance does not block.
   uninstall returns `ok = false` (e.g. `/Delete` fails), the
   command exits 1 with a retry pointer at
   `aerial service uninstall`.
-- [ ] `aerial service install` /TR argument: registered Task action
-  embeds the wrapper path inside normal double quotes
-  (`powershell.exe ... -File "C:\Users\... Xie\...\\aerial-service.ps1"`) so
-  Task Scheduler parses the wrapper path as a single token even
-  when it contains spaces or non-ASCII characters. Verify with
-  `schtasks /Query /TN AerialLocalProxy /XML` and inspect that
-  `Command` is `powershell.exe` and `Arguments` has no literal
-  backslash-quote prefix.
+- [ ] Structured registration uses `wscript.exe` and separate quoted launcher
+  and wrapper arguments. Paths containing spaces, apostrophes, Unicode, or a
+  combined action longer than 261 characters work. Verify the task action with
+  `schtasks /Query /TN AerialLocalProxy /XML`; `Command` is `wscript.exe`,
+  and `Arguments` quotes each path without literal backslash-quote prefixes.
 
 ### Linux (unsupported-platform friendly fail)
 
@@ -686,10 +683,15 @@ recorded with an explicit, signed-off risk acceptance does not block.
   exits 1 with an `unsupported platform` message that names macOS
   and Windows as the supported platforms and points the user at
   `aerial start` for direct invocation.
-- [ ] `aerial service status --json` on Linux exits 1 but still
-  emits a schema-valid document with `supported = false`,
-  `service.reason = "unsupported_platform"`, and `summary =
-  "unsupported"`.
+- [ ] `aerial service status --json` on Linux probes `/health` and
+  emits a schema-valid document with `supported = false` and
+  `service.reason = "unsupported_platform"`. With a healthy foreground
+  proxy it exits 0, reports `ok = true`, and identifies the foreground
+  supervisor. Without the proxy it exits 1 and suggests `aerial start`.
+- [ ] A service-manager query failure remains structured JSON with
+  `service.reason = "status_query_failed"`, the original diagnostic,
+  an independently probed health result, and a next step. It must not
+  claim the service is absent or stopped when its state is unknown.
 
 ### Log rotation spot-check
 

@@ -29,9 +29,9 @@ export function printSetupSummary(status) {
 export function printServiceSummary(status) {
   console.log(`service: ${status.summary}`);
   if (status.supported === false) {
-    console.log(`platform: ${status.platform} (service unsupported)`);
-    return;
+    console.log(`platform: ${status.platform} (foreground mode; background service management unavailable)`);
   }
+  if (status.service?.error) console.log(`service manager: ${status.service.error}`);
   const health = status.health?.aerial ? `ok (${status.health.supervisor})`
     : status.health?.portConflict ? `port conflict (${status.health.conflictReason})`
     : status.health?.ok ? "ok"

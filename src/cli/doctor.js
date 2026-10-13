@@ -1,15 +1,22 @@
 import { setupStatus } from "../setup/index.js";
 import { serviceStatus } from "../service/index.js";
-import { computeAppStatus } from "./helpers.js";
+import { computeAppStatus, preferredClientTargets } from "./helpers.js";
 import { readConfigFileStatus } from "../shared/config.js";
 
 const REPAIRS = Object.freeze({
   CONFIG_RESET: Object.freeze({ command: "aerial", args: ["config", "reset"] }),
   LOGIN: Object.freeze({ command: "aerial", args: ["login"] }),
-  SETUP_CODEX: Object.freeze({ command: "aerial", args: ["setup", "codex"] }),
+  START: Object.freeze({ command: "aerial", args: ["start"] }),
   SERVICE_INSTALL: Object.freeze({ command: "aerial", args: ["service", "install"] }),
+  SERVICE_START: Object.freeze({ command: "aerial", args: ["service", "start"] }),
+  SERVICE_RESTART: Object.freeze({ command: "aerial", args: ["service", "restart"] }),
   SERVICE_STATUS_JSON: Object.freeze({ command: "aerial", args: ["service", "status", "--json"] })
 });
+
+function clientRepairs(setup) {
+  const repairs = preferredClientTargets(setup).map(target => ({ command: "aerial", args: ["setup", target] }));
+  return repairs.length === 1 ? { repair: repairs[0] } : { repairs };
+}
 
 function buildConfigChecks(configFile) {
   if (!configFile.ok) {
@@ -35,8 +42,8 @@ function buildAuthChecks(setup) {
       id: "auth.api_key",
       ok: false,
       severity: "fail",
-      message: "Aerial local API key is missing. Run setup for the client you use; this repair shows the Codex path.",
-      repair: REPAIRS.SETUP_CODEX
+      message: "Aerial local API key is missing. Run setup for the client you use.",
+      ...clientRepairs(setup)
     });
   } else {
     checks.push({ id: "auth.api_key", ok: true, severity: "info", message: "Aerial local API key is present." });
@@ -75,8 +82,8 @@ function buildClientChecks(setup) {
       id: "clients.aerial_client",
       ok: false,
       severity: "fail",
-      message: "No client is wired to Aerial. Run setup for the client you use; this repair shows the Codex path.",
-      repair: REPAIRS.SETUP_CODEX
+      message: "No client is wired to Aerial. Run setup for the client you use.",
+      ...clientRepairs(setup)
     });
   } else {
     const wired = [aerialCodex && "codex", aerialClaude && "claude"].filter(Boolean).join(", ");
@@ -87,19 +94,31 @@ function buildClientChecks(setup) {
 
 function buildServiceChecks(service) {
   const checks = [];
+  const healthy = service.health?.aerial === true;
+  const supported = service.supported !== false;
+  const queryFailed = service.service?.reason === "status_query_failed";
   if (service.supported === false) {
     checks.push({
       id: "service.supported",
-      ok: false,
-      severity: "warn",
-      message: `Background service is not supported on ${service.platform}; Aerial must run in the foreground.`
+      ok: true,
+      severity: "info",
+      message: `Background service management is not supported on ${service.platform}; use aerial start or your init system.`
     });
-    return checks;
   }
+  if (queryFailed) checks.push({
+    id: "service.manager_query", ok: false, severity: "fail",
+    message: `Service manager state could not be read: ${service.service.error}. Check service manager access before retrying.`,
+    repair: REPAIRS.SERVICE_STATUS_JSON
+  });
   const installed = Boolean(service.service?.installed);
   const loaded = Boolean(service.service?.loaded);
-  const healthy = service.health?.aerial === true;
-  if (healthy && !installed) {
+  if (service.health?.portConflict) {
+    checks.push({
+      id: "service.port_conflict", ok: false, severity: "fail",
+      message: `Port ${service.config?.port} is held by a non-Aerial process: ${service.health.conflictReason || "unknown"}. Stop the other listener, then start Aerial.`,
+      repair: REPAIRS.SERVICE_STATUS_JSON
+    });
+  } else if (healthy && supported && !installed && !queryFailed) {
     checks.push({
       id: "service.foreground_only",
       ok: true,
@@ -107,35 +126,18 @@ function buildServiceChecks(service) {
       message: "Aerial is running in the foreground but no background service is installed; it will not start on reboot.",
       repair: REPAIRS.SERVICE_INSTALL
     });
-  } else if (installed && !healthy) {
+  } else if (!healthy) {
     checks.push({
       id: "service.health",
       ok: false,
       severity: "fail",
-      message: loaded
+      message: !supported ? "Aerial is not running. Start the foreground proxy and keep its terminal open." : loaded
         ? "Service manager reports the task running, but Aerial /health is not responding."
-        : "Service is installed but not running.",
-      repair: REPAIRS.SERVICE_STATUS_JSON
-    });
-  } else if (!installed && !healthy) {
-    checks.push({
-      id: "service.health",
-      ok: false,
-      severity: "fail",
-      message: "Aerial is not running and no background service is installed.",
-      repair: REPAIRS.SERVICE_INSTALL
+        : installed ? "Service is installed but not running." : "Aerial is not running and no background service is installed.",
+      repair: queryFailed ? REPAIRS.SERVICE_STATUS_JSON : !supported ? REPAIRS.START : loaded ? REPAIRS.SERVICE_RESTART : installed ? REPAIRS.SERVICE_START : REPAIRS.SERVICE_INSTALL
     });
   } else {
     checks.push({ id: "service.health", ok: true, severity: "info", message: "Aerial /health is responding." });
-  }
-  if (service.health?.portConflict) {
-    checks.push({
-      id: "service.port_conflict",
-      ok: false,
-      severity: "fail",
-      message: `Port ${service.config?.port} is held by a non-Aerial process: ${service.health.conflictReason || "unknown"}.`,
-      repair: REPAIRS.SERVICE_STATUS_JSON
-    });
   }
   const wrapper = service.service?.wrapper;
   if (wrapper && wrapper.stale === true) {
@@ -180,7 +182,9 @@ export async function doctor({ run, healthFetch, setup, service } = {}) {
       schema: app.schema,
       ok: app.ok,
       setup: app.setup,
-      service: app.service
+      service: app.service,
+      nextSteps: app.nextSteps,
+      hints: app.hints
     }
   };
 }
@@ -208,6 +212,7 @@ export function renderDoctorText(report) {
       const tag = severity.toUpperCase();
       let line = `  ${tag} ${check.id}: ${check.message}`;
       if (check.repair) line += ` -> run: ${renderRepairCommand(check.repair)}`;
+      if (check.repairs) line += ` -> choose: ${check.repairs.map(renderRepairCommand).join(" or ")}`;
       lines.push(line);
     }
   }

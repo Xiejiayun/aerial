@@ -1,6 +1,7 @@
 import { WebSocket } from "undici";
 import { COPILOT_API_ORIGIN } from "../shared/constants.js";
 import { upstreamDispatcher } from "../upstream/fetch.js";
+import { waitForPromise } from "../shared/abort.js";
 
 const TERMINAL_RESPONSE_TYPES = new Set([
   "response.completed",
@@ -46,13 +47,17 @@ function isTerminalMessage(message) {
   }
 }
 
-async function openWebSocket(headers) {
-  const dispatcher = await upstreamDispatcher();
+async function openWebSocket(url, headers, signal) {
+  signal?.throwIfAborted();
+  const dispatcher = await waitForPromise(upstreamDispatcher(), signal);
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(websocketUrl(), dispatcher ? { headers, dispatcher } : { headers });
+    const ws = new WebSocket(url, dispatcher ? { headers, dispatcher } : { headers });
     const cleanup = () => {
       ws.removeEventListener("open", onOpen);
       ws.removeEventListener("error", onError);
+      ws.removeEventListener("close", onClose);
+      signal?.removeEventListener("abort", onAbort);
     };
     const onOpen = () => {
       cleanup();
@@ -62,8 +67,20 @@ async function openWebSocket(headers) {
       cleanup();
       reject(new Error(`Failed to create responses websocket: ${event?.message || event?.error?.message || "unknown error"}`));
     };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("Responses websocket closed before opening"));
+    };
+    const onAbort = () => {
+      cleanup();
+      try { ws.close(); } catch {}
+      reject(signal.reason);
+    };
     ws.addEventListener("open", onOpen);
     ws.addEventListener("error", onError);
+    ws.addEventListener("close", onClose);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -81,34 +98,59 @@ export function shouldUseResponsesWebSocket(payload, model) {
   return supportsResponsesWebSocket(model);
 }
 
-export async function proxyResponsesWebSocket(payload, headers, { initiator = "user" } = {}) {
-  const ws = await openWebSocket(headers);
-  ws.send(JSON.stringify({ ...payload, type: "response.create", initiator }));
+export async function proxyResponsesWebSocket(payload, headers, { initiator = "user", signal, url = websocketUrl() } = {}) {
+  const ws = await openWebSocket(url, headers, signal);
+  try {
+    signal?.throwIfAborted();
+    if (ws.readyState !== WebSocket.OPEN) throw new Error("Responses websocket closed before sending the request");
+    ws.send(JSON.stringify({ ...payload, type: "response.create", initiator }));
+  } catch (error) {
+    try { ws.close(); } catch {}
+    throw error;
+  }
 
   const encoder = new TextEncoder();
+  let stop;
   return new Response(new ReadableStream({
     start(controller) {
-      const close = () => {
+      let finished = false;
+      const cleanup = () => {
+        ws.removeEventListener("message", onMessage);
+        ws.removeEventListener("close", onClose);
+        ws.removeEventListener("error", onError);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      stop = (error, cancelled = false) => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        if (!cancelled) {
+          if (error) controller.error(error);
+          else controller.close();
+        }
         try { ws.close(); } catch {}
       };
-      ws.addEventListener("message", async (event) => {
-        const message = await normalizeMessageData(event.data);
-        if (!message) return;
-        controller.enqueue(encoder.encode(toSseFrame(message)));
-        if (isTerminalMessage(message)) {
-          controller.close();
-          close();
+      const onMessage = async (event) => {
+        try {
+          const message = await normalizeMessageData(event.data);
+          if (finished || !message) return;
+          controller.enqueue(encoder.encode(toSseFrame(message)));
+          if (isTerminalMessage(message)) stop();
+        } catch (error) {
+          stop(error);
         }
-      });
-      ws.addEventListener("close", () => {
-        try { controller.close(); } catch {}
-      });
-      ws.addEventListener("error", (event) => {
-        controller.error(new Error(event?.message || event?.error?.message || "Responses websocket stream error"));
-      });
+      };
+      const onClose = () => stop();
+      const onError = event => stop(new Error(event?.message || event?.error?.message || "Responses websocket stream error"));
+      const onAbort = () => stop(signal.reason);
+      ws.addEventListener("message", onMessage);
+      ws.addEventListener("close", onClose);
+      ws.addEventListener("error", onError);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
     },
     cancel() {
-      try { ws.close(); } catch {}
+      stop(undefined, true);
     }
   }), { headers: { "content-type": "text/event-stream" } });
 }

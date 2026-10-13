@@ -1,6 +1,7 @@
 import { DEFAULT_ANTHROPIC_VERSION } from "../shared/constants.js";
 import { getCopilotToken } from "../shared/auth.js";
 import { logEvent } from "../shared/log.js";
+import { catalogFallback } from "../shared/abort.js";
 import { isResponsesWebSocketOptIn, proxyResponsesWebSocket, shouldUseResponsesWebSocket } from "./responses-websocket.js";
 import { annotateModelsResponse } from "./models.js";
 import { upstreamHeaders } from "./headers.js";
@@ -20,21 +21,25 @@ function responseModelFromCatalog(modelId, models) {
 }
 
 export async function proxyModels(request) {
-  const upstreamRequest = new Request(request.url, { method: "GET", headers: request.headers });
+  const upstreamRequest = new Request(request.url, { method: "GET", headers: request.headers, signal: request.signal });
   return annotateModelsResponse(await proxyFetch("/models", upstreamRequest));
 }
 
 export async function proxyResponses(request) {
-  const payload = await withOpenAIDefaults(await request.json(), fetchModelsCatalogForCopilot);
+  const loadModels = () => fetchModelsCatalogForCopilot({ signal: request.signal });
+  request.signal.throwIfAborted();
+  const payload = await withOpenAIDefaults(await request.json(), loadModels);
+  request.signal.throwIfAborted();
   const body = Buffer.from(JSON.stringify(payload));
 
   if (payload?.stream && isResponsesWebSocketOptIn()) {
-    const models = await fetchModelsCatalogForCopilot().catch(() => undefined);
+    const models = await loadModels().catch(catalogFallback);
+    request.signal.throwIfAborted();
     const model = models ? responseModelFromCatalog(payload.model, models) : undefined;
     if (shouldUseResponsesWebSocket(payload, model)) {
       const requestCache = cacheRequestFields(payload);
       if (hasExplicitCacheRequest(requestCache)) logEvent("cache_request", { route: "/responses", ...requestCache });
-      const token = await getCopilotToken();
+      const token = await getCopilotToken({ signal: request.signal });
       const initiator = responseInitiator(payload);
       const headers = upstreamHeaders(token, {
         accept: "text/event-stream",
@@ -42,7 +47,7 @@ export async function proxyResponses(request) {
         ...(responseHasVision(payload) ? { "copilot-vision-request": "true" } : {})
       });
       logEvent("responses_websocket", { model: payload.model });
-      const response = await proxyResponsesWebSocket(payload, headers, { initiator });
+      const response = await proxyResponsesWebSocket(payload, headers, { initiator, signal: request.signal });
       if (!response.body) return response;
       const observer = createSseCacheObserver("/responses", requestCache);
       return new Response(response.body.pipeThrough(observer), { status: response.status, headers: response.headers });
@@ -53,7 +58,7 @@ export async function proxyResponses(request) {
     });
   }
 
-  const upstreamRequest = new Request(request.url, { method: request.method, headers: request.headers, body, duplex: "half" });
+  const upstreamRequest = new Request(request.url, { method: request.method, headers: request.headers, body, duplex: "half", signal: request.signal });
   return proxyFetch("/responses", upstreamRequest, { bodyOverride: body });
 }
 
@@ -63,13 +68,13 @@ export async function proxyMessages(request) {
   };
   const beta = request.headers.get("anthropic-beta");
   if (beta) extraHeaders["anthropic-beta"] = beta;
-  const upstreamRequest = await requestWithJsonBody(request, (payload) => withAnthropicDefaults(payload, fetchModelsCatalogForCopilot));
+  const upstreamRequest = await requestWithJsonBody(request, (payload) => withAnthropicDefaults(payload, () => fetchModelsCatalogForCopilot({ signal: request.signal })));
   return proxyFetch("/v1/messages", upstreamRequest, { extraHeaders });
 }
 
 export async function proxyChatCompletions(request) {
   const upstreamRequest = await requestWithJsonBody(request, async (payload) => {
-    payload = await withOpenAIDefaults(payload, fetchModelsCatalogForCopilot);
+    payload = await withOpenAIDefaults(payload, () => fetchModelsCatalogForCopilot({ signal: request.signal }));
     if (payload.max_tokens !== undefined && payload.max_completion_tokens === undefined) {
       const { max_tokens, ...rest } = payload;
       return { ...rest, max_completion_tokens: max_tokens };
