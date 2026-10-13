@@ -41,7 +41,13 @@ export function printServiceSummary(status) {
 
 export function printRestoreResults(results) {
   for (const r of Object.values(results)) {
-    if (r.restored) {
+    if (r.detached) {
+      console.log(`Detached ${r.target}: ${r.file}`);
+      if (r.note) console.log(`  ${r.note}`);
+      if (r.snapshot) console.log(`  recovery snapshot: ${r.snapshot}`);
+    } else if (r.reason === "not_managed") {
+      console.log(`Detached ${r.target}: no Aerial configuration`);
+    } else if (r.restored) {
       console.log(`Restored ${r.target}: ${r.file} <- ${r.from}`);
       if (r.snapshot) console.log(`  pre-restore snapshot: ${r.snapshot}`);
     } else if (r.reason === "no_backup") {

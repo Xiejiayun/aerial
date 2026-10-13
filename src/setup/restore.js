@@ -4,13 +4,16 @@ import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/utils.js";
 import { writePrivateFile } from "../shared/paths.js";
 import { CLIENTS } from "./clients.js";
+import { detachClientTakeover } from "./takeover.js";
 
 const BACKUP_PREFIX = ".aerial-backup-";
 const ISO_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 export function backupIfExists(file) {
   if (!fs.existsSync(file)) return undefined;
-  const backup = `${file}.aerial-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  let stamp = Date.now();
+  let backup;
+  do { backup = `${file}.aerial-backup-${new Date(stamp++).toISOString().replace(/[:.]/g, "-")}`; } while (fs.existsSync(backup));
   writePrivateFile(backup, fs.readFileSync(file));
   return backup;
 }
@@ -124,4 +127,15 @@ export function restoreAllClients(opts) {
   }
   const ok = Object.values(results).every((r) => r.ok);
   return { ok, results };
+}
+
+export function detachAllClients() {
+  const results = {};
+  for (const target of Object.keys(CLIENTS)) {
+    try {
+      const file = clientFile(target);
+      results[target] = detachClientTakeover({ target, file, backups: backupPathsFor(file) });
+    } catch (error) { results[target] = { target, ok: false, error: error.message }; }
+  }
+  return { ok: Object.values(results).every(result => result.ok), results };
 }

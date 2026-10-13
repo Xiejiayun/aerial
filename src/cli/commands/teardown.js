@@ -1,13 +1,13 @@
-import { restoreAllClients } from "../../setup/index.js";
+import { detachAllClients } from "../../setup/index.js";
 import { serviceUninstall } from "../../service/index.js";
 import { printRestoreResults } from "../output.js";
 import { printServiceUninstallResult } from "./service.js";
 
 export function runTeardownCli() {
-  const { ok: restoreOk, results } = restoreAllClients();
+  const { ok: restoreOk, results } = detachAllClients();
   printRestoreResults(results);
   if (!restoreOk) {
-    console.log("service uninstall: skipped because client restore reported failures; resolve restore errors then rerun `aerial teardown` or `aerial service uninstall`.");
+    console.log("service uninstall: skipped because client teardown reported failures; resolve the configuration errors, then rerun `aerial teardown`.");
     process.exitCode = 1;
     return;
   }

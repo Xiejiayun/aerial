@@ -223,7 +223,9 @@ Stability rules for `aerial.setup-status.v1`: new fields may be added at any lev
 
 `aerial setup restore <codex|claude|all> --latest` restores the most recent `*.aerial-backup-<ISO>` snapshot for the named client. Before overwriting, it takes a `*.aerial-pre-restore-<ISO>` snapshot of the current file so the restore itself is reversible. With `all`, both clients are restored best-effort and the command exits non-zero if any individual restore failed. If there is no backup to restore, the command prints a note and exits 0.
 
-`aerial teardown` first runs `setup restore all --latest` and then, only if every client restore succeeded, uninstalls the local Aerial service via `aerial service uninstall`. If any client restore reports a failure, the service is left running and `aerial teardown` exits non-zero; resolve the restore errors, then rerun `aerial teardown` (or call `aerial service uninstall` directly once the client config is in the state you want).
+`aerial teardown` undoes the Aerial takeover, then uninstalls the service only when both clients no longer depend on it. Setup records the original file (or its absence) in a private `*.aerial-state.json` journal. Repeating setup retains that baseline. Teardown restores managed values that still match Aerial's last write and preserves later user changes; a remaining Aerial dependency or invalid recovery state stops the uninstall and exits non-zero. Fix the reported configuration conflict and rerun `aerial teardown`.
+
+For installations made before takeover journals existed, teardown uses the oldest valid pre-Aerial backup. If none exists, it removes known Aerial settings, preserves unrelated settings, and explicitly reports that client defaults now apply; a lost original provider cannot be reconstructed. A `*.aerial-pre-teardown-<ISO>` snapshot makes the detach reversible. Completed journals are retained with a `.detached-<timestamp>` suffix. Use `setup restore --latest` only to roll back the last setup edit; after repeated setup that snapshot can still point to Aerial.
 
 ## 7.6 Run Aerial As A Local Service
 

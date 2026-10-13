@@ -24,6 +24,11 @@ and refuses to uninstall while a client still depends on Aerial. Missing or
 invalid historical state must produce a recovery instruction, never a false
 success.
 
+For legacy installations without a journal, use the oldest valid pre-Aerial
+backup. If that is unavailable, detach known managed fields to client defaults
+and state that the original provider could not be recovered. Retain a private
+pre-teardown snapshot and preserve unrelated settings.
+
 ## Client compatibility and onboarding
 
 Claude setup uses client-recognized native model identities mapped to live

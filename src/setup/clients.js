@@ -4,10 +4,10 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
-import { writePrivateFile } from "../shared/paths.js";
 import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort, normalizeEffort } from "../shared/effort.js";
 import { backupIfExists, backupPathsFor } from "./restore.js";
 import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection } from "./toml.js";
+import { writeClientTakeover } from "./takeover.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -47,8 +47,8 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   }
   const file = codexConfigFile();
   ensureParent(file);
-  const backup = backupIfExists(file);
-  let content = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const original = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  let content = original || "";
   content = setTomlRootString(content, "model_provider", "aerial");
   content = setTomlRootString(content, "model", selectedModel);
   if (normalizedEffort) content = setTomlRootString(content, "model_reasoning_effort", normalizedEffort);
@@ -66,9 +66,10 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   content = removeTomlSection(content, "profiles.aerial");
   if (parseToml(content).profile === "aerial") content = setTomlValue(content, ["profile"], undefined);
   parseToml(content);
-  writePrivateFile(file, content);
+  const backup = backupIfExists(file);
+  const takeover = writeClientTakeover({ target: "codex", file, original, next: content, backups: backupPathsFor(file) });
   logEvent("setup_write", { target: "codex", file, backup, auth: "command", effort: normalizedEffort });
-  return { file, backup, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
+  return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
 export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPER } = {}) {
@@ -79,8 +80,9 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
   const selectedModel = model || config.defaultModel;
   const file = claudeSettingsFile();
   ensureParent(file);
-  const backup = backupIfExists(file);
-  const current = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  const original = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  const current = original === null ? {} : JSON.parse(original);
+  if (!current || typeof current !== "object" || Array.isArray(current)) throw new Error("Claude configuration must be an object.");
   const next = {
     ...current,
     apiKeyHelper,
@@ -88,12 +90,13 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
   };
   if (selectedModel) next.model = selectedModel;
   if (normalizedEffort) next.effortLevel = normalizedEffort;
-  writePrivateFile(file, `${JSON.stringify(next, null, 2)}\n`);
+  const backup = backupIfExists(file);
+  const takeover = writeClientTakeover({ target: "claude", file, original, next: `${JSON.stringify(next, null, 2)}\n`, backups: backupPathsFor(file) });
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
     saveConfig({ ...config, defaultEffort: normalizedEffort });
   }
   logEvent("setup_write", { target: "claude", file, backup, model: selectedModel, effort: normalizedEffort });
-  return { file, backup, model: selectedModel, effort: normalizedEffort, apiKeyHelper };
+  return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, apiKeyHelper };
 }
 
 function codexConfigFile() {
