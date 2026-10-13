@@ -8,7 +8,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { renderWindowsWrapper } from "../src/service/wrapper-render.js";
 
-const windowsOnly = { skip: process.platform !== "win32", timeout: 30_000 };
+// A cold PowerShell/Add-Type startup can exceed ten seconds on a busy hosted
+// Windows runner. Budget startup separately from the fixture's 20s work limit.
+const startupTimeoutMs = 30_000;
+const windowsOnly = { skip: process.platform !== "win32", timeout: 60_000 };
 
 async function exerciseWrapper(t, directoryName, { viaLauncher = false, childExitCode = 0 } = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-windows-wrapper-"));
@@ -88,11 +91,11 @@ const waitForRelease = setInterval(async () => {
     await closed;
     fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + startupTimeoutMs;
   while (!fs.existsSync(readyPath) && wrapper.exitCode === null && Date.now() < deadline) {
     await delay(25);
   }
-  assert.ok(fs.existsSync(readyPath), `fixture did not start: ${output}`);
+  assert.ok(fs.existsSync(readyPath), `fixture did not start within ${startupTimeoutMs}ms: ${output}`);
   const ready = JSON.parse(fs.readFileSync(readyPath, "utf8"));
   childPid = ready.pid;
   assert.deepEqual(ready.args, ["start", "--host", "127.0.0.1", "--port", "18181"]);
