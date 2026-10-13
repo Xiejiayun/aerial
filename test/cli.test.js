@@ -110,6 +110,19 @@ test("config reset repairs an invalid config.json", () => {
   assert.equal(config.port, 18181);
 });
 
+test("config output redacts proxy credentials without changing stored configuration", () => {
+  const { configDir, env } = configEnv("cli-config-redaction");
+  const endpoint = "http://review-user:review-password@127.0.0.1:8080";
+  const file = path.join(configDir, "config.json");
+  const original = JSON.stringify({ upstreamProxyMode: "auto", upstreamProxyEndpoint: endpoint, upstreamProxySource: `manual (${endpoint})` });
+  fs.writeFileSync(file, original);
+  const result = runCli(["config"], { env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout + result.stderr, /review-user|review-password/);
+  assert.equal(JSON.parse(result.stdout).upstreamProxyEndpoint, "http://redacted@127.0.0.1:8080");
+  assert.equal(fs.readFileSync(file, "utf8"), original);
+});
+
 test("config set validates port before writing", () => {
   const { configDir, env: baseEnv } = configEnv("cli-port-config");
   const valid = runCli(["config", "set", "port", "18182"], { env: baseEnv });
