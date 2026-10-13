@@ -31,7 +31,19 @@ export function ensureDir(dir = configDir()) {
 }
 
 export function writePrivateFile(file, content) {
-  atomicWriteFile(file, content, { mode: 0o600 });
+  let writePath = file;
+  let mode = 0o600;
+  try {
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink()) writePath = fs.realpathSync(file);
+    const target = fs.statSync(writePath);
+    if (!target.isFile()) throw new Error(`Cannot replace a non-file: ${file}`);
+    if (process.platform !== "win32") mode = target.mode & 0o600;
+  } catch (error) {
+    // A dangling symlink is an error, not a new file to overwrite.
+    if (error.code !== "ENOENT" || fs.lstatSync(file, { throwIfNoEntry: false })) throw error;
+  }
+  atomicWriteFile(writePath, content, { mode });
 }
 
 export function readJsonIfExists(file) {

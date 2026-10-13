@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/utils.js";
+import { writePrivateFile } from "../shared/paths.js";
 import { CLIENTS } from "./clients.js";
 
 const BACKUP_PREFIX = ".aerial-backup-";
@@ -10,7 +11,7 @@ const ISO_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 export function backupIfExists(file) {
   if (!fs.existsSync(file)) return undefined;
   const backup = `${file}.aerial-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  fs.copyFileSync(file, backup);
+  writePrivateFile(backup, fs.readFileSync(file));
   return backup;
 }
 
@@ -94,13 +95,13 @@ export function restoreClient(target, { now = () => new Date() } = {}) {
   const targetExisted = fs.existsSync(writePath);
   const mode = resolveRestoreMode(writePath, latest.path, targetExisted);
   let snapshot;
-  if (targetExisted) {
-    const stamp = now().toISOString().replace(/[:.]/g, "-");
-    snapshot = `${writePath}${PRE_RESTORE_PREFIX}${stamp}`;
-    fs.copyFileSync(writePath, snapshot);
-  }
   const writeOpts = mode !== undefined ? { mode } : undefined;
   try {
+    if (targetExisted) {
+      const stamp = now().toISOString().replace(/[:.]/g, "-");
+      snapshot = `${writePath}${PRE_RESTORE_PREFIX}${stamp}`;
+      writePrivateFile(snapshot, fs.readFileSync(writePath));
+    }
     atomicWriteFile(writePath, backupContent, writeOpts);
   } catch (err) {
     if (err.code === "EXDEV") {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
-import { atomicWriteFile } from "../shared/utils.js";
+import { writePrivateFile } from "../shared/paths.js";
 import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort, normalizeEffort } from "../shared/effort.js";
 import { backupIfExists, backupPathsFor } from "./restore.js";
 import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection } from "./toml.js";
@@ -66,7 +66,7 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   content = removeTomlSection(content, "profiles.aerial");
   if (parseToml(content).profile === "aerial") content = setTomlValue(content, ["profile"], undefined);
   parseToml(content);
-  atomicWriteFile(file, content);
+  writePrivateFile(file, content);
   logEvent("setup_write", { target: "codex", file, backup, auth: "command", effort: normalizedEffort });
   return { file, backup, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
@@ -88,7 +88,7 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
   };
   if (selectedModel) next.model = selectedModel;
   if (normalizedEffort) next.effortLevel = normalizedEffort;
-  atomicWriteFile(file, `${JSON.stringify(next, null, 2)}\n`);
+  writePrivateFile(file, `${JSON.stringify(next, null, 2)}\n`);
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
     saveConfig({ ...config, defaultEffort: normalizedEffort });
   }

@@ -27,19 +27,12 @@ function ensureParentDir(file) {
 export function atomicWriteFile(file, content, { mode } = {}) {
   ensureParentDir(file);
   const tmp = `${file}.aerial-tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
-  const opts = mode !== undefined ? { mode } : undefined;
+  const opts = { flag: "wx", ...(mode !== undefined ? { mode } : {}) };
   try {
     fs.writeFileSync(tmp, content, opts);
-    try {
-      fs.renameSync(tmp, file);
-    } catch (err) {
-      if (process.platform === "win32" && fs.existsSync(file) && (err.code === "EEXIST" || err.code === "EPERM")) {
-        fs.unlinkSync(file);
-        fs.renameSync(tmp, file);
-        return;
-      }
-      throw err;
-    }
+    // Never remove the live file as a fallback: a second failed rename would
+    // otherwise leave the user with no configuration at all.
+    fs.renameSync(tmp, file);
     if (process.platform !== "win32" && mode !== undefined) {
       try { fs.chmodSync(file, mode); } catch {}
     }
