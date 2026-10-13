@@ -3,6 +3,8 @@
 const spec = (usage, { flags = [], values = [], positional = 0 } = {}) => ({ usage, flags, values, positional });
 const commands = {
   "--version": spec("--version"),
+  update: spec("update [--check]", { flags: ["--check"] }),
+  upgrade: spec("update [--check]", { flags: ["--check"] }),
   status: spec("status [--json]", { flags: ["--json"] }),
   login: spec("login [--force]", { flags: ["--force"] }),
   start: spec("start [--host <loopback>] [--port <port>]", { values: ["--host", "--port"] }),

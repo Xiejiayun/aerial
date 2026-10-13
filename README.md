@@ -19,6 +19,19 @@ Requirements:
 npm install -g @jiayunxie/aerial
 ```
 
+## Update
+
+```bash
+aerial update --check   # check for a newer release
+aerial update           # install the latest stable release
+```
+
+`aerial upgrade` is an alias for `aerial update`. For older versions without this command, run `npm install -g @jiayunxie/aerial@latest` once to upgrade.
+
+Updates use your configured npm registry and proxy settings. A registry mirror may serve an older version than the official npm site.
+
+After updating, run `aerial service install` and `aerial service restart` to refresh an existing background service and load the new code. On Windows, use an Administrator terminal for these service commands. Restart foreground processes or services you manage yourself as well.
+
 ## Quick Start
 
 If you are on a restricted network or Claude models are missing from `aerial probe`, enable Aerial's upstream proxy mode first:
@@ -123,6 +136,7 @@ Advanced override: `AERIAL_UPSTREAM_PROXY` can be set to a bare `http://`, `http
 
 ```bash
 aerial status           # setup, login, service, and health summary
+aerial update           # check for and install the latest stable release
 aerial proxy status     # upstream proxy mode, egress, and route visibility
 aerial service install  # install and start the background service (Windows: Administrator terminal required)
 aerial doctor           # local diagnostics
