@@ -113,11 +113,12 @@ test("aerial service status --json emits aerial.service-status.v1", () => {
   assert.ok(doc.health);
   assert.ok(doc.logs);
   assert.ok(doc.auth);
+  assert.equal(doc.ok, false);
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(doc.nextSteps.length > 0);
   if (process.platform === "darwin" || process.platform === "win32") {
-    assert.equal(r.status, 0, r.stderr);
     assert.equal(doc.supported, true);
   } else {
-    assert.equal(r.status, 1);
     assert.equal(doc.supported, false);
   }
 });
