@@ -6,9 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-10-13
+
 ### Added
 
 - Add `aerial update` (alias `aerial upgrade`) to check the configured npm registry and upgrade an npm global installation to its latest stable release, with version verification and service restart instructions. Use `--check` to inspect updates without installing. Registry failures, local/linked installations, and failed installs are reported without claiming success; newer local versions are never downgraded.
+
+### Upgrade
+
+- Versions before 0.3.5 need a one-time upgrade with `npm install -g @jiayunxie/aerial@latest` before the new update command is available. The command respects npm's configured registry and proxy settings; mirrors may serve an older release until they synchronize.
+- After upgrading a background installation, run `aerial service install` and `aerial service restart` to load the updated code. On Windows, run these commands from an Administrator terminal.
+
+### Known limitations
+
+- The configured dependency audit feed still reports three existing high-severity findings in `ip-address`, `smol-toml`, and `undici`. This release adds the update command and leaves those dependencies unchanged; it does not resolve those findings.
 
 ## [0.3.4] - 2026-10-13
 
