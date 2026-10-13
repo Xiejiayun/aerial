@@ -16,11 +16,9 @@ name: Release
 #      (`git tag v0.1.1 && git push --tags`). The tag MUST equal
 #      `v<package.json.version>` exactly; mismatched tags fail before
 #      publish.
-#   2. workflow_dispatch — manual stable release escape hatch when the
-#      tag path fails partway. Stable safety steps apply
-#      (clean-stable-semver guard and idempotency precheck; tag/version
-#      check applies on tag-triggered runs). Allowed only from
-#      refs/heads/main.
+#   2. workflow_dispatch — run the same authoritative preflight on main,
+#      then create the immutable tag using GITHUB_TOKEN before publishing.
+#      The tag push does not trigger a second Release workflow.
 #
 # Authentication: OIDC trusted publisher (npm "trusted publishers")
 # only. No NPM_TOKEN secret is configured. OIDC's `job_workflow_ref`
@@ -53,18 +51,23 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      expected_version:
+        description: "Exact version already merged to main (for example 0.3.6)"
+        required: true
+        type: string
 
 # Default token permissions are minimal. The publish job widens to
-# id-token:write locally for OIDC; no other job needs more than read.
+# id-token:write for OIDC and contents:write for the dispatch tag;
+# no other job needs more than read.
 permissions:
   contents: read
 
 # Concurrency: serialize ALL release runs into a single global queue
 # because they publish to the same npm package and must not race. We do
-# NOT group by `${{ github.ref }}`, because the common "manual dispatch
-# from refs/heads/main, then push refs/tags/v<version>" sequence would
-# otherwise schedule two parallel publish jobs against the same version
-# slot. The universal idempotency precheck inside the publish job will
+# NOT group by `${{ github.ref }}`, because independent tag and manual
+# release requests could otherwise race on the same version slot.
+# The universal idempotency precheck inside the publish job will
 # already make a re-run safe, but running them in parallel still races
 # on `npm publish` and is best avoided. We do NOT cancel-in-progress —
 # half-killing a publish is worse than queueing.
@@ -145,9 +148,9 @@ jobs:
       - test
       - package-checks
     runs-on: ubuntu-latest
-    # id-token:write is REQUIRED for OIDC trusted publisher; contents stays read.
+    # OIDC publishes to npm. Only this job may create the dispatch release tag.
     permissions:
-      contents: read
+      contents: write
       id-token: write
     # Job-level outputs are populated by the final `Emit publish outcome`
     # step.
@@ -239,12 +242,17 @@ jobs:
 
       # ---------------- stable path ----------------
 
-      - name: Deterministic release preflight
+      - name: Deterministic release preflight and dispatch tag
         id: preflight
         # The shared script validates the 0.A.B version policy, lockfile
         # agreement, monotonic registry history, explicit-E404 tri-state,
         # main/origin/tag identity, and same-commit workflow idempotency.
-        run: node scripts/release-preflight.mjs workflow
+        # Pass the dispatch input as data, never interpolate it into shell code.
+        # checkout retains GITHUB_TOKEN for the non-forced tag push; GitHub
+        # does not start push workflows for events created by this token.
+        env:
+          RELEASE_EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: node scripts/prepare-release.mjs
 
       - name: Publish to npm with provenance
         if: steps.preflight.outputs.should_publish == 'true'

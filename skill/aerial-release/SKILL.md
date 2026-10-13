@@ -21,7 +21,7 @@ Release Aerial through evidence-based compatibility changes, atomic commits, pro
 
 1. Read repository instructions and `docs/release-runbook.md`.
 2. Inspect `git status --short --branch`, remotes, recent commits, tags, package manifests, workflows, and existing release scripts.
-3. Fetch `origin/main` without discarding local work. Start a `codex/` branch from the current protected-main commit.
+3. Fetch `origin/main` without discarding local work. Start a branch using the session's configured prefix from the current protected-main commit.
 4. Inspect npm versions, dist-tags, target metadata, GitHub tags/releases, and recent CI/release runs.
 5. Record unrelated worktree files and exclude them explicitly from every commit.
 
@@ -91,14 +91,32 @@ npm run release:preflight -- --expected-version <version>
 
 The preflight must confirm manifest agreement, `0.A.B`, monotonic registry history, target E404, clean tracked files, `HEAD == main == origin/main`, and an absent release tag.
 
+If local authoritative-registry access fails, use the documented one-run
+`workflow_dispatch` path instead of treating the version as unused or relying
+on a mirror. The runner must pass the same checks before it creates the tag.
+
 ## 6. Tag, publish, and recover safely
 
-Create and push one annotated tag only after preflight succeeds:
+For the local-preflight path, create and push one annotated tag only after
+preflight succeeds:
 
 ```bash
 git tag -a v<version> -m "Aerial v<version>"
 git push origin v<version>
 ```
+
+For the runner-preflight path, after the checked release PR is merged, dispatch
+once from `main` with the exact intended version:
+
+```bash
+gh workflow run release.yml --ref main -f expected_version=<version>
+```
+
+`scripts/prepare-release.mjs` performs the authoritative preflight before
+creating/pushing the annotated tag with `GITHUB_TOKEN`, then publishing. This
+token does not trigger a second push workflow. Do not manually push another
+tag after dispatch. Existing matching tags are preserved for recovery, and
+conflicts fail before publish.
 
 Monitor the Release workflow through tests, package checks, deterministic workflow preflight, OIDC publish with provenance, and exact-version install smoke.
 
@@ -106,13 +124,13 @@ Apply these recovery rules:
 
 | State | Action |
 |---|---|
-| Target lookup returns explicit E404 before tagging | Continue only if every other new-release check passes. |
+| Target lookup returns explicit E404 before tagging | Continue only if history does not contain the target and every other new-release check passes. |
 | Registry returns empty/invalid JSON, auth/network/5xx, or any non-E404 failure | Stop; registry state is unknown. |
 | Target already exists in `new-release` mode | Stop and choose a new version. |
 | Workflow target exists with matching `gitHead` | Skip publish and rerun verification; this is the idempotent recovery path. |
 | Workflow target has missing or different `gitHead` | Stop; never overwrite or republish the slot. |
 | `npm publish` succeeds but install smoke reports ETARGET | Verify official-registry metadata and provenance, then rerun failed jobs against the same commit/tag. |
-| Tag exists or points elsewhere | Stop; never move it. |
+| A tag already exists in local `new-release` mode, or points elsewhere in either workflow path | Stop; never move it. Same-commit workflow recovery preserves the existing tag. |
 
 ## 7. Verify the public release
 
@@ -121,7 +139,7 @@ Require all of the following before declaring the release complete:
 - `main`, `origin/main`, and the peeled `v<version>` tag resolve to the intended release commit.
 - The Release workflow is green, including its idempotent recovery attempt if needed.
 - Official npm metadata reports the exact version, `latest`, matching `gitHead`, integrity/shasum, and SLSA provenance.
-- A clean temporary install from `https://registry.npmjs.org` reports the exact CLI version and renders help.
+- A clean temporary install from `https://registry.npmjs.org` reports the exact CLI version and renders help. When local access is unavailable, retain the successful runner's official metadata and exact-install evidence.
 - A non-draft, non-prerelease GitHub Release exists for the immutable tag and is marked Latest.
 - The local worktree contains no unexpected tracked changes.
 

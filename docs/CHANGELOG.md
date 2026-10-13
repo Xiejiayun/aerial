@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-10-13
+
+### Added
+
+- Verify the running proxy, generated credential helper, and selected upstream route before switching a client to Aerial. Normal setup sends one small inference request; `--configure-only --model <id>` provides explicit unverified offline configuration.
+- Add `setup --verbose` for configuration paths and backup details while keeping normal completion output focused on readiness and the next step.
+
+### Fixed
+
+- Preserve the original provider across repeated setup and teardown with a takeover journal and three-way restoration. Handle interrupted writes, empty settings containers, and legacy backups without discarding unrelated user changes.
+- Use Claude Code's native model identities and per-model effort settings. Persist only effort levels supported by both the client and upstream model; show any requested-to-effective fallback. Session-only `--effort max` remains available without being falsely persisted as a default.
+- Remove conflicting Claude user-level provider overrides during setup and diagnose inherited environment overrides without exposing their values. Status now reports the effective saved model and effort.
+- Parse and edit Codex TOML structurally, preserve unrelated formatting, migrate old Aerial profiles, respect client directory overrides, and bind helpers and services to the selected Aerial configuration directory.
+- Validate help and arguments before side effects. Report authentication, model access, network, and inference failures with actionable guidance and unsuccessful exit codes where appropriate.
+- Cancel token/catalog waits, retries, HTTP requests, and WebSocket work when clients disconnect, while preserving shared token refreshes needed by other callers.
+- Correct Linux foreground health and unknown service states. Use locale-independent Windows task state and structured task registration for long and Unicode paths; standard interactive-user installation no longer requires an Administrator terminal.
+- Correct IPv6 loopback URLs, preserve upstream retry/rate-limit/request-ID headers, and include tools, system instructions, non-ASCII text, and media in conservative token estimates.
+- Fail release preflight on ambiguous version history or previously used versions. Manual release dispatch now validates, creates its immutable tag, publishes, and verifies in one workflow run.
+
+### Security
+
+- Update vulnerable dependencies and check the authoritative npm audit feed in CI and Release.
+- Preserve restrictive permissions for sensitive configuration writes, reject unsafe symlink replacement, and redact proxy credentials from diagnostics.
+
+### Upgrade
+
+- Run `aerial update` to install this release. For a background installation, run `aerial service install` and `aerial service restart` to refresh its launcher and load the new code; a standard user terminal is supported on Windows.
+- Start Aerial before running normal client setup. Re-run `aerial setup claude` to apply native model mapping and saved effort fixes, then restart Claude Code. Project or managed settings may still override user settings; send a prompt in the restarted client to confirm readiness.
+
 ## [0.3.5] - 2026-10-13
 
 ### Added

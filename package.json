@@ -1,6 +1,6 @@
 {
   "name": "@jiayunxie/aerial",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Local GitHub Copilot proxy for Codex CLI and Claude Code with smart HTTP(S)/SOCKS5 upstream proxy support.",
   "type": "module",
   "private": false,

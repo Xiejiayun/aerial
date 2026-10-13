@@ -72,8 +72,9 @@ through CI OIDC.
   An automation `NPM_TOKEN` is reserved for emergency human-mediated
   fallback only (§13).
 - **GitHub repository settings.** Default Actions permissions are
-  acceptable. Each publish job in this repo explicitly declares
-  `permissions: { contents: read, id-token: write }` — never wider.
+  acceptable. Test and package jobs have `contents: read`. Only the publish
+  job has `contents: write` for the immutable dispatch tag and `id-token: write`
+  for npm OIDC. It never writes to `main` or force-pushes tags.
 - **Local toolchain for the SDE running tag pushes / manual dispatch.**
   Node.js ≥ 22, `gh` CLI logged in (used for creating stable release
   tags and pushing them). After Phase 1 the SDE does not need
@@ -156,11 +157,12 @@ post-publish smoke passes.
         assert `aerial --version` equals the published version and
         run `aerial --help`.
 
-## §6 Manual Dispatch Release (escape hatch)
+## §6 Manual Dispatch Release (one run, including the tag)
 
-- Used only when the tag path fails partway or when a hotfix needs to
-  ship without going through tag → push. The tag path is always the
-  recommended one.
+- Use this path when local access to the authoritative npm registry is
+  unavailable, or when recovering a release. The GitHub runner performs the
+  same registry and clean-main preflight before creating any tag or publishing.
+  A local registry failure never counts as proof that a version is unused.
 - **Manual dispatch is not the bootstrap path.** The very first
   `0.1.0` publish — when `@jiayunxie/aerial` is not yet on the registry
   — cannot use this workflow either, because OIDC trusted publishing
@@ -168,21 +170,30 @@ post-publish smoke passes.
   owner-local bootstrap publish; `release.yml` (both the tag-trigger
   and manual-dispatch paths) is the standard path only after §2 Phase
   2 is in place.
-- `release.yml`'s `workflow_dispatch` trigger requires `github.ref ==
-  refs/heads/main` (the job fails fast otherwise).
+- Merge the release PR with every required check green, then dispatch once:
+
+  ```bash
+  gh workflow run release.yml --ref main -f expected_version=<version>
+  ```
+
+- `workflow_dispatch` requires `github.ref == refs/heads/main` and the exact
+  `expected_version` already present in both manifests. The input is passed
+  through an environment variable, never interpolated into shell code.
 - The shared preflight (§3, §5) also applies to manual dispatch and rejects
   malformed versions, mismatched manifests, stale `main`, non-monotonic
   targets, and ambiguous registry failures before any publish work runs.
-- The publish job runs the **idempotency precheck** described in §7 on
-  every trigger, including manual dispatch. So if you push the matching
-  `v<version>` tag immediately after a successful manual dispatch (which
-  is recommended — see below), the re-triggered workflow detects the
-  already-published version, confirms it was published from the same
-  commit, and continues straight to post-publish smoke without
-  re-publishing. No E409, no destructive overwrite.
-- After a successful manual dispatch, manually create and push
-  the matching git tag so the tag/registry pair stays consistent:
-  `git tag -a v<version> -m "Aerial v<version>" && git push origin v<version>`.
+- After successful preflight, `scripts/prepare-release.mjs` creates and pushes
+  the annotated `v<version>` tag at the checked-out main commit. An existing
+  tag must point to that exact commit; the push never uses force. A tag push
+  failure stops the job before npm publish. A same-commit rerun preserves the
+  tag and skips publishing if official npm metadata proves it already exists.
+- The push uses checkout's repository `GITHUB_TOKEN`. GitHub does not trigger
+  another push workflow for this token, so dispatch, tag, publication, and
+  exact-install verification all happen in one Release run. Do not push a
+  second tag manually. See [GitHub's workflow trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow).
+- When local official-registry access remains unavailable, use the successful
+  runner's official metadata and clean exact-install smoke as the release
+  evidence. A mirror cannot substitute for these checks.
 
 ## §7 CI / Workflow File Structure
 
@@ -200,8 +211,9 @@ post-publish smoke passes.
   parallel prerequisites, then a single Ubuntu `publish` job with
   `id-token: write` whose steps are, in order:
     - full-history checkout + setup-node + `npm ci`,
-    - `node scripts/release-preflight.mjs workflow`, which validates dispatch
-      or tag context and emits `version` plus `should_publish`,
+    - `node scripts/prepare-release.mjs`, which runs the shared preflight,
+      validates the dispatch version, creates/pushes the dispatch tag only
+      after every check succeeds, and emits `version` plus `should_publish`,
     - conditional `npm publish --access public --tag latest --provenance`,
     - **Emit publish outcome**: a final bash-only step that normalizes
       the idempotency result into job outputs (`did_publish`,
@@ -212,12 +224,13 @@ post-publish smoke passes.
       the exact published version with retry.
 
   Release concurrency is a single global queue (`group: release`, no
-  `${{ github.ref }}` suffix) so manual-dispatch + later tag-push runs
+  `${{ github.ref }}` suffix) so independent manual or tag-triggered requests
   serialize instead of racing on the same registry slot.
   - **Idempotency precheck** (inside the shared script): npm lookups are
     classified into three outcomes: success with non-empty valid JSON →
     inspect metadata; a failed command with an explicit `E404` → treat the
-    target as unpublished; every other result (including empty successful
+    target as unpublished only if it is absent from version history;
+    every other result (including empty successful
     output, invalid JSON, network failure, registry 5xx, or auth/config
     error) → hard fail. When the version is already published, its
     `gitHead` is compared against the publish job's locally-checked-out
@@ -225,8 +238,8 @@ post-publish smoke passes.
     checked-out HEAD, skip the publish step and still run post-publish
     smoke against the already-published artifact. If `gitHead` differs
     or is missing, fail loudly — a different commit already owns the
-    version slot. This lets manual dispatch + later `git push v<version>`
-    and rerun-after-smoke-failure both recover without E409.
+    version slot. This lets rerun-after-publish or smoke failures recover
+    without E409. Malformed successful version histories also fail closed.
 
 ## §8 Scripts (`scripts/*`)
 
@@ -238,6 +251,12 @@ post-publish smoke passes.
   enforce the `0.A.B` policy, lockfile agreement, tracked-worktree cleanliness,
   explicit-E404 classification against the authoritative npm registry, and
   `origin/main` identity.
+
+- **`prepare-release.mjs`**: workflow-only orchestration around the read-only
+  preflight. Dispatch requires `RELEASE_EXPECTED_VERSION`; it creates and
+  pushes an immutable annotated tag before exposing publish outputs. Tag
+  triggers only run the preflight. Tests use temporary real Git repositories
+  and a local bare remote to verify ordering, idempotency, and conflict refusal.
 
 - **`verify-package.mjs`**: runs `npm pack --dry-run --json`. Checks three
   layers: REQUIRED canary files present, FORBIDDEN categories absent (with
