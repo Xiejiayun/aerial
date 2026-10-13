@@ -311,7 +311,7 @@ test("Windows install skips recovery and start if task registration fails", { sk
   cleanupServiceArtifacts();
 });
 
-test("Windows recovery script updates the task settings and preserves unrelated settings", { skip: process.platform !== "win32", timeout: 30_000 }, async () => {
+test("Windows recovery script updates the task settings and preserves unrelated settings", { skip: process.platform !== "win32", timeout: 70_000 }, async () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
   const result = await serviceInstall({ run, healthFetch: healthSequence(ABSENT, AERIAL) });
@@ -340,9 +340,11 @@ test("Windows recovery script updates the task settings and preserves unrelated 
     ${script}
     ConvertTo-Json -InputObject $script:captured -Compress
   `;
+  // Windows CI can cold-start PowerShell slowly while other test files run.
+  // Allow both fixtures time to start without weakening their assertions.
   const invoke = (source) => spawnSync("powershell.exe", [
     "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(source, "utf16le").toString("base64")
-  ], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+  ], { encoding: "utf8", timeout: 30_000, windowsHide: true });
   const success = invoke(fixture);
   assert.ifError(success.error);
   assert.equal(success.status, 0, success.stderr);
