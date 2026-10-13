@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Add `aerial update` (alias `aerial upgrade`) to check the configured npm registry and upgrade an npm global installation to its latest stable release, with version verification and service restart instructions. Use `--check` to inspect updates without installing. Registry failures, local/linked installations, and failed installs are reported without claiming success; newer local versions are never downgraded.
+
 ## [0.3.4] - 2026-10-13
 
 ### Fixed
