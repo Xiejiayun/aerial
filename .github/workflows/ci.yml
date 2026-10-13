@@ -29,7 +29,9 @@ jobs:
         node:
           - "20.18.1"
           - "22"
-    runs-on: ${{ matrix.os }}
+    # ARM hosted capacity can leave macos-latest queued until cancellation.
+    # Keep required check names stable and run the complete suite on macOS x64.
+    runs-on: ${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
