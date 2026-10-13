@@ -15,12 +15,11 @@ test("key generate does not print the raw local key", () => {
 
 test("setup codex configures command-backed auth without requiring AERIAL_API_KEY in the environment", () => {
   const home = mkHome("cli-codex-auth");
-  const result = runCli(["setup", "codex", "--model", "gpt-codex-test"], { home });
+  const result = runCli(["setup", "codex", "--configure-only", "--model", "gpt-codex-test"], { home });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Configured Codex/);
-  assert.match(result.stdout, /cli: Codex/);
-  assert.match(result.stdout, /auth: command-backed local Aerial key/);
+  assert.doesNotMatch(result.stdout, /auth:/);
   const content = fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
   assert.match(content, /\[model_providers\.aerial\.auth\]/);
   assert.match(content, /args = \[.*"key", "print" \]/);
@@ -40,9 +39,23 @@ test("setup all is not a client setup command", () => {
   assert.equal(fs.existsSync(path.join(home, ".claude", "settings.json")), false);
 });
 
+test("offline setup is explicit, concise, and does not print structured events by default", () => {
+  const home = mkHome("offline-guidance");
+  const result = runCli(["setup", "codex", "--configure-only", "--model", "gpt-offline"], { home, extraEnv: { AERIAL_GITHUB_TOKEN: "" } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /not verified: configuration saved only/);
+  assert.match(result.stdout, /rerun aerial setup codex/);
+  assert.doesNotMatch(result.stdout, /client config:|aerial defaultEffort|auth:/);
+  assert.equal(result.stderr, "");
+  const missingModel = runCli(["setup", "claude", "--configure-only"], { home });
+  assert.equal(missingModel.status, 1);
+  assert.match(missingModel.stderr, /requires --model/);
+  assert.equal(fs.existsSync(path.join(home, ".claude", "settings.json")), false);
+});
+
 test("setup codex --effort without a value exits 1 with a helpful message", () => {
   const home = mkHome("cli-effort-missing");
-  const result = runCli(["setup", "codex", "--model", "gpt-codex-test", "--effort"], { home });
+  const result = runCli(["setup", "codex", "--configure-only", "--model", "gpt-codex-test", "--effort"], { home });
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--effort requires a value/);
@@ -51,7 +64,7 @@ test("setup codex --effort without a value exits 1 with a helpful message", () =
 
 test("setup codex --effort turbo (invalid) exits 1 before writing config", () => {
   const home = mkHome("cli-effort-invalid");
-  const result = runCli(["setup", "codex", "--model", "gpt-codex-test", "--effort", "turbo"], { home });
+  const result = runCli(["setup", "codex", "--configure-only", "--model", "gpt-codex-test", "--effort", "turbo"], { home });
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Invalid --effort/);
@@ -61,8 +74,8 @@ test("setup codex --effort turbo (invalid) exits 1 before writing config", () =>
 test("setup codex and setup claude keep separate model choices", () => {
   const home = mkHome("cli-separate-models");
   const env = cliEnv(home);
-  const codexResult = runCli(["setup", "codex", "--model", "gpt-codex-test"], { env });
-  const claudeResult = runCli(["setup", "claude", "--model", "claude-messages-test"], { env });
+  const codexResult = runCli(["setup", "codex", "--configure-only", "--model", "gpt-codex-test"], { env });
+  const claudeResult = runCli(["setup", "claude", "--configure-only", "--model", "claude-messages-test"], { env });
 
   assert.equal(codexResult.status, 0, codexResult.stderr);
   assert.equal(claudeResult.status, 0, claudeResult.stderr);
@@ -153,7 +166,7 @@ test("config set host only accepts loopback hosts", () => {
 
 test("setup codex prints the full completion summary block", () => {
   const home = mkHome("cli-codex-summary");
-  const result = runCli(["setup", "codex", "--model", "gpt-summary", "--effort", "high"], { home });
+  const result = runCli(["setup", "codex", "--configure-only", "--model", "gpt-summary", "--effort", "high", "--verbose"], { home });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Configured Codex/);
   assert.match(result.stdout, /cli: Codex/);
@@ -165,23 +178,23 @@ test("setup codex prints the full completion summary block", () => {
   assert.match(result.stdout, /aerial defaultEffort: medium/);
   assert.match(result.stdout, /backup: none/);
   assert.match(result.stdout, /auth: command-backed local Aerial key/);
-  assert.match(result.stdout, /note: restart Codex/);
+  assert.match(result.stdout, /next: Start Aerial/);
 });
 
 test("setup claude prints the full completion summary and writes effortLevel", () => {
   const home = mkHome("cli-claude-summary");
-  const result = runCli(["setup", "claude", "--model", "claude-summary", "--effort", "low"], { home });
+  const result = runCli(["setup", "claude", "--configure-only", "--model", "claude-opus-4.7", "--effort", "low", "--verbose"], { home });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Configured Claude Code/);
   assert.match(result.stdout, /cli: Claude Code/);
-  assert.match(result.stdout, /model: claude-summary/);
+  assert.match(result.stdout, /model: claude-opus-4\.7/);
   assert.match(result.stdout, /effort: low/);
   assert.match(result.stdout, /proxy: http:\/\/127\.0\.0\.1:18181/);
   assert.match(result.stdout, /config: .*\.claude.*settings\.json/);
   assert.match(result.stdout, /aerial config: /);
   assert.match(result.stdout, /aerial defaultEffort: low/);
   assert.match(result.stdout, /auth: apiKeyHelper local Aerial key/);
-  assert.match(result.stdout, /effort is written to Claude settings\.json effortLevel/);
+  assert.match(result.stdout, /not verified: configuration saved only/);
   const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.equal(settings.effortLevel, "low");
   assert.equal(settings.effort, undefined);
@@ -190,13 +203,13 @@ test("setup claude prints the full completion summary and writes effortLevel", (
 test("setup status --json includes additive effort field on codex and claude", () => {
   const home = mkHome("cli-status-effort");
   const baseEnv = cliEnv(home);
-  runCli(["setup", "codex", "--model", "gpt-x", "--effort", "xhigh"], { env: baseEnv });
+  runCli(["setup", "codex", "--configure-only", "--model", "gpt-x", "--effort", "xhigh"], { env: baseEnv });
   const result = runCli(["setup", "status", "--json"], { env: baseEnv });
   assert.equal(result.status, 0, result.stderr);
   const status = JSON.parse(result.stdout);
   assert.equal(status.schema, "aerial.setup-status.v1");
   assert.equal(status.clients.codex.effort, "xhigh");
-  assert.equal(status.clients.claude.effort, "medium");
+  assert.equal(status.clients.claude.effort, "missing");
 });
 
 test("setup status text shows effort=missing when no client has effort", () => {
@@ -206,7 +219,7 @@ test("setup status text shows effort=missing when no client has effort", () => {
   const result = runCli(["setup", "status"], { env: baseEnv });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /codex.*effort=missing/);
-  assert.match(result.stdout, /claude.*effort=medium/);
+  assert.match(result.stdout, /claude.*effort=missing/);
 });
 
 test("aerial --help lists separate Codex and Claude effort vocabularies", () => {

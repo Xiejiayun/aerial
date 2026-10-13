@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { loadConfig } from "../../shared/config.js";
 import { configPath } from "../../shared/paths.js";
 import { restoreAllClients, restoreClient, setupClaude, setupCodex, setupStatus } from "../../setup/index.js";
@@ -13,14 +14,20 @@ import {
 import { requiredArgValue, claudeApiKeyHelper, codexAuthCommand } from "../helpers.js";
 import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
 import { localBaseUrl } from "../../shared/urls.js";
+import { verifySetupReadiness } from "../setup-readiness.js";
+import { CLIENTS } from "../../setup/clients.js";
+import { assertClaudeEnvironment } from "../../setup/claude-conflicts.js";
 
 async function selectSetupOptions(target, route, args) {
+  const configureOnly = args.includes("--configure-only");
+  const explicitModel = requiredArgValue(args, "--model");
+  if (configureOnly && !explicitModel) throw new Error("--configure-only requires --model <id>; offline setup cannot discover available models.");
   const explicitEffort = requiredArgValue(args, "--effort");
   if (explicitEffort !== undefined) {
     if (target === "Codex") assertValidCodexEffort(explicitEffort);
     else assertValidEffort(explicitEffort);
   }
-  const selected = await chooseSetupModel({ target, route, explicitModel: requiredArgValue(args, "--model") });
+  const selected = await chooseSetupModel({ target, route, explicitModel });
   if (!selected.displayed) {
     for (const line of formatModelChoices({ target, route, choices: selected.choices, selectedModel: selected.model, source: selected.source, recommended: selected.recommended })) {
       console.log(line);
@@ -29,12 +36,10 @@ async function selectSetupOptions(target, route, args) {
     console.log(`Selected ${target} model: ${selected.model}`);
   }
   let selectedModel = selected.choices.find((choice) => choice.id === selected.model);
-  if (!selectedModel && selected.source === "explicit") {
-    try {
-      selectedModel = (await discoverModelsForRoute(route)).find((choice) => choice.id === selected.model);
-    } catch {
-      selectedModel = undefined;
-    }
+  if (!selectedModel && selected.source === "explicit" && !configureOnly) {
+    selected.choices = await discoverModelsForRoute(route);
+    selectedModel = selected.choices.find((choice) => choice.id === selected.model);
+    if (!selectedModel) throw new Error(`${selected.model} does not advertise the ${route} route required by ${target}. Run aerial probe and select an available model. Client configuration was not changed.`);
   }
   const effortChoice = await chooseSetupEffort({
     target,
@@ -82,44 +87,42 @@ function printSetupStatus(status) {
 }
 
 export async function runSetupCli(subcommand, rest) {
-  if (subcommand === "codex") {
-    const options = await selectSetupOptions("Codex", "responses", rest);
-    const result = setupCodex({ model: options.model, effort: options.effort, authCommand: codexAuthCommand() });
+  if (subcommand === "codex" || subcommand === "claude") {
+    const isCodex = subcommand === "codex";
+    const cli = isCodex ? "Codex" : "Claude Code";
+    const route = isCodex ? "responses" : "messages";
+    if (!isCodex) assertClaudeEnvironment(loadConfig());
+    const client = CLIENTS[subcommand];
+    if (fs.existsSync(client.file())) {
+      try { client.validateBackup(fs.readFileSync(client.file())); }
+      catch (error) { throw new Error(error.message.replace("Restore aborted: backup", "Setup aborted: client configuration")); }
+    }
+    const options = await selectSetupOptions(cli, route, rest);
+    let readiness = { verified: false };
+    if (!rest.includes("--configure-only")) {
+      console.log(`Checking the local proxy, key helper and ${route} route (one brief upstream request)...`);
+      readiness = await verifySetupReadiness({ route, model: options.model, effort: options.effort });
+    }
+    const result = isCodex
+      ? setupCodex({ model: options.model, effort: options.effort, authCommand: codexAuthCommand() })
+      : setupClaude({ model: options.model, effort: options.effort, models: options.models, apiKeyHelper: claudeApiKeyHelper() });
     const config = loadConfig();
     printSetupCompletionSummary({
-      heading: "Configured Codex",
-      cli: "Codex",
+      heading: `Configured ${cli}`,
+      cli,
       model: result.model,
-      effort: result.effort || "missing",
-      proxy: localBaseUrl(config, "/v1"),
+      effort: result.effort || "client default",
+      proxy: localBaseUrl(config, isCodex ? "/v1" : ""),
       configFile: result.file,
       aerialConfigFile: configPath(),
       aerialDefaultEffort: config.defaultEffort || "missing",
       backup: result.backup,
-      auth: "command-backed local Aerial key",
-      notes: [
-        "Aerial defaultEffort is the Claude proxy fallback and was left unchanged.",
-        "restart Codex if it was already running so it reloads the profile."
-      ]
-    });
-    return;
-  }
-  if (subcommand === "claude") {
-    const options = await selectSetupOptions("Claude Code", "messages", rest);
-    const result = setupClaude({ model: options.model, effort: options.effort, models: options.models, apiKeyHelper: claudeApiKeyHelper() });
-    const config = loadConfig();
-    printSetupCompletionSummary({
-      heading: "Configured Claude Code",
-      cli: "Claude Code",
-      model: result.model || "preserved",
-      effort: result.effort || config.defaultEffort || "missing",
-      proxy: localBaseUrl(config),
-      configFile: result.file,
-      aerialConfigFile: configPath(),
-      aerialDefaultEffort: config.defaultEffort || "missing",
-      backup: result.backup,
-      auth: "apiKeyHelper local Aerial key",
-      notes: ["Restart Claude Code to reload the model mapping and saved per-model effort."]
+      auth: isCodex ? "command-backed local Aerial key" : "apiKeyHelper local Aerial key",
+      readiness,
+      verbose: rest.includes("--verbose"),
+      notes: [readiness.verified
+        ? `Restart ${cli}, then send a prompt to verify its active settings. Project or managed settings may override user settings.`
+        : `Start Aerial, then rerun aerial setup ${subcommand} to verify before using the client.`]
     });
     return;
   }

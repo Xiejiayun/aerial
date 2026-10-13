@@ -698,6 +698,8 @@ recorded with an explicit, signed-off risk acceptance does not block.
 - [ ] Foreground `aerial start` (no `AERIAL_LOG_FILE` env) does NOT
   create `<config-dir>/logs/aerial.log`; structured events go to
   stderr only.
+- [ ] One-shot commands keep structured events off stderr by default.
+  `AERIAL_DEBUG=1` enables those events; `AERIAL_LOG_FILE` keeps them in a file.
 - [ ] Service-managed runs: the wrapper sets `AERIAL_LOG_FILE` so
   `<config-dir>/logs/aerial.log` is created. After a non-trivial
   run (or by manually appending bytes), the primary log file does

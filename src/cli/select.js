@@ -227,7 +227,7 @@ export async function discoverModelsForRoute(route) {
   try {
     response = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET", signal: AbortSignal.timeout(20000) }));
   } catch (error) {
-    throw requestFailure("Could not load Copilot models", error?.aerialUpstreamStatus, error);
+    throw requestFailure("Could not load Copilot models", error?.aerialUpstreamStatus ?? (/Missing GitHub token/.test(error.message) ? 401 : undefined), error);
   }
   const payload = await readJsonSafely(response);
   if (!response.ok) {

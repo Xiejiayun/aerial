@@ -48,25 +48,27 @@ aerial proxy enable
 aerial login
 ```
 
-2. Configure the client you use:
-
-```bash
-# Codex CLI
-aerial setup codex
-
-# Claude Code
-aerial setup claude
-```
-
-During setup, Aerial reads your Copilot model list, shows the models that work for that client, and asks which one to write into the client config. Codex uses models with the `responses` route. Claude Code uses models with the `messages` route.
-
-3. Start Aerial in the background:
+2. Start Aerial in the background on macOS or Windows:
 
 ```bash
 aerial service install
 ```
 
-On Windows, Aerial registers a Task Scheduler task for your current user with limited privileges. A normal terminal is sufficient unless your local policy restricts task creation.
+Windows registration uses your current user with limited privileges. On Linux, run `aerial start` in a separate terminal and keep it open.
+
+3. Configure the client you use:
+
+```bash
+# Codex CLI
+aerial setup codex
+
+# Claude Code 2.1.251+
+aerial setup claude
+```
+
+Setup shows compatible models and effort choices, checks the local proxy and key helper, then sends one brief inference request to the selected upstream model. This request uses your Copilot allowance. Only after verification succeeds does it back up and replace the client configuration. A failure leaves that configuration unchanged.
+
+For deliberate offline configuration, use `aerial setup codex --model <id> --configure-only` (or `claude`). It saves settings without checking availability and clearly reports that they are unverified. Add `--verbose` for configuration paths, backup and helper details.
 
 4. Check everything from one place:
 
