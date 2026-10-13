@@ -69,6 +69,14 @@ Release follows the protected-main PR, complete gates, clean-main preflight,
 immutable tag, successful OIDC publication, provenance and exact-install
 verification, and matching GitHub Release in `docs/release-runbook.md`.
 
+The final release can use one manual dispatch from checked `main` when local
+official-registry TLS is unavailable. It requires an explicit expected version,
+performs the authoritative preflight on the runner, and only then creates the
+annotated tag with `GITHUB_TOKEN` and publishes. This token's tag push does not
+schedule a second Release run. Unknown/malformed history, reused versions,
+conflicting tags, and failed pushes must stop before publish. Real temporary
+Git repositories test the tag creation, refusal, and recovery sequence.
+
 ## Completion ledger
 
 The review covered the CLI (this repository has no graphical app), setup and
@@ -95,6 +103,7 @@ the reproduced findings, their fixes, and the checks used to close them:
 | R16 permissions widened by setup writes | Private writes preserve restrictive modes and reject unsafe replacements; POSIX checks run on Linux/macOS CI. |
 | CLI guidance and initial setup | Client-specific model lists, requested/effective effort, classified failures, concise output, and verified setup before switching client configuration. Explicit offline setup is labeled unverified. |
 | Additional native-service finding | Structured Windows registration removes the `/TR` length limit and works as a normal interactive user. Existing Windows/macOS Node 22 CI jobs perform real isolated install/refresh/stop/start/restart/uninstall and confirm cleanup. |
+| Additional release-preflight findings | Reject malformed version history and a target that appears in history even if its individual lookup returns E404. Dispatch creates the immutable tag after preflight without triggering a duplicate Release run. |
 
 Milestone 1 was merged in PR #13; milestone 2 in PR #14. Milestone 3 closes
 client compatibility and onboarding. Its final local full suite has 499 tests:
