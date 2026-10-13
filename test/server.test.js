@@ -309,7 +309,7 @@ test("GET /v1/models returns upstream_auth_failed when copilot_internal token ex
   }
 });
 
-test("GET /v1/models returns upstream_auth_failed when copilot_internal token exchange returns 403", async () => {
+test("GET /v1/models distinguishes denied subscription access from expired login on 403", async () => {
   process.env.AERIAL_GITHUB_TOKEN = "github-test-token-403";
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
@@ -326,8 +326,10 @@ test("GET /v1/models returns upstream_auth_failed when copilot_internal token ex
     const res = await globalThis.fetch(`http://127.0.0.1:${port}/v1/models`);
     assert.equal(res.status, 403);
     const body = await res.json();
-    assert.equal(body.error.aerial.status, "upstream_auth_failed");
+    assert.equal(body.error.aerial.status, "upstream_access_denied");
     assert.equal(body.error.aerial.upstream_status, 403);
+    assert.match(body.error.message, /subscription/);
+    assert.doesNotMatch(body.error.message, /login --force/);
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.AERIAL_GITHUB_TOKEN;

@@ -5,6 +5,7 @@ import { readJsonSafely } from "../shared/utils.js";
 import { modelsForRoute } from "../proxy/models.js";
 import { codexStatus, claudeStatus } from "../setup/clients.js";
 import { claudeSetupEfforts, resolveClaudeSetupEffort } from "../setup/claude-model.js";
+import { requestFailure } from "./errors.js";
 import {
   CODEX_EFFORT_VALUES,
   DEFAULT_EFFORT,
@@ -192,7 +193,8 @@ function gptVersionScore(id) {
   return major * 1000 + minor;
 }
 
-export function rankModels(choices) {
+export function rankModels(choices, target = "Codex") {
+  if (target !== "Codex") return [...choices].sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
   return [...choices]
     .map((choice, index) => ({ choice, index, score: gptVersionScore(choice.id) }))
     .sort((a, b) => {
@@ -204,8 +206,9 @@ export function rankModels(choices) {
     .map((entry) => entry.choice);
 }
 
-export function pickRecommended(choices) {
+export function pickRecommended(choices, target = "Codex") {
   if (!choices.length) return { recommended: undefined, source: "first_available" };
+  if (target !== "Codex") return { recommended: undefined, source: "first_available", ranked: rankModels(choices, target) };
   const ranked = rankModels(choices);
   const stable = ranked.filter((c) => STABLE_GPT_RE.test(c.id));
   if (stable.length) return { recommended: stable[0].id, source: "recommended_stable", ranked };
@@ -220,11 +223,15 @@ export function orderForPrompt(ranked, recommended) {
 }
 
 export async function discoverModelsForRoute(route) {
-  const response = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET" }));
+  let response;
+  try {
+    response = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET", signal: AbortSignal.timeout(20000) }));
+  } catch (error) {
+    throw requestFailure("Could not load Copilot models", error?.aerialUpstreamStatus, error);
+  }
   const payload = await readJsonSafely(response);
   if (!response.ok) {
-    const detail = payload.error || payload.raw || JSON.stringify(payload);
-    throw new Error(`Could not load Copilot models (${response.status}): ${detail}`);
+    throw requestFailure("Could not load Copilot models", response.status, payload);
   }
   const models = Array.isArray(payload.data) ? payload.data : [];
   return modelsForRoute(models, route);
@@ -270,7 +277,6 @@ export function normalizeCodexEffortCandidates(values) {
 }
 
 function effortUsage(target, candidates, restricted) {
-  if (target !== "Codex") return CLAUDE_EFFORT_USAGE;
   if (!restricted) return target === "Codex" ? CODEX_EFFORT_USAGE : CLAUDE_EFFORT_USAGE;
   return `<${candidates.join("|")}>`;
 }
@@ -288,20 +294,15 @@ export async function chooseSetupModel({
   output: outputStream = output
 } = {}) {
   if (explicitModel) return { model: explicitModel, choices: [], source: "explicit" };
-  let raw;
-  try {
-    raw = await discoverModelsForRoute(route);
-  } catch (err) {
-    throw new Error(`${err.message}\nRun \`aerial login\` first, or pass \`--model <id>\` if you already know which ${target} model to use.`);
-  }
+  const raw = await discoverModelsForRoute(route);
   if (!raw.length) {
     throw new Error(`No Copilot models currently advertise the ${route} route needed by ${target}. Run \`aerial probe\` to inspect the full model list.`);
   }
-  const { recommended, source: recommendedSource, ranked } = pickRecommended(raw);
+  const { recommended, source: recommendedSource, ranked } = pickRecommended(raw, target);
   const choices = ranked;
   const promptListed = orderForPrompt(ranked, recommended);
   const shouldPrompt = prompt === undefined ? Boolean(inputStream.isTTY) : prompt;
-  if (!shouldPrompt) return { model: recommended, choices, source: recommendedSource, recommended };
+  if (!shouldPrompt) return { model: recommended || choices[0].id, choices, source: recommendedSource, recommended };
 
   const current = currentModelFor(target);
   const items = promptListed.map((choice) => ({ label: choice.id, id: choice.id }));
@@ -309,6 +310,7 @@ export async function chooseSetupModel({
   const initialIndex = currentIndex >= 0 ? currentIndex : 0;
 
   outputStream.write(`Available ${target} models (${route} route):\n`);
+  if (target !== "Codex") outputStream.write("  Listed by model name; no quality recommendation is implied.\n");
   if (recommendedSource === "recommended_fallback") {
     outputStream.write(`  No stable gpt-N.M model available; ${recommended} is the fallback. Pass --model <id> to override.\n`);
   }
