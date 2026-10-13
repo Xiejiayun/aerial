@@ -1,92 +1,120 @@
-import { stringify as stringifyToml } from "smol-toml";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { parseForESLint } from "toml-eslint-parser";
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+const keyPath = (key) => key.keys.map(part => part.type === "TOMLBare" ? part.name : part.value);
+const startsWithPath = (value, prefix) => prefix.every((part, index) => value[index] === part);
+const samePath = (a, b) => a.length === b.length && startsWithPath(a, b);
+const keyText = (key) => /^[\w-]+$/.test(key) ? key : JSON.stringify(key);
 
-function tomlScalar(value) {
+function inlineValue(value) {
+  if (Array.isArray(value)) return `[ ${value.map(inlineValue).join(", ")} ]`;
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    return `{ ${Object.entries(value).map(([key, val]) => `${keyText(key)} = ${inlineValue(val)}`).join(", ")} }`;
+  }
   return stringifyToml({ value }).trim().replace(/^value\s*=\s*/, "");
 }
 
-function serializeBlock(values) {
-  const text = stringifyToml(values).trimEnd();
-  return text ? text.split("\n") : [];
+function readDocument(content) {
+  // smol-toml is the client's semantic validation gate. The syntax tree gives
+  // ranges for edits without mistaking text inside strings for table headers.
+  const doc = parseToml(content);
+  const ast = parseForESLint(content).ast;
+  const nodes = ast.body[0].body;
+  const entries = nodes.flatMap(node => node.type === "TOMLTable"
+    ? node.body.map(entry => ({ node: entry, path: [...node.resolvedKey, ...keyPath(entry.key)] }))
+    : [{ node, path: keyPath(node.key) }]);
+  return { doc, nodes, entries };
 }
 
-function sectionName(line) {
-  const match = /^\s*\[\[?(.+?)\]?\]\s*(?:#.*)?$/.exec(line);
-  if (!match) return undefined;
-  const inner = match[1].trim();
-  if (!inner) return undefined;
-  const segment = `(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)`;
-  return new RegExp(`^${segment}(?:\\s*\\.\\s*${segment})*$`).test(inner) ? inner : undefined;
-}
-
-function isSectionHeader(line) {
-  return sectionName(line) !== undefined;
-}
-
-function isSectionOrChild(line, section) {
-  const name = sectionName(line);
-  return name === section || name?.startsWith(`${section}.`);
-}
-
-export function setTomlRootString(content, key, value) {
-  const line = `${key} = ${tomlScalar(value)}`;
-  const source = content.split(/\r?\n/);
-  const firstSection = source.findIndex(isSectionHeader);
-  const rootLines = firstSection === -1 ? source : source.slice(0, firstSection);
-  const restLines = firstSection === -1 ? [] : source.slice(firstSection);
-  const re = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=`);
-  const existing = rootLines.findIndex((rootLine) => re.test(rootLine));
-  if (existing === -1) {
-    let insertAt = rootLines.length;
-    while (insertAt > 0 && !rootLines[insertAt - 1].trim()) insertAt -= 1;
-    rootLines.splice(insertAt, 0, line);
-  } else {
-    rootLines[existing] = line;
+function getPath(doc, parts) {
+  let value = doc;
+  for (const key of parts) {
+    if (!value || !Object.hasOwn(value, key)) return undefined;
+    value = value[key];
   }
-  const merged = [...rootLines, ...restLines].join("\n");
-  return `${merged.trimEnd()}\n`;
+  return value;
 }
 
-export function upsertTomlSection(content, section, values) {
-  const heading = `[${section}]`;
-  const block = [heading, ...serializeBlock(values)];
-  const source = content.split(/\r?\n/);
-  const start = source.findIndex((line) => sectionName(line) === section);
-  if (start === -1) {
-    const base = content.trimEnd();
-    return `${base ? `${base}\n\n` : ""}${block.join("\n")}\n`;
-  }
-  let end = source.length;
-  for (let i = start + 1; i < source.length; i += 1) {
-    if (isSectionHeader(source[i])) {
-      end = i;
-      break;
+function assignPath(doc, parts, value) {
+  let node = doc;
+  for (const part of parts.slice(0, -1)) {
+    if (!Object.hasOwn(node, part)) Object.defineProperty(node, part, { value: {}, writable: true, enumerable: true, configurable: true });
+    if (!node[part] || typeof node[part] !== "object" || Array.isArray(node[part])) {
+      throw new Error(`Cannot update TOML path ${parts.join(".")}: ${part} is not a table.`);
     }
+    node = node[part];
   }
-  while (end > start + 1 && !source[end - 1].trim()) end -= 1;
-  source.splice(start, end - start, ...block);
-  return `${source.join("\n").trimEnd()}\n`;
+  const last = parts.at(-1);
+  if (value === undefined) delete node[last];
+  else Object.defineProperty(node, last, { value, writable: true, enumerable: true, configurable: true });
 }
 
-export function removeTomlSection(content, section) {
-  const source = content.split(/\r?\n/);
-  const kept = [];
-  let removed = false;
-  for (let i = 0; i < source.length;) {
-    if (isSectionOrChild(source[i], section)) {
-      removed = true;
-      i += 1;
-      while (i < source.length && !isSectionHeader(source[i])) i += 1;
-      while (i < source.length && !source[i].trim()) i += 1;
+function replaceRanges(content, edits) {
+  let result = content;
+  for (const { range: [from, to], text = "" } of edits.sort((a, b) => b.range[0] - a.range[0])) {
+    result = result.slice(0, from) + text + result.slice(to);
+  }
+  return result;
+}
+
+function validated(content) {
+  parseToml(content);
+  return content;
+}
+
+// Update one semantic path, including quoted keys, dotted assignments, inline
+// tables, and standard tables. Unrelated source and comments stay in place.
+export function setTomlValue(content, parts, value) {
+  const { doc, nodes, entries } = readDocument(content);
+  const ancestor = entries.find(entry => startsWithPath(parts, entry.path));
+  if (ancestor) {
+    const exact = samePath(ancestor.path, parts);
+    if (exact && value === undefined) return validated(replaceRanges(content, [{ range: ancestor.node.range }]));
+    let next = value;
+    if (!exact) {
+      const table = getPath(doc, ancestor.path);
+      if (!table || typeof table !== "object" || Array.isArray(table)) throw new Error(`TOML ${ancestor.path.join(".")} must be a table.`);
+      assignPath(table, parts.slice(ancestor.path.length), value);
+      next = table;
+    }
+    return validated(replaceRanges(content, [{ range: ancestor.node.value.range, text: inlineValue(next) }]));
+  }
+
+  const edits = [];
+  for (const node of nodes) {
+    if (node.type === "TOMLTable" && startsWithPath(node.resolvedKey, parts)) {
+      edits.push({ range: node.range });
     } else {
-      kept.push(source[i]);
-      i += 1;
+      const children = node.type === "TOMLTable" ? node.body : [node];
+      const base = node.type === "TOMLTable" ? node.resolvedKey : [];
+      for (const entry of children) {
+        if (startsWithPath([...base, ...keyPath(entry.key)], parts)) edits.push({ range: entry.range });
+      }
     }
   }
-  if (!removed) return content.trim() ? `${content.trimEnd()}\n` : "";
-  const merged = kept.join("\n").trim();
-  return merged ? `${merged}\n` : "";
+  let next = replaceRanges(content, edits);
+  if (value === undefined) return validated(next);
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  if (value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)) {
+    let tree = value;
+    for (const part of [...parts].reverse()) tree = { [part]: tree };
+    next = `${next.trimEnd()}${next.trim() ? newline + newline : ""}${stringifyToml(tree).replace(/\n/g, newline)}`;
+  } else {
+    const firstTable = readDocument(next).nodes.find(node => node.type === "TOMLTable");
+    const at = firstTable?.range[0] ?? next.length;
+    const before = next.slice(0, at);
+    const line = `${parts.map(keyText).join(".")} = ${inlineValue(value)}${newline}`;
+    next = before + (before && !before.endsWith("\n") ? newline : "") + line + next.slice(at);
+  }
+  return validated(next);
 }
+
+export const setTomlRootString = (content, key, value) => setTomlValue(content, [key], value);
+export function upsertTomlSection(content, section, values) {
+  const parts = section.split(".");
+  const current = getPath(parseToml(content), parts);
+  const children = Object.fromEntries(Object.entries(current || {}).filter(([, value]) =>
+    value && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)));
+  return setTomlValue(content, parts, { ...children, ...values });
+}
+export const removeTomlSection = (content, section) => setTomlValue(content, section.split("."), undefined);

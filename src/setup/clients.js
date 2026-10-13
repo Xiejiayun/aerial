@@ -7,7 +7,7 @@ import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/utils.js";
 import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort, normalizeEffort } from "../shared/effort.js";
 import { backupIfExists, backupPathsFor } from "./restore.js";
-import { setTomlRootString, upsertTomlSection, removeTomlSection } from "./toml.js";
+import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection } from "./toml.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -64,6 +64,8 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
     refresh_interval_ms: authCommand.refresh_interval_ms ?? DEFAULT_CODEX_AUTH.refresh_interval_ms
   });
   content = removeTomlSection(content, "profiles.aerial");
+  if (parseToml(content).profile === "aerial") content = setTomlValue(content, ["profile"], undefined);
+  parseToml(content);
   atomicWriteFile(file, content);
   logEvent("setup_write", { target: "codex", file, backup, auth: "command", effort: normalizedEffort });
   return { file, backup, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
@@ -138,7 +140,7 @@ export function codexStatus() {
   } catch (err) {
     return { target: "codex", state: "invalid", file, backups, error: err.message, effort: "missing" };
   }
-  const state = codexStateFromDoc(doc, expectedBaseUrl);
+  const state = doc.profile === "aerial" ? "aerial-drift" : codexStateFromDoc(doc, expectedBaseUrl);
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = typeof doc?.model_providers?.aerial?.base_url === "string"
     ? doc.model_providers.aerial.base_url
@@ -149,7 +151,7 @@ export function codexStatus() {
   const legacyProfileLooksAerial = legacyProfile
     && (doc.profiles.aerial.model_provider === "aerial"
       || typeof doc.profiles.aerial.model_reasoning_effort === "string");
-  const needsMigration = legacyProfile && (state !== "not-aerial" || legacyProfileLooksAerial);
+  const needsMigration = doc.profile === "aerial" || (legacyProfile && (state !== "not-aerial" || legacyProfileLooksAerial));
   return {
     target: "codex",
     state,

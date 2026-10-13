@@ -17,6 +17,29 @@ const { setupCodex, setupClaude, setupStatus, codexStatus } = await import("../s
 const { loadConfig, saveConfig } = await import("../src/shared/config.js");
 ensureApiKey();
 
+test("setupCodex migrates quoted keys and the legacy root Aerial profile", () => {
+  const file = path.join(temp, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '"model" = "old" # keep\nprofile = "aerial"\n[ profiles . "aerial" ]\nmodel_provider = "aerial"\n');
+  assert.equal(codexStatus().state, "aerial-drift");
+  setupCodex({ model: "new" });
+  const content = fs.readFileSync(file, "utf8");
+  const doc = parseToml(content);
+  assert.equal(doc.model, "new");
+  assert.equal(doc.profile, undefined);
+  assert.equal(doc.profiles?.aerial, undefined);
+  assert.match(content, /# keep/);
+  assert.equal(codexStatus().state, "aerial");
+});
+
+test("setupCodex leaves an invalid original TOML file intact", () => {
+  const file = path.join(temp, ".codex", "config.toml");
+  const original = 'model = "one"\n"model" = "two"\n';
+  fs.writeFileSync(file, original);
+  assert.throws(() => setupCodex({ model: "new" }));
+  assert.equal(fs.readFileSync(file, "utf8"), original);
+});
+
 test("setupCodex writes responses provider without deleting existing content", () => {
   const codexDir = path.join(temp, ".codex");
   fs.mkdirSync(codexDir, { recursive: true });
@@ -360,11 +383,9 @@ test("upsertTomlSection rewrites the aerial block, dropping a superseded scalar 
   assert.equal(doc.model_providers.aerial.auth.command, "aerial");
 });
 
-test("upsertTomlSection does not crash on TOML that is malformed elsewhere", () => {
+test("upsertTomlSection refuses TOML that is malformed elsewhere", () => {
   const input = ["[other]", "broken = ", "", "# trailing note", ""].join("\n");
-  const out = upsertTomlSection(input, "profiles.aerial", { model: "copilot-test" });
-  assert.ok(out.includes("[profiles.aerial]"));
-  assert.ok(out.includes("# trailing note"));
+  assert.throws(() => upsertTomlSection(input, "profiles.aerial", { model: "copilot-test" }), /Invalid TOML/);
 });
 
 test("setTomlRootString always emits parseable TOML and overwrites an existing root key", () => {
