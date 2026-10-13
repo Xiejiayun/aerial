@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-13
+
 ### Fixed
 
 - Handle client WebSocket upgrade socket errors, including `ECONNRESET` and `EPIPE`, so a failed connection is closed without terminating the proxy. The normal HTTP 501 rejection is unchanged.
