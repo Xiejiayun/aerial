@@ -44,6 +44,18 @@ function buildDefinitionRefreshFailure({ adapter, supervisor, config, definition
   const isManaged = supervisor === "service-managed";
   const status = definition.info.create?.status;
   const reason = isManaged ? "managed_definition_refresh_failed" : "foreground_definition_refresh_failed";
+  if (definition.reason === "recovery_configuration_failed") {
+    return {
+      ok: false,
+      action: "install",
+      platform: adapter.platform,
+      reason,
+      definitionUpdated: false,
+      message: "Task recovery settings could not be applied while refreshing the service definition. The running process was not restarted. Resolve the PowerShell error and rerun `aerial service install`.",
+      warning: tokenWarning(),
+      ...definition.info
+    };
+  }
   const message = isManaged
     ? `schtasks /Create failed (status ${status}) while refreshing the managed-service definition. The running service was not disturbed, but wrapper/env changes were NOT applied. Resolve the underlying schtasks error and rerun \`aerial service install\`.`
     : `Aerial is already running in the foreground on port ${config.port}. The wrapper was rewritten but schtasks /Create failed (status ${status}), so the Task Scheduler definition was NOT refreshed. Resolve the underlying schtasks error and rerun \`aerial service install\`.`;
@@ -150,7 +162,9 @@ export async function serviceInstall({ run = defaultRunCommand, healthFetch, hea
         platform: adapter.platform,
         ok: false,
         reason: failure.reason,
-        status: definition.info.create?.status
+        status: definition.reason === "recovery_configuration_failed"
+          ? definition.info.recovery?.status
+          : definition.info.create?.status
       });
       return failure;
     }
@@ -173,7 +187,8 @@ export async function serviceInstall({ run = defaultRunCommand, healthFetch, hea
     ...definition.info
   };
   if (!definition.ok) {
-    result.reason = "create_failed";
+    result.reason = definition.reason || "create_failed";
+    if (definition.message) result.message = definition.message;
   } else {
     const start = adapter.triggerStart();
     const triggerOk = start.status === 0;

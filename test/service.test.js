@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-service-test-"));
 process.env.AERIAL_CONFIG_DIR = path.join(temp, "config");
@@ -277,6 +278,116 @@ test("serviceInstall on Windows runs schtasks /Create followed by /Run and write
   assert.ok(run.calls.find((c) => c.file === "schtasks.exe" && c.args.includes("/Create")));
   assert.ok(run.calls.find((c) => c.file === "schtasks.exe" && c.args.includes("/Run")));
   assert.equal(result.health?.ok, true, "install must report a health-ok confirmation after /Run");
+});
+
+test("Windows install configures recovery before starting and refuses to start if configuration fails", { skip: process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  const run = makeRunner();
+  run.queue.push({ status: 0, stdout: "", stderr: "" });
+  run.queue.push({ status: 1, stdout: "", stderr: "Recovery settings access denied" });
+  const result = await serviceInstall({ run, healthFetch: healthSequence(ABSENT, AERIAL) });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "recovery_configuration_failed");
+  assert.equal(result.create.status, 0);
+  assert.equal(result.recovery.status, 1);
+  assert.match(result.recovery.stderr, /access denied/);
+  assert.match(result.message, /aerial service install/);
+  assert.equal(run.calls[0].file, "schtasks.exe");
+  assert.ok(run.calls[0].args.includes("/Create"));
+  assert.equal(run.calls[1].file, "powershell.exe");
+  assert.ok(!run.calls.some((call) => call.args.includes("/Run")));
+  cleanupServiceArtifacts();
+});
+
+test("Windows install skips recovery and start if task registration fails", { skip: process.platform !== "win32" }, async () => {
+  cleanupServiceArtifacts();
+  const run = makeRunner();
+  run.queue.push({ status: 1, stdout: "", stderr: "Task registration denied" });
+  const result = await serviceInstall({ run, healthFetch: absentHealth() });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "create_failed");
+  assert.equal(run.calls.length, 1);
+  assert.equal(result.recovery, undefined);
+  cleanupServiceArtifacts();
+});
+
+test("Windows recovery script updates the task settings and preserves unrelated settings", { skip: process.platform !== "win32", timeout: 30_000 }, async () => {
+  cleanupServiceArtifacts();
+  const run = makeRunner();
+  const result = await serviceInstall({ run, healthFetch: healthSequence(ABSENT, AERIAL) });
+  assert.equal(result.ok, true);
+  assert.equal(result.recovery.status, 0);
+  assert.deepEqual(run.calls.map((call) => call.file), ["schtasks.exe", "powershell.exe", "schtasks.exe"]);
+  assert.ok(run.calls[2].args.includes("/Run"));
+  const command = run.calls[1];
+  const script = Buffer.from(command.args[command.args.indexOf("-EncodedCommand") + 1], "base64").toString("utf16le");
+  // Execute the actual PowerShell with command doubles. Never register or
+  // modify the developer's real task from the automated test suite.
+  const fixture = `
+    function Get-ScheduledTask {
+      param($TaskName, $TaskPath)
+      if ($TaskName -ne 'AerialLocalProxy' -or $TaskPath -ne '\\') { throw 'Wrong task selected' }
+      [pscustomobject]@{ Settings = [pscustomobject]@{
+        RestartInterval = $null; RestartCount = 0; ExecutionTimeLimit = 'PT72H';
+        DisallowStartIfOnBatteries = $true; StopIfGoingOnBatteries = $true;
+        Priority = 5; WakeToRun = $true; MultipleInstances = 2
+      } }
+    }
+    function Set-ScheduledTask {
+      param($TaskName, $TaskPath, $Settings)
+      $script:captured = [pscustomobject]@{ TaskName = $TaskName; TaskPath = $TaskPath; Settings = $Settings }
+    }
+    ${script}
+    ConvertTo-Json -InputObject $script:captured -Compress
+  `;
+  const invoke = (source) => spawnSync("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(source, "utf16le").toString("base64")
+  ], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+  const success = invoke(fixture);
+  assert.ifError(success.error);
+  assert.equal(success.status, 0, success.stderr);
+  assert.deepEqual(JSON.parse(success.stdout), {
+    TaskName: "AerialLocalProxy",
+    TaskPath: "\\",
+    Settings: {
+      RestartInterval: "PT1M",
+      RestartCount: 999,
+      ExecutionTimeLimit: "PT0S",
+      DisallowStartIfOnBatteries: false,
+      StopIfGoingOnBatteries: false,
+      Priority: 5,
+      WakeToRun: true,
+      MultipleInstances: 2
+    }
+  });
+  const failure = invoke(fixture.replace("$script:captured = [pscustomobject]", "throw 'Recovery access denied'; $script:captured = [pscustomobject]"));
+  assert.ifError(failure.error);
+  assert.notEqual(failure.status, 0, "a scheduler error must make the configuration command fail");
+  assert.match(failure.stderr, /Recovery access denied/);
+  cleanupServiceArtifacts();
+});
+
+test("Windows recovery failure is reported when refreshing a running service without restarting it", { skip: process.platform !== "win32" }, async (t) => {
+  for (const managed of [true, false]) {
+    await t.test(managed ? "managed" : "foreground", async () => {
+      cleanupServiceArtifacts();
+      const run = makeRunner();
+      run.queue.push(managed
+        ? { status: 0, stdout: "Status: Running", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Task not found" });
+      run.queue.push({ status: 0, stdout: "", stderr: "" });
+      run.queue.push({ status: 1, stdout: "", stderr: "Recovery settings access denied" });
+      const result = await serviceInstall({ run, healthFetch: aerialHealth() });
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, managed ? "managed_definition_refresh_failed" : "foreground_definition_refresh_failed");
+      assert.equal(result.definitionUpdated, false);
+      assert.equal(result.recovery.status, 1);
+      assert.match(result.message, /recovery settings/i);
+      assert.match(result.message, /aerial service install/);
+      assert.ok(!run.calls.some((call) => call.args.includes("/Run") || call.args.includes("/End")));
+      cleanupServiceArtifacts();
+    });
+  }
 });
 
 test("serviceInstall surfaces a warning note when GitHub token is missing", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
