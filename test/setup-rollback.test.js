@@ -76,7 +76,7 @@ const LEGACY_ENV_KEY_CODEX = [
 const AERIAL_CLAUDE = JSON.stringify({
   apiKeyHelper: "aerial key print",
   env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:18181", CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1" },
-  model: "claude-sonnet-4.6"
+  model: "claude-sonnet-4-6"
 }, null, 2);
 
 const VALID_CODEX_BACKUP = 'model_provider = "openai"\nmodel = "gpt-4o"\n';
@@ -185,7 +185,7 @@ test("claudeStatus returns aerial when helper + baseUrl match", () => {
   writeFile(claudeFile, AERIAL_CLAUDE);
   const s = claudeStatus();
   assert.equal(s.state, "aerial");
-  assert.equal(s.model, "claude-sonnet-4.6");
+  assert.equal(s.model, "claude-sonnet-4-6");
 });
 
 test("claudeStatus returns aerial-stale when baseUrl points to different aerial port", () => {

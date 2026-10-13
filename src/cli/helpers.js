@@ -54,12 +54,14 @@ export function computeAppStatus(setup, service) {
   const apiKeyPresent = setup.auth.api_key.exists;
   const hasAerialClient = setup.clients.codex.state === "aerial" || setup.clients.claude.state === "aerial";
   const serviceHealthy = service.health?.aerial === true && service.service?.reason !== "status_query_failed";
-  const ok = apiKeyPresent && githubTokenPresent && hasAerialClient && serviceHealthy;
+  const conflicts = Object.values(setup.clients).filter(client => client.state.startsWith("aerial") && client.conflicts?.length);
+  const ok = apiKeyPresent && githubTokenPresent && hasAerialClient && serviceHealthy && !conflicts.length;
   const { nextSteps, hints } = serviceGuidance(service);
   const setupCommands = preferredClientTargets(setup).map(target => `aerial setup ${target}`).join(" or ");
   if (!githubTokenPresent) nextSteps.push("run: aerial login");
   if (!hasAerialClient) nextSteps.push(`run: ${setupCommands}`);
   if (hasAerialClient && !apiKeyPresent) nextSteps.push(`run: ${setupCommands} to recreate the local Aerial key`);
+  for (const client of conflicts) nextSteps.push(`${client.target}: ${client.migration} (${client.conflicts.map(item => `${item.source}.${item.key}`).join(", ")})`);
   if (setup.auth.github_token.source === "env") {
     hints.push("AERIAL_GITHUB_TOKEN is set for this process only; run aerial login without that env var to persist a service-readable login.");
   }

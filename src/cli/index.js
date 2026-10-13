@@ -13,6 +13,7 @@ import { runUpdateCli } from "./commands/update.js";
 import { doctor, renderDoctorText } from "./doctor.js";
 import { formatProbeReport, runProbe } from "./probe.js";
 import { parseGlobalArgs, validateCliArgs } from "./args.js";
+import { setStderrLogging } from "../shared/log.js";
 
 function printHelp(rawArgs = []) {
   const command = rawArgs[0] === "--config-dir" ? rawArgs[2] : rawArgs[0];
@@ -23,8 +24,8 @@ Usage:
   aerial --version
   aerial update [--check]
   aerial login [--force]
-  aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>]
-  aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>]
+  aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>] [--configure-only] [--verbose]
+  aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>] [--configure-only] [--verbose]
   aerial service install|start|stop|restart|uninstall
   aerial status [--json]
   aerial proxy status|enable|disable [--json]
@@ -45,6 +46,9 @@ Debug:
   aerial key generate|print
 
 Use aerial --config-dir <directory> <command> to select an Aerial configuration.
+Setup verifies the running proxy and sends a brief upstream request before changing client settings.
+Use --configure-only with --model to save unverified offline settings; --verbose shows paths and helpers.
+Set AERIAL_DEBUG=1 for structured debug events on stderr, or AERIAL_LOG_FILE for file logging.
 Add --help to any command to view help without making changes.`);
 }
 
@@ -57,6 +61,7 @@ async function main() {
   if (validateCliArgs(args).help) return printHelp();
   if (configDir) process.env.AERIAL_CONFIG_DIR = configDir;
   if (command === "--version") return printVersion();
+  setStderrLogging(command === "start" || process.env.AERIAL_DEBUG === "1");
 
   if (command === "update" || command === "upgrade") {
     runUpdateCli(args.slice(1));

@@ -85,7 +85,8 @@ jobs:
         node:
           - "20.18.1"
           - "22"
-    runs-on: ${{ matrix.os }}
+    # Match CI's macOS x64 runner while ARM hosted capacity is constrained.
+    runs-on: ${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6

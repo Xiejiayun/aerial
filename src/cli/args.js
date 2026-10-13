@@ -16,8 +16,8 @@ const commands = {
     print: spec("key print")
   },
   setup: {
-    codex: spec("setup codex [--model <id>] [--effort <level>]", { values: ["--model", "--effort"] }),
-    claude: spec("setup claude [--model <id>] [--effort <level>]", { values: ["--model", "--effort"] }),
+    codex: spec("setup codex [--model <id>] [--effort <level>] [--configure-only] [--verbose]", { values: ["--model", "--effort"], flags: ["--configure-only", "--verbose"] }),
+    claude: spec("setup claude [--model <id>] [--effort <level>] [--configure-only] [--verbose]", { values: ["--model", "--effort"], flags: ["--configure-only", "--verbose"] }),
     all: spec("setup all"), // Keep the actionable migration error in the handler.
     status: spec("setup status [--json]", { flags: ["--json"] }),
     restore: spec("setup restore <codex|claude|all> --latest", { flags: ["--latest"], positional: 1 })

@@ -7,6 +7,7 @@ import { loadConfig } from "../shared/config.js";
 import { setTomlValue } from "./toml.js";
 import { isAerialKeyHelper } from "./auth-helper.js";
 import { localBaseUrl } from "../shared/urls.js";
+import { claudeModelSettingsKey, claudeNativeModel } from "./claude-model.js";
 
 const SCHEMA = "aerial.takeover.v1";
 export const takeoverPath = file => `${file}.aerial-state.json`;
@@ -23,7 +24,9 @@ function parseClient(target, text) {
 
 function changes(before, after, prefix = []) {
   if ((object(before) || before === undefined) && (object(after) || after === undefined)) {
-    return [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
+    const keys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])];
+    if (!keys.length) return isDeepStrictEqual(before, after) ? [] : [{ path: prefix, before, after }];
+    return keys
       .flatMap(key => changes(owns(before, key) ? before[key] : undefined, owns(after, key) ? after[key] : undefined, [...prefix, key]));
   }
   return isDeepStrictEqual(before, after) ? [] : [{ path: prefix, before, after }];
@@ -103,6 +106,11 @@ function legacyBaseline(target, text, backups) {
       }
     }
   } else {
+    const modelKey = claudeModelSettingsKey(doc.model);
+    if (modelKey) remove("modelSettings", modelKey, "effortLevel");
+    for (const [native, upstream] of Object.entries(doc.modelOverrides || {})) {
+      if (claudeNativeModel(upstream) === native) remove("modelOverrides", native);
+    }
     for (const key of ["apiKeyHelper", "model", "effortLevel"]) remove(key);
     for (const key of ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"]) remove("env", key);
   }

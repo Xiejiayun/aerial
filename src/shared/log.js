@@ -5,6 +5,11 @@ const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_ROTATE_KEEP = 3;
 const MAX_LINE_BYTES = 64 * 1024;
 const MAX_REDACT_DEPTH = 8;
+let stderrLogging = true;
+
+export function setStderrLogging(enabled) {
+  stderrLogging = Boolean(enabled);
+}
 
 const state = {
   fd: undefined,
@@ -201,6 +206,7 @@ export function logEvent(event, fields = {}) {
     writeBuffer(buf);
     return;
   }
+  if (!stderrLogging) return;
   try {
     const text = buf.toString("utf8").replace(/\n$/, "");
     console.error(text);

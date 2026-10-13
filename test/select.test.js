@@ -361,14 +361,14 @@ test("formatEffortSelection differentiates non-TTY default", () => {
   assert.match(nonTty, /--effort <minimal\|low\|medium\|high\|xhigh\|max\|ultra>/);
 });
 
-test("formatEffortSelection keeps the full resolvable Claude effort vocabulary", () => {
+test("formatEffortSelection lists only the available persistent Claude levels", () => {
   const nonTty = formatEffortSelection({
     target: "Claude Code",
     effort: "medium",
     source: "default_non_tty",
     supportedEfforts: ["medium", "xhigh"]
   });
-  assert.match(nonTty, /--effort <low\|medium\|high\|xhigh\|max\|ultracode>/);
+  assert.match(nonTty, /--effort <medium\|xhigh>/);
 });
 
 // --- model discovery / ranking / selection ---

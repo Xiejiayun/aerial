@@ -29,26 +29,25 @@ async function modelsRouteOrUpstreamAuthFailed(fetchRequest) {
   } catch (err) {
     const status = err?.aerialUpstreamStatus;
     if (status === 401 || status === 403) {
-      return json(status, {
-        error: {
-          type: "authentication_error",
-          message: "GitHub login was rejected by Copilot. Run aerial login --force.",
-          aerial: { status: "upstream_auth_failed", upstream_status: status }
-        }
-      });
+      return upstreamAccessFailure(status);
     }
     throw err;
   }
   if (response.status === 401 || response.status === 403) {
-    return json(response.status, {
-      error: {
-        type: "authentication_error",
-        message: "GitHub login was rejected by Copilot. Run aerial login --force.",
-        aerial: { status: "upstream_auth_failed", upstream_status: response.status }
-      }
-    });
+    await response.body?.cancel();
+    return upstreamAccessFailure(response.status);
   }
   return response;
+}
+
+function upstreamAccessFailure(status) {
+  const denied = status === 403;
+  return json(status, { error: {
+    type: denied ? "permission_error" : "authentication_error",
+    message: denied ? "Copilot access denied. Check your subscription and organization/model permissions. Run aerial proxy status to check the network route."
+      : "GitHub login was rejected by Copilot. Run aerial login --force.",
+    aerial: { status: denied ? "upstream_access_denied" : "upstream_auth_failed", upstream_status: status }
+  } });
 }
 
 function nodeRequestToFetch(req, body, signal) {

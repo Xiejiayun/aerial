@@ -68,3 +68,42 @@ POSIX permissions on the CI operating-system matrix.
 Release follows the protected-main PR, complete gates, clean-main preflight,
 immutable tag, successful OIDC publication, provenance and exact-install
 verification, and matching GitHub Release in `docs/release-runbook.md`.
+
+## Completion ledger
+
+The review covered the CLI (this repository has no graphical app), setup and
+recovery, service lifecycle, request transport, and release gates. These are
+the reproduced findings, their fixes, and the checks used to close them:
+
+| Finding | Resolution and evidence |
+| --- | --- |
+| R01 Claude model/effort mismatch | Native `modelOverrides`, per-model persistent effort, client/catalog intersection. Real Claude Code 2.1.281 against a local mock verifies medium, xhigh, max-to-xhigh, Opus 4.6 fallback, and explicit session max pass-through. |
+| R02 recovery loses the original provider | First-takeover journal, repeated setup, three-way teardown, interrupted writes, legacy fallback and empty-container regressions. |
+| R03 help/invalid arguments cause side effects | Complete argument validation before dispatch; subprocess tests inspect unchanged files. |
+| R04 localized Windows task status | Numeric Task Scheduler COM state; unknown/query-failed state never means stopped. Real lifecycle verified on Windows. |
+| R05 TOML editing corrupts valid layouts | AST edits preserve unrelated source; quoted/dotted/inline/multiline and old profile migration tests. |
+| R06 disconnected requests continue work | Cancellation through token, catalog, retry, HTTP and WebSocket; real pre-header disconnect and stream cancellation tests. |
+| R07 directory overrides and helper mismatch | Client overrides respected; helpers and wrappers bind the resolved Aerial directory. Isolated helper subprocess tests. |
+| R08 Claude migration retains provider overrides | Clear conflicting user settings, preserve the baseline, diagnose inherited variables without their values, and reject setup before writes. |
+| R09 failed inference reports successful probe | Aggregate checked routes into the overall result and process exit code. |
+| R10 incomplete token estimate | Count the whole request, including tools/system and conservative media allowances. This remains an estimate, explicitly labeled. |
+| R11 status/doctor misreport Linux and service failures | Separate manager support from health; platform-specific next steps and client-specific repairs. |
+| R12 invalid IPv6 loopback URLs | One URL builder, with an actual IPv6 HTTP health test. |
+| R13 response retry/diagnostic headers dropped | Preserve retry, rate-limit and request IDs while excluding transport/framing headers. |
+| R14 proxy credentials in config output | Shared redaction, with synthetic credential regressions. |
+| R15 vulnerable locked dependencies | Patched lockfile and authoritative npm audit in CI/Release. |
+| R16 permissions widened by setup writes | Private writes preserve restrictive modes and reject unsafe replacements; POSIX checks run on Linux/macOS CI. |
+| CLI guidance and initial setup | Client-specific model lists, requested/effective effort, classified failures, concise output, and verified setup before switching client configuration. Explicit offline setup is labeled unverified. |
+| Additional native-service finding | Structured Windows registration removes the `/TR` length limit and works as a normal interactive user. Existing Windows/macOS Node 22 CI jobs perform real isolated install/refresh/stop/start/restart/uninstall and confirm cleanup. |
+
+Milestone 1 was merged in PR #13; milestone 2 in PR #14. Milestone 3 closes
+client compatibility and onboarding. Its final local full suite has 499 tests:
+487 passed, 12 platform skips, zero failures. Platform checks in the required
+CI matrix cover those Windows-host skips. Package, secret, syntax, CLI and
+dependency gates also pass. No version is published between milestones.
+
+Tests use synthetic credentials and mock inference; they do not prove that
+every Copilot account has access to every route. Normal setup now verifies the
+selected route against the user's own running proxy. Project/managed client
+policies and existing client sessions remain outside the user-settings check;
+the completion message explicitly asks the user to restart and send a prompt.

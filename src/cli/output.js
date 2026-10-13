@@ -1,15 +1,19 @@
-export function printSetupCompletionSummary({ heading, cli, model, effort, proxy, configFile, aerialConfigFile, aerialDefaultEffort, backup, auth, notes = [] }) {
+export function printSetupCompletionSummary({ heading, cli, model, effort, proxy, configFile, aerialConfigFile, aerialDefaultEffort, backup, auth, readiness, verbose = false, notes = [] }) {
   console.log(heading);
-  console.log(`  cli: ${cli}`);
   console.log(`  model: ${model}`);
   console.log(`  effort: ${effort}`);
-  console.log(`  proxy: ${proxy}`);
-  console.log(`  client config: ${configFile}`);
-  console.log(`  aerial config: ${aerialConfigFile}`);
-  console.log(`  aerial defaultEffort: ${aerialDefaultEffort}`);
-  console.log(`  backup: ${backup || "none"}`);
-  console.log(`  auth: ${auth}`);
-  for (const note of notes) console.log(`  note: ${note}`);
+  console.log(readiness?.verified ? `  verified: local proxy, key helper, upstream ${readiness.upstreamRoute} route`
+    : "  not verified: configuration saved only; proxy and upstream availability were not checked");
+  for (const note of notes) console.log(`  next: ${note}`);
+  if (verbose) {
+    console.log(`  cli: ${cli}`);
+    console.log(`  proxy: ${proxy}`);
+    console.log(`  client config: ${configFile}`);
+    console.log(`  aerial config: ${aerialConfigFile}`);
+    console.log(`  aerial defaultEffort: ${aerialDefaultEffort}`);
+    console.log(`  backup: ${backup || "none"}`);
+    console.log(`  auth: ${auth}`);
+  }
 }
 
 export function printSetupSummary(status) {
@@ -18,6 +22,7 @@ export function printSetupSummary(status) {
     const model = client.model ? ` model=${client.model}` : "";
     const effort = ` effort=${client.effort || "missing"}`;
     console.log(`  ${client.target}: ${client.state}${model}${effort}`);
+    for (const conflict of client.conflicts || []) console.log(`    override: ${conflict.source}.${conflict.key}`);
     if (client.migration) console.log(`    migration: ${client.migration}`);
   }
   console.log(`api key: ${status.auth.api_key.exists ? "present" : "missing"}`);

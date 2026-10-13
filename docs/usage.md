@@ -46,16 +46,17 @@ For foreground processes or a service you manage yourself, restart it using its 
 
 Older Aerial versions without `update` need a one-time upgrade with `npm install -g @jiayunxie/aerial@latest` before the new command is available.
 
-## 2. Configure Local Clients
+## 2. First-run sequence
 
 ```bash
 aerial login
+aerial service install  # macOS/Windows; on Linux, run aerial start in another terminal
 aerial setup codex
 # optional, if you use Claude Code too:
 aerial setup claude
 ```
 
-Aerial creates a local API key, stores it privately, asks you to choose from compatible Copilot models, and configures the selected clients to use it. Run `aerial login` before setup so model discovery can read your Copilot model list. There is intentionally no `aerial setup all` setup shortcut: Codex and Claude Code can need different model IDs, so setup stays client-specific. If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
+Aerial asks you to choose a compatible model and effort, checks the running local proxy, executes its generated key helper, and sends one brief inference request through the selected route. That request consumes a small amount of Copilot usage. It writes the client configuration only after these checks pass; failure leaves the client file unchanged. Run `aerial login` and start the proxy before setup. Use `--configure-only --model <id>` to deliberately save offline settings without a catalog lookup or inference check; the result is marked unverified. Add `--verbose` to show configuration paths, backups, and helper details. There is intentionally no `aerial setup all` setup shortcut: Codex and Claude Code can need different model IDs, so setup stays client-specific. If Codex or Claude Code was already open, restart it after setup so it rereads the updated client config.
 
 ## 3. Login To GitHub
 
@@ -91,7 +92,7 @@ For explicit overrides, `AERIAL_UPSTREAM_PROXY` accepts bare `http://`, `https:/
 aerial service install
 ```
 
-Default URL: `http://127.0.0.1:18181`. `aerial service install` is the daily-use path on macOS and Windows because it installs and starts the local background service. Use `aerial start` only when you want a foreground debug process in the current terminal.
+Default URL: `http://127.0.0.1:18181`. `aerial service install` is the daily-use path on macOS and Windows because it installs and starts the local background service. On Linux, or when you prefer foreground mode, run `aerial start` in another terminal and keep it open.
 
 On Windows, Aerial registers a Task Scheduler task for your current user with limited privileges. A normal terminal is sufficient unless your local policy restricts task creation.
 
@@ -110,14 +111,14 @@ wire_api = "responses"
 
 [model_providers.aerial.auth]
 command = "<node>"
-args = ["<aerial-cli.js>", "key", "print"]
+args = ["<aerial-cli.js>", "--config-dir", "<absolute-aerial-config-dir>", "key", "print"]
 timeout_ms = 5000
 refresh_interval_ms = 0
 ```
 
 The local key is generated and stored by Aerial automatically. Users do not need to run `aerial key generate`, copy a key into `~/.codex/config.toml`, or export `AERIAL_API_KEY`.
 
-For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
+For an isolated offline configuration, set `AERIAL_CONFIG_DIR` and the client directory (`CODEX_HOME` or `CLAUDE_CONFIG_DIR`) to temporary directories and pass `--configure-only --model <id>`.
 
 To skip the prompts, pass `--model <responses-model-id>` and/or `--effort <minimal|low|medium|high|xhigh|max|ultra>`. `none` is accepted as an alias for Codex `minimal`. Aerial resolves the request against the selected model's live Copilot capabilities: supported values are preserved, while unsupported values fall back to the nearest usable level (`ultra` currently becomes `max` on GPT-5.6 models, and `minimal` is sent as Copilot `none`). The resolved Codex value is written as root-level `model_reasoning_effort = "<effort>"`. Codex setup does not change Aerial `defaultEffort`, which remains the Claude proxy fallback. Under non-TTY (CI/pipes) the wizard does not prompt and falls back to `medium` when the selected model supports it.
 
@@ -129,11 +130,13 @@ aerial setup claude
 
 The setup command backs up and merges `~/.claude/settings.json`, asks you to choose a model whose Aerial routes include `messages`, then writes an absolute `apiKeyHelper` command and `ANTHROPIC_BASE_URL=http://127.0.0.1:18181`. The helper lets Claude Code read the local Aerial key automatically without relying on a shell `AERIAL_API_KEY` export or a refreshed `PATH`.
 
-If Claude Code was previously pointed at another Anthropic-compatible gateway, setup removes stale `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_*_MODEL` entries from the managed `env` block.
+When migrating from another provider, setup clears old authentication, Bedrock/Vertex/Foundry/Mantle/AWS provider selectors, all default family overrides (including Haiku), and conflicting effort variables in the user settings `env` block. It replaces provider model mappings with available Copilot mappings and resets user-scope model restrictions, thinking overrides, and effort caps before applying your choices. Unrelated settings are retained, and the takeover journal restores the original values on teardown. Project and managed policy files can still override user settings and are not edited.
 
-For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
+Overrides inherited from the launching shell cannot be removed by Aerial. Setup stops before writing the client file, names the conflicting variables without printing their values, and asks you to clear them in the shell that launches Claude. Status and doctor also report these conflicts.
 
-To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|medium|high|xhigh|max|ultracode>`. Aerial resolves the request against the selected model's live Copilot capabilities. Native `max` is preserved when supported; `ultracode` is accepted as input but setup persists `max` or the nearest lower supported effort for compatibility with older Claude Code releases. `setup claude --effort <value>` writes Claude Code's native `"effortLevel": "<effort>"` setting into `settings.json` and also updates Aerial-wide `defaultEffort` as a proxy fallback. Precedence for the Anthropic effort applied to a Claude Opus 4.7 request, in order:
+For an isolated offline configuration, set `AERIAL_CONFIG_DIR` and the client directory (`CODEX_HOME` or `CLAUDE_CONFIG_DIR`) to temporary directories and pass `--configure-only --model <id>`.
+
+To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|medium|high|xhigh|max|ultracode>`. Setup maps Copilot's model ID to a native Anthropic identity with `modelOverrides`, so Claude recognizes the model's capabilities. It saves effort in `modelSettings[<native-model>].effortLevel` (Claude Code 2.1.251+) and the legacy top-level `effortLevel`. Choices are the intersection of the client's persistent levels and the model's catalog capabilities. Unknown model capabilities are not presented as verified effort support. `max` cannot be persisted: setup reports the requested-to-saved change, up to `xhigh`, with the reason. Use `claude --effort max` for a single session when the upstream supports it. The legacy `ultracode` setup input resolves up to `xhigh`; it does not turn on Claude's separate workflow mode. The saved effort also updates Aerial-wide `defaultEffort` for requests that omit a client effort. Status reads the actual saved client setting and never substitutes this proxy fallback. Precedence for the Anthropic effort applied to a Claude Opus 4.7 request, in order:
 
 1. An explicit `output_config.effort` in the request body takes precedence, then is resolved against the live model catalog when capability metadata is available.
 2. A legacy `thinking: { type: "enabled", budget_tokens }` is translated to `thinking: { type: "adaptive" }` with a derived `output_config.effort`.
@@ -141,7 +144,7 @@ To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|me
 4. Otherwise Aerial injects Aerial `defaultEffort` from `~/.aerial/config.json` as `output_config.effort`.
 5. If no Aerial default is set, Aerial falls back to `medium`.
 
-Non-Opus-4.7 Claude requests are not modified.
+Explicit efforts remain client-controlled and are only adjusted to advertised upstream capabilities. Aerial's default-effort injection applies to recognized Opus model families.
 
 ## 7. Verify
 
@@ -177,7 +180,7 @@ aerial probe
 | `GET /health` | not required | 200 + minimal `{ ok, service, host, port }` |
 | `GET /v1/models` (with GitHub login) | not required | 200 + Copilot model list with Aerial route annotations |
 | `GET /v1/models` (no GitHub login) | not required | 401 + `error.aerial.status = "login_required"` |
-| `GET /v1/models` (GitHub login rejected by Copilot) | not required | 401/403 + `error.aerial.status = "upstream_auth_failed"` and `upstream_status` |
+| `GET /v1/models` (GitHub login rejected by Copilot) | not required | 401 + `error.aerial.status = "upstream_auth_failed"`, or 403 + `"upstream_access_denied"`; both include `upstream_status` |
 | `POST /v1/responses`, `/v1/messages`, `/v1/chat/completions` | required | 401 if key missing/invalid; otherwise proxied to Copilot |
 | `POST /v1/messages/count_tokens` | required | Local input estimate, including system prompts, tools, messages, and tool results; malformed JSON returns 400 |
 
@@ -285,7 +288,7 @@ Aerial ships a thin platform wrapper around the user-mode service primitives pro
 - Windows: a Task Scheduler task named `AerialLocalProxy`, registered for the current user at logon with limited privileges, uses Windows Script Host (`wscript.exe`) to start a hidden PowerShell wrapper at `<config-dir>\bin\aerial-service.ps1` (default `%APPDATA%\aerial\bin\aerial-service.ps1`). The launcher hides PowerShell when creating it, preventing Windows Terminal from opening a blank window, and waits for the proxy to exit so the task continues to manage the process tree. The wrapper restarts Node after an unsuccessful exit, waiting one minute between attempts and allowing up to 999 retries. A normal exit is not retried. The scheduled task remains running during the wait, so `aerial service stop` also stops pending process recovery. Task Scheduler is additionally configured to retry task startup failures every minute, up to 999 attempts. The task has no execution time limit and can start and continue running on battery power. The wrapper and task settings are regenerated on every `aerial service install`. Run `aerial service install` from your normal PowerShell or Command Prompt. Registration uses your interactive user identity and limited privileges; a local policy may still restrict task creation. If registration is denied, the command reports the error before starting the task. After upgrading an older installation, run `aerial service install` and `aerial service restart` to apply the launcher, recovery settings, and updated code. You can then close the installation terminal. Structured PowerShell task registration avoids the `schtasks /TR` length limit and quotes the launcher and wrapper paths separately, including spaces, apostrophes, and non-ASCII characters.
 - Linux: not implemented in this release. `aerial service install|start|stop|restart|uninstall` throws an unsupported-platform error and exits 1; `aerial service status --json` probes the proxy and reports `"supported": false` for background management, with exit 0 when Aerial is healthy and exit 1 otherwise. Run `aerial start` directly or wrap it in your own init system.
 
-Both wrappers do the same three things before launching the proxy (on Windows, these repeat before each recovery attempt): (1) startup-rotate the captured stdio log (`aerial-stdio.log` → `.1` → `.2` → `.3`) if it has grown beyond the configured cap; (2) export `AERIAL_LOG_FILE=<config-dir>/logs/aerial.log`, plus `AERIAL_LOG_MAX_BYTES` and `AERIAL_LOG_BACKUPS` (default `5242880` / `3`, or whatever value was present in the installer's environment — see below), and always export the resolved absolute `AERIAL_CONFIG_DIR` so the service sees the same config root as the installer; (3) launch `node src/cli/index.js start --host <host> --port <port>` with stdout and stderr appended to `aerial-stdio.log`. The macOS wrapper uses `exec`; the Windows wrapper waits for the child and applies the recovery policy described above. By default, the service wrapper uses the same Node.js binary that ran `aerial service install`. Set `AERIAL_SERVICE_NODE` before `aerial service install` to override this explicitly, for example when installing from one Node binary but running the service with another. The structured event log is opt-in via `AERIAL_LOG_FILE`: when this env var is set (always set by the wrapper, never by foreground `aerial start`), structured events go to that file only; when unset, they go to stderr only. There is no double-write.
+Both wrappers do the same three things before launching the proxy (on Windows, these repeat before each recovery attempt): (1) startup-rotate the captured stdio log (`aerial-stdio.log` → `.1` → `.2` → `.3`) if it has grown beyond the configured cap; (2) export `AERIAL_LOG_FILE=<config-dir>/logs/aerial.log`, plus `AERIAL_LOG_MAX_BYTES` and `AERIAL_LOG_BACKUPS` (default `5242880` / `3`, or whatever value was present in the installer's environment — see below), and always export the resolved absolute `AERIAL_CONFIG_DIR` so the service sees the same config root as the installer; (3) launch `node src/cli/index.js start --host <host> --port <port>` with stdout and stderr appended to `aerial-stdio.log`. The macOS wrapper uses `exec`; the Windows wrapper waits for the child and applies the recovery policy described above. By default, the service wrapper uses the same Node.js binary that ran `aerial service install`. Set `AERIAL_SERVICE_NODE` before `aerial service install` to override this explicitly, for example when installing from one Node binary but running the service with another. The structured event log is opt-in via `AERIAL_LOG_FILE`: when this env var is set (always set by the wrapper, never by foreground `aerial start`), structured events go to that file only; when unset, foreground `aerial start` uses stderr. One-shot CLI commands suppress structured stderr events unless `AERIAL_DEBUG=1` is set. There is no double-write.
 
 Wrapper env values are baked in at install time. If you set `AERIAL_LOG_MAX_BYTES` and/or `AERIAL_LOG_BACKUPS` in the shell before running `aerial service install`, the generated wrapper hard-codes those values and the next start of the service inherits them. Changing the env in another shell after install has no effect on the already-installed wrapper. To apply new values to an already-managed service, rerun `aerial service install` (which always regenerates the definition, including the wrapper) and then `aerial service restart` to swap the running process onto the regenerated wrapper.
 
@@ -363,7 +366,7 @@ Aerial writes two log files under the configured log directory (default `<config
 - `aerial.log` — primary structured event log (`request_start`, `request_end`, `cache_observe`, `service_install`, etc.). One JSON object per line. Single line cap: 64 KiB; lines larger than that are replaced with a JSON marker `{"ts":...,"event":...,"truncated":true,"originalBytes":N}` so log readers stay parseable. Default file cap: 5 MiB before rotation (override via `AERIAL_LOG_MAX_BYTES`). Default ring size: 3 backups — `aerial.log`, `aerial.log.1`, `aerial.log.2`, `aerial.log.3`; oldest is dropped on the next rotation (override via `AERIAL_LOG_BACKUPS`).
 - `aerial-stdio.log` — captures stdout/stderr from the child `aerial start` process when invoked through the service wrapper. This is the bucket for crash traces and any non-JSON output. The wrapper applies the same 5 MiB / 3-file rotation policy at startup (before exec-ing node) so a crashed run does not get appended to an indefinitely growing file.
 
-The structured event writer is opt-in via `AERIAL_LOG_FILE`. When this env is unset (foreground `aerial start`, unit tests), `logEvent` writes to `console.error` only and never touches the filesystem. When the env is set (always by the wrapper), `logEvent` writes only to the file — `console.error` is suppressed for structured events to avoid double-writing into the wrapper-captured stdio. This is why `aerial.log` is created by the service path and absent from foreground runs.
+The structured event writer is opt-in via `AERIAL_LOG_FILE`. When this env is unset, foreground `aerial start` writes events to stderr and never touches the filesystem. One-shot CLI commands keep stdout/stderr human-readable by default; set `AERIAL_DEBUG=1` for their structured stderr events. When the env is set (always by the wrapper), `logEvent` writes only to the file — `console.error` is suppressed for structured events to avoid double-writing into the wrapper-captured stdio. This is why `aerial.log` is created by the service path and absent from foreground runs.
 
 Aerial never logs request bodies, raw GitHub tokens, raw Aerial API keys, or `Authorization` headers. Field-level redaction is applied to keys named `authorization`, `token`, `apiKey`, `api_key`, `githubToken`, `github_token`, `body`, `password`, or `secret`.
 
