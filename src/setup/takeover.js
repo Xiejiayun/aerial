@@ -6,6 +6,7 @@ import { writePrivateFile } from "../shared/paths.js";
 import { loadConfig } from "../shared/config.js";
 import { setTomlValue } from "./toml.js";
 import { isAerialKeyHelper } from "./auth-helper.js";
+import { localBaseUrl } from "../shared/urls.js";
 
 const SCHEMA = "aerial.takeover.v1";
 export const takeoverPath = file => `${file}.aerial-state.json`;
@@ -76,10 +77,9 @@ export function dependsOnAerial(target, doc) {
       || Array.isArray(provider?.auth?.args) && provider.auth.args.slice(-2).join(" ") === "key print";
   }
   const config = loadConfig();
-  const host = config.host.includes(":") ? `[${config.host}]` : config.host;
   return isAerialKeyHelper(doc.apiKeyHelper)
     || doc.env?.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "1"
-      && doc.env?.ANTHROPIC_BASE_URL === `http://${host}:${config.port}`;
+      && doc.env?.ANTHROPIC_BASE_URL === localBaseUrl(config);
 }
 
 function legacyBaseline(target, text, backups) {

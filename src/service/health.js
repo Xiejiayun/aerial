@@ -1,3 +1,5 @@
+import { localBaseUrl } from "../shared/urls.js";
+
 const HEALTH_TIMEOUT_MS = 1500;
 const HEALTH_START_TIMEOUT_MS = 5000;
 const HEALTH_POLL_INTERVAL_MS = 250;
@@ -9,7 +11,7 @@ export async function defaultHealthFetch(host, port) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
   try {
-    const res = await fetch(`http://${host}:${port}/health`, { signal: controller.signal });
+    const res = await fetch(localBaseUrl({ host, port }, "/health"), { signal: controller.signal });
     let body;
     let parseFailed = false;
     try {

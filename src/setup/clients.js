@@ -9,6 +9,7 @@ import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection }
 import { writeClientTakeover } from "./takeover.js";
 import { codexConfigFile, claudeSettingsFile } from "../shared/paths.js";
 import { codexAuthCommand, claudeApiKeyHelper, isAerialKeyHelper } from "./auth-helper.js";
+import { localBaseUrl } from "../shared/urls.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -32,7 +33,7 @@ function claudeEnvForAerial(currentEnv, config) {
   } = currentEnv || {};
   return {
     ...rest,
-    ANTHROPIC_BASE_URL: `http://${config.host}:${config.port}`,
+    ANTHROPIC_BASE_URL: localBaseUrl(config),
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1"
   };
 }
@@ -54,7 +55,7 @@ export function setupCodex({ model, effort, authCommand = codexAuthCommand() } =
   if (normalizedEffort) content = setTomlRootString(content, "model_reasoning_effort", normalizedEffort);
   content = upsertTomlSection(content, "model_providers.aerial", {
     name: "Aerial",
-    base_url: `http://${config.host}:${config.port}/v1`,
+    base_url: localBaseUrl(config, "/v1"),
     wire_api: "responses"
   });
   content = upsertTomlSection(content, "model_providers.aerial.auth", {
@@ -119,7 +120,7 @@ function codexStateFromDoc(doc, expectedBaseUrl) {
 
 export function codexStatus() {
   const config = loadConfig();
-  const expectedBaseUrl = `http://${config.host}:${config.port}/v1`;
+  const expectedBaseUrl = localBaseUrl(config, "/v1");
   const file = codexConfigFile();
   const backups = backupPathsFor(file);
   if (!fs.existsSync(file)) return { target: "codex", state: "missing", file, backups, effort: "missing" };
@@ -163,7 +164,7 @@ function claudeStateFromDoc(doc, expectedBaseUrl) {
   const helperIsAerial = isAerialKeyHelper(doc?.apiKeyHelper);
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
   const baseUrlMatches = baseUrl === expectedBaseUrl;
-  const baseUrlAerialShape = typeof baseUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+/.test(baseUrl);
+  const baseUrlAerialShape = typeof baseUrl === "string" && /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+(?:\/|$)/.test(baseUrl);
   const hasAerialTrace = helperIsAerial || baseUrlAerialShape;
   if (!hasAerialTrace) return "not-aerial";
   if (helperIsAerial && baseUrlMatches) return "aerial";
@@ -173,7 +174,7 @@ function claudeStateFromDoc(doc, expectedBaseUrl) {
 
 export function claudeStatus() {
   const config = loadConfig();
-  const expectedBaseUrl = `http://${config.host}:${config.port}`;
+  const expectedBaseUrl = localBaseUrl(config);
   const file = claudeSettingsFile();
   const backups = backupPathsFor(file);
   const fallbackEffort = typeof config.defaultEffort === "string" && config.defaultEffort.trim() ? config.defaultEffort.trim() : "missing";
