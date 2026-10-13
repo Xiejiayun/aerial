@@ -20,6 +20,32 @@ npm install -g .
 node src/cli/index.js --help
 ```
 
+## 1.5 Update
+
+```bash
+aerial update --check
+aerial update
+# equivalent:
+aerial upgrade
+```
+
+`--check` prints the installed version and the configured npm registry's latest stable version without installing anything. A successful check exits zero whether or not an update is available. `aerial update` installs the newer release, verifies the installed version, and skips installation when already current or ahead of that registry's latest release. Failed registry checks or installs exit non-zero.
+
+Updating requires an npm global installation managed by the active npm. Source checkouts, linked packages, local dependencies, and temporary `npx` copies can check for updates, but must be upgraded through their original installation method. The command uses npm's user configuration and proxy settings; Aerial's Copilot upstream proxy setting does not configure npm. npm's engine check prevents installing a release incompatible with your Node.js version.
+
+Version checks prefer fresh registry metadata. Registry mirrors can still lag behind the official npm site, so the result describes the latest version served by your configured registry.
+
+The command preserves Aerial's login and client configuration. Running processes continue using their loaded code until restarted. After upgrading a background installation, run:
+
+```bash
+aerial service install
+aerial service restart
+```
+
+On Windows, run these service commands from an Administrator terminal. For foreground processes or a service you manage yourself, restart it using its usual method.
+
+Older Aerial versions without `update` need a one-time upgrade with `npm install -g @jiayunxie/aerial@latest` before the new command is available.
+
 ## 2. Configure Local Clients
 
 ```bash

@@ -9,6 +9,7 @@ import { runProxyCli } from "./commands/proxy.js";
 import { runServiceCli } from "./commands/service.js";
 import { runSetupCli } from "./commands/setup.js";
 import { runStartCli } from "./commands/start.js";
+import { runUpdateCli } from "./commands/update.js";
 import { doctor, renderDoctorText } from "./doctor.js";
 import { formatProbeReport, runProbe } from "./probe.js";
 
@@ -17,6 +18,7 @@ function printHelp() {
 
 Usage:
   aerial --version
+  aerial update [--check]
   aerial login
   aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>]
   aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>]
@@ -41,6 +43,11 @@ async function main() {
   const [command, subcommand, ...rest] = args;
   if (!command || command === "--help" || command === "-h") return printHelp();
   if (command === "--version") return printVersion();
+
+  if (command === "update" || command === "upgrade") {
+    runUpdateCli(args.slice(1));
+    return;
+  }
 
   if (command === "status") {
     const status = await appStatus({ json: args.includes("--json") });

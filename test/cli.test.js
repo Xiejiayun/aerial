@@ -202,4 +202,17 @@ test("aerial --help lists separate Codex and Claude effort vocabularies", () => 
   assert.match(result.stdout, /setup codex.*--effort <minimal\|low\|medium\|high\|xhigh\|max\|ultra>/);
   assert.match(result.stdout, /setup claude.*--effort <low\|medium\|high\|xhigh\|max\|ultracode>/);
   assert.match(result.stdout, /proxy status\|enable\|disable/);
+  assert.match(result.stdout, /aerial update \[--check\]/);
+});
+
+test("update and upgrade expose help and reject unknown options before contacting npm", () => {
+  for (const command of ["update", "upgrade"]) {
+    const help = runCli([command, "--help"]);
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /Usage: aerial update/);
+    assert.match(help.stdout, /--check/);
+    const invalid = runCli([command, "--chekc"]);
+    assert.equal(invalid.status, 1);
+    assert.match(invalid.stderr, /Usage: aerial update/);
+  }
 });
