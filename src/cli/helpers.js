@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { serviceGuidance } from "../service/guidance.js";
 export { codexAuthCommand, claudeApiKeyHelper } from "../setup/auth-helper.js";
 
 const PACKAGE_JSON_URL = new URL("../../package.json", import.meta.url);
@@ -52,22 +53,22 @@ export function computeAppStatus(setup, service) {
   const githubTokenPresent = setup.auth.github_token.source !== "missing";
   const apiKeyPresent = setup.auth.api_key.exists;
   const hasAerialClient = setup.clients.codex.state === "aerial" || setup.clients.claude.state === "aerial";
-  const serviceHealthy = service.supported !== false && service.health?.aerial === true;
+  const serviceHealthy = service.health?.aerial === true && service.service?.reason !== "status_query_failed";
   const ok = apiKeyPresent && githubTokenPresent && hasAerialClient && serviceHealthy;
-  const nextSteps = [];
-  const hints = [];
+  const { nextSteps, hints } = serviceGuidance(service);
+  const setupCommands = preferredClientTargets(setup).map(target => `aerial setup ${target}`).join(" or ");
   if (!githubTokenPresent) nextSteps.push("run: aerial login");
-  if (!hasAerialClient) nextSteps.push("run: aerial setup codex or aerial setup claude");
-  if (hasAerialClient && !apiKeyPresent) nextSteps.push("run: aerial setup codex or aerial setup claude to recreate the local Aerial key");
-  if (service.supported !== false && !service.service?.loaded) {
-    if (serviceHealthy) {
-      hints.push("Aerial is running in the foreground but no background service is installed; run `aerial service install` so it starts on reboot.");
-    } else {
-      nextSteps.push("run: aerial service install");
-    }
-  }
+  if (!hasAerialClient) nextSteps.push(`run: ${setupCommands}`);
+  if (hasAerialClient && !apiKeyPresent) nextSteps.push(`run: ${setupCommands} to recreate the local Aerial key`);
   if (setup.auth.github_token.source === "env") {
     hints.push("AERIAL_GITHUB_TOKEN is set for this process only; run aerial login without that env var to persist a service-readable login.");
   }
   return { schema: "aerial.status.v1", ok, setup, service, nextSteps, hints };
+}
+
+export function preferredClientTargets(setup) {
+  const entries = Object.entries(setup.clients);
+  const managed = entries.filter(([, client]) => client.state.startsWith("aerial"));
+  const present = entries.filter(([, client]) => client.state !== "missing");
+  return (managed.length ? managed : present.length ? present : entries).map(([target]) => target);
 }

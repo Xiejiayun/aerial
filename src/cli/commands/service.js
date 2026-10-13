@@ -28,13 +28,10 @@ async function runServiceCliAction(action, render) {
 function printServiceStatus(status) {
   console.log(`Aerial: ${localBaseUrl(status.config)}  (platform: ${status.platform})`);
   if (status.supported === false) {
-    console.log(`service: unsupported on ${status.platform}`);
-    console.log(`summary: ${status.summary}`);
-    process.exitCode = 1;
-    return;
+    console.log(`background service management: unavailable on ${status.platform}; use aerial start`);
   }
   const svc = status.service;
-  const stateLine = svc.loaded ? "running" : (svc.installed ? "installed (not running)" : "not installed");
+  const stateLine = svc.reason === "status_query_failed" ? `unknown (${svc.error})` : svc.loaded ? "running" : (svc.installed ? "installed (not running)" : "not installed");
   console.log(`service: ${stateLine}`);
   if (svc.pid) console.log(`  pid: ${svc.pid}`);
   if (svc.status) console.log(`  win status: ${svc.status}`);
@@ -43,6 +40,7 @@ function printServiceStatus(status) {
   let healthLine;
   if (h.aerial && h.supervisor === "service-managed") healthLine = "ok (Aerial, service-managed)";
   else if (h.aerial && h.supervisor === "foreground") healthLine = "ok (Aerial, foreground)";
+  else if (h.aerial) healthLine = "ok (Aerial, supervisor unknown)";
   else if (h.portConflict) healthLine = `port conflict (${h.conflictReason})`;
   else if (h.ok) healthLine = "ok";
   else healthLine = `unreachable (${h.error || `http ${h.status}`})`;
@@ -52,6 +50,8 @@ function printServiceStatus(status) {
   console.log(`  primary: ${status.logs.primary.exists ? `${status.logs.primary.size} bytes` : "missing"}  ${status.logs.primary.file}`);
   console.log(`  stdio:   ${status.logs.stdio.exists ? `${status.logs.stdio.size} bytes` : "missing"}  ${status.logs.stdio.file}`);
   console.log(`auth:    api_key=${status.auth.api_key.state}  github_token=${status.auth.github_token.state}`);
+  for (const step of status.nextSteps || []) console.log(`next: ${step}`);
+  for (const hint of status.hints || []) console.log(`hint: ${hint}`);
 }
 
 export async function runServiceCli(subcommand, rest) {
@@ -109,9 +109,9 @@ export async function runServiceCli(subcommand, rest) {
   }
   if (subcommand === "status") {
     const status = await serviceStatus();
+    process.exitCode = status.ok ? 0 : 1;
     if (rest.includes("--json")) {
       console.log(JSON.stringify(status, null, 2));
-      process.exitCode = status.supported === false ? 1 : 0;
       return;
     }
     printServiceStatus(status);

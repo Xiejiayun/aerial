@@ -331,7 +331,28 @@ If GitHub login is not yet configured, install and start still succeed (when rea
 }
 ```
 
-`service.installed` reflects whether the unit / scheduled task exists; `service.loaded` reflects whether the service is currently running (launchd `PID` present, schtasks `Status = Running`). `health` probes `GET /health` with a 1.5s timeout; an unreachable proxy is reported as `{ "ok": false, "error": "<reason>" }` and does NOT fail the command on supported platforms. When the port answers but the body is not Aerial (or is not JSON), `health.portConflict=true` and `health.conflictReason=<reason>`; when the port answers as Aerial, `health.aerial=true` and `health.supervisor` is one of `"service-managed"` (unit/task is loaded) or `"foreground"` (someone is running `aerial start` directly). The `summary` field collapses the matrix to a single human-readable line: `"running (service-managed)"`, `"running (foreground)"`, `"port conflict (non-Aerial process on port)"`, `"installed (not running)"`, `"not installed"`, `"manager reports up but health failed"`, or `"unsupported"`. The `auth.*.state` field is tri-state: `"present"`, `"missing"`, or `"invalid"` (file exists but unreadable / empty); no network call to GitHub or to the Aerial proxy is made. The `logs.source` field tells you what `logs.maxFileBytes` / `logs.rotateKeep` actually describe: `"installed-wrapper"` means the values were parsed from the wrapper that is already on disk (so they reflect what the *currently installed* service will use on next start), and `"next-install-default"` means no installed wrapper was found and the values fall back to what the next `aerial service install` would bake from the current shell env. On unsupported platforms (Linux), `supported=false` and the command exits 1; the document is still schema-valid so scripts can branch on `supported`.
+`service.installed` reports whether the unit or scheduled task exists;
+`service.loaded` reports whether launchd has loaded it or Windows Task Scheduler
+reports numeric Queued/Running state. `/health` is probed on every platform with
+a 1.5-second timeout. `supported` describes background service management only:
+Linux can report `supported=false`, `health.aerial=true`, and `ok=true` when
+`aerial start` is running in the foreground.
+
+The command exits 0 when `ok=true`, and 1 when the proxy is unavailable or the
+service manager query fails. `nextSteps` gives a repair for each failure;
+`hints` contains optional actions. When the manager cannot be queried,
+`service.reason="status_query_failed"` and `service.error` retain the cause;
+`installed` and `loaded` are omitted because their values are unknown.
+The health result is still reported, with `health.supervisor="unknown"` if
+Aerial responds. Other supervisor values are `service-managed` and `foreground`.
+A non-Aerial response sets `health.portConflict=true` and a `conflictReason`.
+
+`summary` describes the observed state, including foreground operation and a
+running manager with failed health. `auth.*.state` is `present`, `missing`, or
+`invalid` (an unreadable or empty file); authentication inspection is local and
+does not contact GitHub. `logs.source="installed-wrapper"` means the log limits
+were read from the installed wrapper and apply at its next start;
+`next-install-default` means they describe the next service installation.
 
 Stability rules for `aerial.service-status.v1` match `aerial.setup-status.v1`: additive evolution only, no field rename or repurpose without a schema bump.
 

@@ -686,10 +686,15 @@ recorded with an explicit, signed-off risk acceptance does not block.
   exits 1 with an `unsupported platform` message that names macOS
   and Windows as the supported platforms and points the user at
   `aerial start` for direct invocation.
-- [ ] `aerial service status --json` on Linux exits 1 but still
-  emits a schema-valid document with `supported = false`,
-  `service.reason = "unsupported_platform"`, and `summary =
-  "unsupported"`.
+- [ ] `aerial service status --json` on Linux probes `/health` and
+  emits a schema-valid document with `supported = false` and
+  `service.reason = "unsupported_platform"`. With a healthy foreground
+  proxy it exits 0, reports `ok = true`, and identifies the foreground
+  supervisor. Without the proxy it exits 1 and suggests `aerial start`.
+- [ ] A service-manager query failure remains structured JSON with
+  `service.reason = "status_query_failed"`, the original diagnostic,
+  an independently probed health result, and a next step. It must not
+  claim the service is absent or stopped when its state is unknown.
 
 ### Log rotation spot-check
 

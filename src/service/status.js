@@ -3,10 +3,10 @@ import { apiKeyPath, githubTokenPath } from "../shared/paths.js";
 import { loadConfig } from "../shared/config.js";
 import { defaultHealthFetch, classifyHealth } from "./health.js";
 import { defaultRunCommand } from "./runner.js";
-import { isUnsupportedPlatform, serviceState } from "./platform.js";
+import { serviceState } from "./platform.js";
+import { serviceGuidance } from "./guidance.js";
 import {
   aerialLogPath,
-  buildSchtasksArgs,
   darwinWrapperPath,
   logsDir,
   stdioLogPath,
@@ -242,29 +242,27 @@ export function parseWrapperLogValues(file) {
   }
 }
 
-export async function serviceStatus({ run = defaultRunCommand, healthFetch } = {}) {
+export async function serviceStatus({ run = defaultRunCommand, healthFetch, platform = process.platform, readState = serviceState } = {}) {
   const config = loadConfig();
   const ctx = { run };
-  if (isUnsupportedPlatform()) {
-    return {
-      schema: "aerial.service-status.v1",
-      platform: process.platform,
-      supported: false,
-      config: { host: config.host, port: config.port },
-      service: { installed: false, loaded: false, reason: "unsupported_platform", platform: process.platform, wrapper: wrapperBlock({ installed: false }) },
-      health: { ok: false, error: "unsupported_platform" },
-      logs: logsBlock(),
-      auth: authBlock(),
-      summary: "unsupported"
-    };
+  const supported = platform === "darwin" || platform === "win32";
+  let state;
+  try {
+    state = supported ? readState(ctx) : { installed: false, loaded: false, reason: "unsupported_platform" };
+  } catch (error) {
+    state = { reason: "status_query_failed", error: error.message };
   }
-  const state = serviceState(ctx);
-  const probe = await (healthFetch || defaultHealthFetch)(config.host, config.port);
+  let probe;
+  try {
+    probe = await (healthFetch || defaultHealthFetch)(config.host, config.port);
+  } catch (error) {
+    probe = { ok: false, error: error.message };
+  }
   const cls = classifyHealth(probe);
   const wrapper = wrapperBlock(state);
   let supervisor;
   if (cls.mode === "aerial_running") {
-    supervisor = state.installed && state.loaded ? "service-managed" : "foreground";
+    supervisor = state.reason === "status_query_failed" ? "unknown" : state.installed && state.loaded ? "service-managed" : "foreground";
   }
   const health = { ...probe };
   if (cls.mode === "port_conflict") {
@@ -276,21 +274,25 @@ export async function serviceStatus({ run = defaultRunCommand, healthFetch } = {
     health.supervisor = supervisor;
   }
   let summary;
-  if (cls.mode === "aerial_running" && supervisor === "service-managed") summary = "running (service-managed)";
+  if (state.reason === "status_query_failed") summary = cls.mode === "aerial_running" ? "running (service manager status unknown)" : "service manager status unknown; health failed";
+  else if (cls.mode === "aerial_running" && supervisor === "service-managed") summary = "running (service-managed)";
   else if (cls.mode === "aerial_running" && supervisor === "foreground") summary = "running (foreground)";
   else if (cls.mode === "port_conflict") summary = "port conflict (non-Aerial process on port)";
+  else if (!supported) summary = "not running (foreground mode)";
   else if (state.installed && state.loaded) summary = "manager reports up but health failed";
   else if (state.installed) summary = "installed (not running)";
   else summary = "not installed";
-  return {
+  const result = {
     schema: "aerial.service-status.v1",
-    platform: process.platform,
-    supported: true,
+    ok: health.aerial === true && state.reason !== "status_query_failed",
+    platform,
+    supported,
     config: { host: config.host, port: config.port },
-    service: { platform: process.platform, ...state, wrapper },
+    service: { platform, ...state, wrapper },
     health,
     logs: logsBlock(),
     auth: authBlock(),
     summary
   };
+  return { ...result, ...serviceGuidance(result) };
 }
