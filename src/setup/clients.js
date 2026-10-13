@@ -1,13 +1,15 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
-import { atomicWriteFile } from "../shared/utils.js";
 import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort, normalizeEffort } from "../shared/effort.js";
 import { backupIfExists, backupPathsFor } from "./restore.js";
-import { setTomlRootString, upsertTomlSection, removeTomlSection } from "./toml.js";
+import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection } from "./toml.js";
+import { writeClientTakeover } from "./takeover.js";
+import { codexConfigFile, claudeSettingsFile } from "../shared/paths.js";
+import { codexAuthCommand, claudeApiKeyHelper, isAerialKeyHelper } from "./auth-helper.js";
+import { localBaseUrl } from "../shared/urls.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -15,7 +17,6 @@ const DEFAULT_CODEX_AUTH = Object.freeze({
   timeout_ms: 5000,
   refresh_interval_ms: 0
 });
-const DEFAULT_CLAUDE_API_KEY_HELPER = "aerial key print";
 
 function ensureParent(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -32,12 +33,12 @@ function claudeEnvForAerial(currentEnv, config) {
   } = currentEnv || {};
   return {
     ...rest,
-    ANTHROPIC_BASE_URL: `http://${config.host}:${config.port}`,
+    ANTHROPIC_BASE_URL: localBaseUrl(config),
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1"
   };
 }
 
-export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } = {}) {
+export function setupCodex({ model, effort, authCommand = codexAuthCommand() } = {}) {
   const normalizedEffort = effort === undefined ? undefined : assertValidCodexEffort(effort);
   ensureApiKey();
   const config = loadConfig();
@@ -47,14 +48,14 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
   }
   const file = codexConfigFile();
   ensureParent(file);
-  const backup = backupIfExists(file);
-  let content = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const original = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  let content = original || "";
   content = setTomlRootString(content, "model_provider", "aerial");
   content = setTomlRootString(content, "model", selectedModel);
   if (normalizedEffort) content = setTomlRootString(content, "model_reasoning_effort", normalizedEffort);
   content = upsertTomlSection(content, "model_providers.aerial", {
     name: "Aerial",
-    base_url: `http://${config.host}:${config.port}/v1`,
+    base_url: localBaseUrl(config, "/v1"),
     wire_api: "responses"
   });
   content = upsertTomlSection(content, "model_providers.aerial.auth", {
@@ -64,12 +65,15 @@ export function setupCodex({ model, effort, authCommand = DEFAULT_CODEX_AUTH } =
     refresh_interval_ms: authCommand.refresh_interval_ms ?? DEFAULT_CODEX_AUTH.refresh_interval_ms
   });
   content = removeTomlSection(content, "profiles.aerial");
-  atomicWriteFile(file, content);
+  if (parseToml(content).profile === "aerial") content = setTomlValue(content, ["profile"], undefined);
+  parseToml(content);
+  const backup = backupIfExists(file);
+  const takeover = writeClientTakeover({ target: "codex", file, original, next: content, backups: backupPathsFor(file) });
   logEvent("setup_write", { target: "codex", file, backup, auth: "command", effort: normalizedEffort });
-  return { file, backup, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
+  return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
-export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_KEY_HELPER } = {}) {
+export function setupClaude({ model, effort, apiKeyHelper = claudeApiKeyHelper() } = {}) {
   const requestedEffort = effort === undefined ? undefined : assertValidEffort(effort);
   const normalizedEffort = requestedEffort === "ultracode" ? "max" : requestedEffort;
   ensureApiKey();
@@ -77,8 +81,9 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
   const selectedModel = model || config.defaultModel;
   const file = claudeSettingsFile();
   ensureParent(file);
-  const backup = backupIfExists(file);
-  const current = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  const original = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  const current = original === null ? {} : JSON.parse(original);
+  if (!current || typeof current !== "object" || Array.isArray(current)) throw new Error("Claude configuration must be an object.");
   const next = {
     ...current,
     apiKeyHelper,
@@ -86,20 +91,13 @@ export function setupClaude({ model, effort, apiKeyHelper = DEFAULT_CLAUDE_API_K
   };
   if (selectedModel) next.model = selectedModel;
   if (normalizedEffort) next.effortLevel = normalizedEffort;
-  atomicWriteFile(file, `${JSON.stringify(next, null, 2)}\n`);
+  const backup = backupIfExists(file);
+  const takeover = writeClientTakeover({ target: "claude", file, original, next: `${JSON.stringify(next, null, 2)}\n`, backups: backupPathsFor(file) });
   if (normalizedEffort && config.defaultEffort !== normalizedEffort) {
     saveConfig({ ...config, defaultEffort: normalizedEffort });
   }
   logEvent("setup_write", { target: "claude", file, backup, model: selectedModel, effort: normalizedEffort });
-  return { file, backup, model: selectedModel, effort: normalizedEffort, apiKeyHelper };
-}
-
-function codexConfigFile() {
-  return path.join(os.homedir(), ".codex", "config.toml");
-}
-
-function claudeSettingsFile() {
-  return path.join(os.homedir(), ".claude", "settings.json");
+  return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, apiKeyHelper };
 }
 
 function codexStateFromDoc(doc, expectedBaseUrl) {
@@ -122,7 +120,7 @@ function codexStateFromDoc(doc, expectedBaseUrl) {
 
 export function codexStatus() {
   const config = loadConfig();
-  const expectedBaseUrl = `http://${config.host}:${config.port}/v1`;
+  const expectedBaseUrl = localBaseUrl(config, "/v1");
   const file = codexConfigFile();
   const backups = backupPathsFor(file);
   if (!fs.existsSync(file)) return { target: "codex", state: "missing", file, backups, effort: "missing" };
@@ -138,7 +136,7 @@ export function codexStatus() {
   } catch (err) {
     return { target: "codex", state: "invalid", file, backups, error: err.message, effort: "missing" };
   }
-  const state = codexStateFromDoc(doc, expectedBaseUrl);
+  const state = doc.profile === "aerial" ? "aerial-drift" : codexStateFromDoc(doc, expectedBaseUrl);
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = typeof doc?.model_providers?.aerial?.base_url === "string"
     ? doc.model_providers.aerial.base_url
@@ -149,7 +147,7 @@ export function codexStatus() {
   const legacyProfileLooksAerial = legacyProfile
     && (doc.profiles.aerial.model_provider === "aerial"
       || typeof doc.profiles.aerial.model_reasoning_effort === "string");
-  const needsMigration = legacyProfile && (state !== "not-aerial" || legacyProfileLooksAerial);
+  const needsMigration = doc.profile === "aerial" || (legacyProfile && (state !== "not-aerial" || legacyProfileLooksAerial));
   return {
     target: "codex",
     state,
@@ -163,10 +161,10 @@ export function codexStatus() {
 }
 
 function claudeStateFromDoc(doc, expectedBaseUrl) {
-  const helperIsAerial = typeof doc?.apiKeyHelper === "string" && /\bkey\s+print\b/.test(doc.apiKeyHelper);
+  const helperIsAerial = isAerialKeyHelper(doc?.apiKeyHelper);
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
   const baseUrlMatches = baseUrl === expectedBaseUrl;
-  const baseUrlAerialShape = typeof baseUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+/.test(baseUrl);
+  const baseUrlAerialShape = typeof baseUrl === "string" && /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+(?:\/|$)/.test(baseUrl);
   const hasAerialTrace = helperIsAerial || baseUrlAerialShape;
   if (!hasAerialTrace) return "not-aerial";
   if (helperIsAerial && baseUrlMatches) return "aerial";
@@ -176,7 +174,7 @@ function claudeStateFromDoc(doc, expectedBaseUrl) {
 
 export function claudeStatus() {
   const config = loadConfig();
-  const expectedBaseUrl = `http://${config.host}:${config.port}`;
+  const expectedBaseUrl = localBaseUrl(config);
   const file = claudeSettingsFile();
   const backups = backupPathsFor(file);
   const fallbackEffort = typeof config.defaultEffort === "string" && config.defaultEffort.trim() ? config.defaultEffort.trim() : "missing";

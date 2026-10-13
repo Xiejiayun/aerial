@@ -12,6 +12,7 @@ import {
 } from "../select.js";
 import { requiredArgValue, claudeApiKeyHelper, codexAuthCommand } from "../helpers.js";
 import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
+import { localBaseUrl } from "../../shared/urls.js";
 
 async function selectSetupOptions(target, route, args) {
   const explicitEffort = requiredArgValue(args, "--effort");
@@ -58,7 +59,7 @@ async function selectSetupOptions(target, route, args) {
 }
 
 function printSetupStatus(status) {
-  console.log(`Aerial: http://${status.config.host}:${status.config.port}  (platform: ${status.platform})`);
+  console.log(`Aerial: ${localBaseUrl(status.config)}  (platform: ${status.platform})`);
   console.log(`API key file:    ${status.auth.api_key.file}  (${status.auth.api_key.exists ? "present" : "missing"})`);
   const ghSourceText = status.auth.github_token.source === "missing"
     ? `(missing)`
@@ -86,7 +87,7 @@ export async function runSetupCli(subcommand, rest) {
       cli: "Codex",
       model: result.model,
       effort: result.effort || "missing",
-      proxy: `http://${config.host}:${config.port}/v1`,
+      proxy: localBaseUrl(config, "/v1"),
       configFile: result.file,
       aerialConfigFile: configPath(),
       aerialDefaultEffort: config.defaultEffort || "missing",
@@ -108,7 +109,7 @@ export async function runSetupCli(subcommand, rest) {
       cli: "Claude Code",
       model: result.model || "preserved",
       effort: result.effort || config.defaultEffort || "missing",
-      proxy: `http://${config.host}:${config.port}`,
+      proxy: localBaseUrl(config),
       configFile: result.file,
       aerialConfigFile: configPath(),
       aerialDefaultEffort: config.defaultEffort || "missing",

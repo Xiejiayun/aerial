@@ -1,4 +1,7 @@
 import test from "node:test";
+
+process.env.CODEX_HOME = "";
+process.env.CLAUDE_CONFIG_DIR = "";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +30,10 @@ const {
   _internal
 } = await import("../src/service/index.js");
 
+function missingState() {
+  return process.platform === "win32" ? { status: 0, stdout: '{"installed":false}', stderr: "" } : { status: 1, stdout: "", stderr: "Could not find service" };
+}
+
 function makeRunner() {
   const calls = [];
   const queue = [];
@@ -34,6 +41,7 @@ function makeRunner() {
     calls.push({ file, args, opts });
     const next = queue.shift();
     if (next) return next;
+    if (file === "powershell.exe" && args.includes("-EncodedCommand") && Buffer.from(args.at(-1), "base64").toString("utf16le").includes("[int]$task.State")) return { status: 0, stdout: '{"installed":false}', stderr: "" };
     return { status: 0, stdout: "", stderr: "" };
   }
   run.calls = calls;
@@ -251,7 +259,7 @@ test("serviceInstall throws unsupportedPlatform on linux with actionable message
 test("serviceInstall on macOS bootstraps via launchctl and writes plist + wrapper", { skip: process.platform !== "darwin" }, async () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
-  run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+  run.queue.push(missingState());
   run.queue.push({ status: 0, stdout: "", stderr: "" });
   const result = await serviceInstall({ run, healthFetch: healthSequence(ABSENT, AERIAL) });
   assert.equal(result.ok, true);
@@ -375,8 +383,8 @@ test("Windows recovery failure is reported when refreshing a running service wit
       cleanupServiceArtifacts();
       const run = makeRunner();
       run.queue.push(managed
-        ? { status: 0, stdout: "Status: Running", stderr: "" }
-        : { status: 1, stdout: "", stderr: "Task not found" });
+        ? { status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" }
+        : missingState());
       run.queue.push({ status: 0, stdout: "", stderr: "" });
       run.queue.push({ status: 1, stdout: "", stderr: "Recovery settings access denied" });
       const result = await serviceInstall({ run, healthFetch: aerialHealth() });
@@ -398,7 +406,7 @@ test("serviceInstall surfaces a warning note when GitHub token is missing", { sk
   if (fs.existsSync(tokenFile)) fs.unlinkSync(tokenFile);
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
     run.queue.push({ status: 0, stdout: "", stderr: "" });
   } else {
     run.queue.push({ status: 0, stdout: "", stderr: "" });
@@ -433,7 +441,7 @@ test("serviceInstall detects port conflict via JSON parse failure", { skip: proc
 test("serviceInstall under foreground Aerial updates definition but does NOT start a second service", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
-  run.queue.push({ status: 1, stdout: "", stderr: "no such service" });
+  run.queue.push(missingState());
   if (process.platform === "win32") {
     run.queue.push({ status: 0, stdout: "", stderr: "" });
   }
@@ -469,7 +477,7 @@ test("serviceInstall on managed+running refreshes definition (does NOT short-cir
   if (process.platform === "darwin") {
     run.queue.push({ status: 0, stdout: "{\n\t\"PID\" = 1234;\n};", stderr: "" });
   } else {
-    run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+    run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" });
     run.queue.push({ status: 0, stdout: "", stderr: "" });
   }
   const result = await serviceInstall({ run, healthFetch: aerialHealth() });
@@ -498,7 +506,7 @@ test("serviceInstall on managed+running surfaces ok:false with managed_definitio
   fs.mkdirSync(path.dirname(_internal.winWrapperPath()), { recursive: true });
   fs.writeFileSync(_internal.winWrapperPath(), "rem placeholder");
   const run = makeRunner();
-  run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+  run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" });
   run.queue.push({ status: 9, stdout: "", stderr: "ERROR: Access is denied." });
   const result = await serviceInstall({ run, healthFetch: aerialHealth() });
   assert.equal(result.ok, false);
@@ -510,7 +518,7 @@ test("serviceInstall on managed+running surfaces ok:false with managed_definitio
 test("serviceInstall on foreground+running surfaces ok:false with foreground_definition_refresh_failed when /Create fails (Windows)", { skip: process.platform !== "win32" }, async () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
-  run.queue.push({ status: 1, stdout: "", stderr: "no such service" });
+  run.queue.push(missingState());
   run.queue.push({ status: 9, stdout: "", stderr: "ERROR: Access is denied." });
   const result = await serviceInstall({ run, healthFetch: aerialHealth() });
   assert.equal(result.ok, false);
@@ -529,7 +537,7 @@ test("serviceInstall on foreground+running surfaces ok:false with foreground_def
 test("serviceInstall returns health_check_failed when bootstrap succeeds but /health never becomes Aerial (darwin)", { skip: process.platform !== "darwin" }, async () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
-  run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+  run.queue.push(missingState());
   run.queue.push({ status: 0, stdout: "", stderr: "" });
   const result = await serviceInstall({ run, healthFetch: absentHealth(), healthDeadlineMs: 50 });
   assert.equal(result.ok, false);
@@ -568,7 +576,7 @@ test("serviceInstall diagnostics report wrapper node path when wrapper was just 
   cleanupServiceArtifacts();
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
     run.queue.push({ status: 0, stdout: "", stderr: "" });
   } else {
     run.queue.push({ status: 0, stdout: "", stderr: "" });
@@ -585,7 +593,7 @@ test("serviceInstall surfaces port_conflict when after-start probe shows non-Aer
   cleanupServiceArtifacts();
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
     run.queue.push({ status: 0, stdout: "", stderr: "" });
   } else {
     run.queue.push({ status: 0, stdout: "", stderr: "" });
@@ -611,10 +619,10 @@ test("serviceStart returns health_check_failed when trigger succeeds but /health
   }
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+    run.queue.push(missingState());
     run.queue.push({ status: 0, stdout: "", stderr: "" });
   } else {
-    run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Ready", stderr: "" });
+    run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 3 }), stderr: "" });
     run.queue.push({ status: 0, stdout: "", stderr: "" });
   }
   const result = await serviceStart({ run, healthFetch: absentHealth(), healthDeadlineMs: 50 });
@@ -636,7 +644,7 @@ test("tokenWarning explains env-only AERIAL_GITHUB_TOKEN is not inherited by the
   try {
     const run = makeRunner();
     if (process.platform === "darwin") {
-      run.queue.push({ status: 1, stdout: "", stderr: "" });
+      run.queue.push(missingState());
       run.queue.push({ status: 0, stdout: "", stderr: "" });
     } else {
       run.queue.push({ status: 0, stdout: "", stderr: "" });
@@ -658,7 +666,7 @@ test("tokenWarning explains env-only AERIAL_GITHUB_TOKEN is not inherited by the
 test("serviceStart rejects when service is not installed", { skip: process.platform !== "darwin" && process.platform !== "win32" }, async () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
-  if (process.platform === "win32") run.queue.push({ status: 1, stdout: "", stderr: "" });
+  if (process.platform === "win32") run.queue.push(missingState());
   const result = await serviceStart({ run, healthFetch: absentHealth() });
   assert.equal(result.ok, false);
   assert.equal(result.reason, "not_installed");
@@ -673,9 +681,9 @@ test("serviceStart returns ok=false with port_conflict when something non-Aerial
   }
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+    run.queue.push(missingState());
   } else {
-    run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Ready", stderr: "" });
+    run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 3 }), stderr: "" });
   }
   const result = await serviceStart({ run, healthFetch: nonAerialHealth() });
   assert.equal(result.ok, false);
@@ -686,7 +694,7 @@ test("serviceStart returns ok=false with port_conflict when something non-Aerial
 test("serviceStop is idempotent (exit 0 + note) when service is not installed", { skip: process.platform !== "darwin" && process.platform !== "win32" }, () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
-  if (process.platform === "win32") run.queue.push({ status: 1, stdout: "", stderr: "" });
+  if (process.platform === "win32") run.queue.push(missingState());
   const result = serviceStop({ run });
   assert.equal(result.ok, true);
   assert.equal(result.note, "not installed");
@@ -700,9 +708,9 @@ test("serviceStop is idempotent (exit 0 + note) when service is installed but no
   }
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+    run.queue.push(missingState());
   } else {
-    run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Ready", stderr: "" });
+    run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 3 }), stderr: "" });
   }
   const result = serviceStop({ run });
   assert.equal(result.ok, true);
@@ -726,12 +734,12 @@ test("serviceStop on macOS uses launchctl bootout (not kill SIGTERM)", { skip: p
 
 test("serviceStop on Windows terminates each task process tree before ending the task", { skip: process.platform !== "win32" }, () => {
   const run = makeRunner();
-  run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+  run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" });
   run.queue.push({ status: 0, stdout: "[4321,8765]", stderr: "" });
   const result = serviceStop({ run });
   assert.equal(result.ok, true);
   assert.deepEqual(run.calls.map((call) => call.file), [
-    "schtasks.exe", "powershell.exe", "taskkill.exe", "taskkill.exe", "schtasks.exe"
+    "powershell.exe", "powershell.exe", "taskkill.exe", "taskkill.exe", "schtasks.exe"
   ]);
   assert.deepEqual(run.calls[2].args, ["/PID", "4321", "/T", "/F"]);
   assert.deepEqual(run.calls[3].args, ["/PID", "8765", "/T", "/F"]);
@@ -748,7 +756,7 @@ test("serviceRestart blocks start when stop fails", { skip: process.platform !==
     run.queue.push({ status: 0, stdout: "{\n\t\"PID\" = 1234;\n};", stderr: "" });
     run.queue.push({ status: 1, stdout: "", stderr: "bootout refused" });
   } else {
-    run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+    run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" });
     run.queue.push({ status: 0, stdout: "[]", stderr: "" });
     run.queue.push({ status: 1, stdout: "", stderr: "/End failed" });
   }
@@ -767,7 +775,7 @@ test("serviceRestart on Windows refuses to start after a process query, PID vali
   ]) {
     await t.test(scenario.name, async () => {
       const run = makeRunner();
-      run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+      run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" });
       run.queue.push(scenario.query);
       if (scenario.kill) run.queue.push(scenario.kill);
       const result = await serviceRestart({ run, healthFetch: absentHealth() });
@@ -785,7 +793,7 @@ test("serviceUninstall stops the Windows service before /Delete", { skip: proces
   fs.mkdirSync(path.dirname(_internal.winWrapperPath()), { recursive: true });
   fs.writeFileSync(_internal.winWrapperPath(), "rem placeholder");
   const run = makeRunner();
-  run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+  run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" });
   run.queue.push({ status: 0, stdout: "[]", stderr: "" });
   run.queue.push({ status: 0, stdout: "", stderr: "" });
   run.queue.push({ status: 0, stdout: "", stderr: "" });
@@ -805,7 +813,7 @@ test("serviceUninstall on Windows preserves the task and wrapper when process tr
   fs.mkdirSync(path.dirname(wrapper), { recursive: true });
   fs.writeFileSync(wrapper, "preserve installed wrapper");
   const run = makeRunner();
-  run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Running", stderr: "" });
+  run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 4 }), stderr: "" });
   run.queue.push({ status: 0, stdout: "[4321]", stderr: "" });
   run.queue.push({ status: 5, stdout: "", stderr: "Access denied" });
   const result = serviceUninstall({ run });
@@ -855,7 +863,7 @@ test("serviceUninstall on darwin succeeds and removes plist+wrapper when bootout
 test("serviceUninstall is idempotent (exit 0 + note) when not installed", { skip: process.platform !== "darwin" && process.platform !== "win32" }, () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
-  if (process.platform === "win32") run.queue.push({ status: 1, stdout: "", stderr: "" });
+  if (process.platform === "win32") run.queue.push(missingState());
   const result = serviceUninstall({ run });
   assert.equal(result.ok, true);
   assert.equal(result.note, "no service installed");
@@ -865,9 +873,9 @@ test("serviceStatus aggregates service + health + logs + auth and distinguishes 
   cleanupServiceArtifacts();
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+    run.queue.push(missingState());
   } else {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
   }
   const status = await serviceStatus({ run, healthFetch: absentHealth() });
   assert.equal(status.schema, "aerial.service-status.v1");
@@ -882,9 +890,9 @@ test("serviceStatus marks running (foreground) when health is Aerial but service
   cleanupServiceArtifacts();
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+    run.queue.push(missingState());
   } else {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
   }
   const status = await serviceStatus({ run, healthFetch: aerialHealth() });
   assert.equal(status.summary, "running (foreground)");
@@ -896,9 +904,9 @@ test("serviceStatus marks port conflict in health block when non-Aerial 200 on p
   cleanupServiceArtifacts();
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "Could not find service" });
+    run.queue.push(missingState());
   } else {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
   }
   const status = await serviceStatus({ run, healthFetch: nonAerialHealth() });
   assert.equal(status.health.portConflict, true);
@@ -925,9 +933,9 @@ test("authBlock reports tri-state (present|missing|invalid) for api_key and gith
   if (fs.existsSync(token)) fs.unlinkSync(token);
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
   } else {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
   }
   const status = await serviceStatus({ run, healthFetch: absentHealth() });
   assert.equal(status.auth.api_key.state, "present");
@@ -942,7 +950,7 @@ test("authBlock classifies an existing empty credential file as `invalid` (not `
   fs.writeFileSync(apiKey, "");
   fs.writeFileSync(token, "   \n  ");
   const run = makeRunner();
-  run.queue.push({ status: 1, stdout: "", stderr: "" });
+  run.queue.push(missingState());
   const status = await serviceStatus({ run, healthFetch: absentHealth() });
   assert.equal(status.auth.api_key.state, "invalid");
   assert.equal(status.auth.api_key.reason, "empty");
@@ -958,7 +966,7 @@ test("serviceStatus logs block reflects install-time AERIAL_LOG_MAX_BYTES / AERI
   process.env.AERIAL_LOG_BACKUPS = "5";
   try {
     const run = makeRunner();
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
     const status = await serviceStatus({ run, healthFetch: absentHealth() });
     assert.equal(status.logs.maxFileBytes, 20971520);
     assert.equal(status.logs.rotateKeep, 5);
@@ -1008,7 +1016,7 @@ test("serviceStatus logs block parses the installed wrapper when present and lab
       fs.writeFileSync(wrapper, content);
     }
     const run = makeRunner();
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
     const status = await serviceStatus({ run, healthFetch: absentHealth() });
     assert.equal(status.logs.maxFileBytes, 33554432, "must reflect installed-wrapper value, not current env");
     assert.equal(status.logs.rotateKeep, 8, "must reflect installed-wrapper value, not current env");
@@ -1064,9 +1072,9 @@ function writeInstalledArtifacts({ nodePath, cliPath, maxBytes = 4194304, backup
 function installedQueryRun() {
   const run = makeRunner();
   if (process.platform === "darwin") {
-    run.queue.push({ status: 1, stdout: "", stderr: "" });
+    run.queue.push(missingState());
   } else if (process.platform === "win32") {
-    run.queue.push({ status: 0, stdout: "TaskName: \\AerialLocalProxy\r\nStatus: Ready", stderr: "" });
+    run.queue.push({ status: 0, stdout: JSON.stringify({ installed: true, state: 3 }), stderr: "" });
   }
   return run;
 }
@@ -1075,7 +1083,7 @@ test("serviceStatus wrapper block: not installed -> stale=false, staleReasons=[]
   cleanupServiceArtifacts();
   const run = makeRunner();
   if (process.platform === "darwin") run.queue.push({ status: 1, stdout: "", stderr: "Could not find" });
-  else if (process.platform === "win32") run.queue.push({ status: 1, stdout: "", stderr: "" });
+  else if (process.platform === "win32") run.queue.push(missingState());
   const s = await serviceStatus({ run, healthFetch: absentHealth() });
   assert.equal(s.service.installed, false);
   assert.deepEqual(s.service.wrapper.staleReasons, []);

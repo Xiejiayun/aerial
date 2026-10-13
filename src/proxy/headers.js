@@ -25,9 +25,17 @@ export function upstreamHeaders(token, extra = {}) {
 
 export function copyResponseHeaders(upstream) {
   const headers = new Headers();
-  const contentType = upstream.headers.get("content-type");
-  if (contentType) headers.set("content-type", contentType);
-  const cacheControl = upstream.headers.get("cache-control");
-  if (cacheControl) headers.set("cache-control", cacheControl);
+  const allowed = new Set([
+    "content-type", "cache-control", "retry-after", "retry-after-ms", "x-should-retry",
+    "request-id", "x-request-id", "x-github-request-id", "x-ms-request-id", "x-correlation-id",
+    "ratelimit", "ratelimit-policy"
+  ]);
+  const hopByHop = new Set((upstream.headers.get("connection") || "").split(",").map(name => name.trim().toLowerCase()));
+  for (const [name, value] of upstream.headers) {
+    if (hopByHop.has(name)) continue;
+    if (allowed.has(name) || /^(?:x-ratelimit-|ratelimit-|anthropic-ratelimit-)/.test(name)) headers.set(name, value);
+  }
+  // fetch may have decompressed the body. Content-Encoding/Length and other
+  // transport headers must not describe the original wire representation.
   return headers;
 }

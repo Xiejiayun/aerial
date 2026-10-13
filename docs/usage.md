@@ -178,7 +178,16 @@ aerial probe
 | `GET /v1/models` (with GitHub login) | not required | 200 + Copilot model list with Aerial route annotations |
 | `GET /v1/models` (no GitHub login) | not required | 401 + `error.aerial.status = "login_required"` |
 | `GET /v1/models` (GitHub login rejected by Copilot) | not required | 401/403 + `error.aerial.status = "upstream_auth_failed"` and `upstream_status` |
-| `POST /v1/responses`, `/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions` | required | 401 if key missing/invalid; otherwise proxied to Copilot |
+| `POST /v1/responses`, `/v1/messages`, `/v1/chat/completions` | required | 401 if key missing/invalid; otherwise proxied to Copilot |
+| `POST /v1/messages/count_tokens` | required | Local input estimate, including system prompts, tools, messages, and tool results; malformed JSON returns 400 |
+
+Token counts are estimates (`x-aerial-token-count: estimate`), not an upstream
+tokenizer result or a guarantee that the request fits the context window. Aerial
+counts the complete JSON input, uses UTF-8 bytes for non-ASCII text, and adds 20%
+headroom. Images reserve 4,096 tokens each and binary documents reserve 8,192
+before that headroom; base64 bytes are not counted as ordinary prompt text.
+Text documents are counted as text. Large or multi-page media can exceed these
+allowances; the model's actual usage and context limit remain authoritative.
 
 None of these endpoints emit `WWW-Authenticate` or open CORS (`Access-Control-Allow-Origin: *`). The `login_required` and `upstream_auth_failed` JSON shapes never include tokens, keys, or filesystem paths.
 
@@ -195,6 +204,12 @@ Each model returned by `/v1/models` includes an `aerial` field that tells you wh
 Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. `responses_websocket` means Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses calls when `AERIAL_RESPONSES_WEBSOCKET=on` is set; with the opt-in off (default), Aerial always uses HTTP upstream Responses. Models marked with `embeddings_not_implemented` or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
 
 ## 7.5 Manage Setup
+
+Setup, status, restore, and teardown honor `CODEX_HOME` and `CLAUDE_CONFIG_DIR`;
+otherwise they use `~/.codex` and `~/.claude`. Set `AERIAL_CONFIG_DIR` or use
+`aerial --config-dir <directory> <command>` to select Aerial's own configuration.
+Generated key helpers and service wrappers remember its absolute directory, so
+they work when a GUI client or a new terminal does not inherit that environment.
 
 ```bash
 aerial setup status [--json]
@@ -249,7 +264,9 @@ Stability rules for `aerial.setup-status.v1`: new fields may be added at any lev
 
 `aerial setup restore <codex|claude|all> --latest` restores the most recent `*.aerial-backup-<ISO>` snapshot for the named client. Before overwriting, it takes a `*.aerial-pre-restore-<ISO>` snapshot of the current file so the restore itself is reversible. With `all`, both clients are restored best-effort and the command exits non-zero if any individual restore failed. If there is no backup to restore, the command prints a note and exits 0.
 
-`aerial teardown` first runs `setup restore all --latest` and then, only if every client restore succeeded, uninstalls the local Aerial service via `aerial service uninstall`. If any client restore reports a failure, the service is left running and `aerial teardown` exits non-zero; resolve the restore errors, then rerun `aerial teardown` (or call `aerial service uninstall` directly once the client config is in the state you want).
+`aerial teardown` undoes the Aerial takeover, then uninstalls the service only when both clients no longer depend on it. Setup records the original file (or its absence) in a private `*.aerial-state.json` journal. Repeating setup retains that baseline. Teardown restores managed values that still match Aerial's last write and preserves later user changes; a remaining Aerial dependency or invalid recovery state stops the uninstall and exits non-zero. Fix the reported configuration conflict and rerun `aerial teardown`.
+
+For installations made before takeover journals existed, teardown uses the oldest valid pre-Aerial backup. If none exists, it removes known Aerial settings, preserves unrelated settings, and explicitly reports that client defaults now apply; a lost original provider cannot be reconstructed. A `*.aerial-pre-teardown-<ISO>` snapshot makes the detach reversible. Completed journals are retained with a `.detached-<timestamp>` suffix. Use `setup restore --latest` only to roll back the last setup edit; after repeated setup that snapshot can still point to Aerial.
 
 ## 7.6 Run Aerial As A Local Service
 

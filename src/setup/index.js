@@ -5,7 +5,7 @@ import { gitHubTokenSource } from "../shared/auth.js";
 import { CLIENTS, setupCodex, setupClaude, codexStatus, claudeStatus } from "./clients.js";
 
 export { setupCodex, setupClaude, codexStatus, claudeStatus } from "./clients.js";
-export { findLatestBackup, restoreClient, restoreAllClients } from "./restore.js";
+export { findLatestBackup, restoreClient, restoreAllClients, detachAllClients } from "./restore.js";
 
 export function setupStatus() {
   const config = loadConfig();

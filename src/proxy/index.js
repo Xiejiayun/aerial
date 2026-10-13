@@ -13,6 +13,7 @@ import {
   responseInitiator
 } from "./cache-telemetry.js";
 import { fetchModelsCatalogForCopilot, proxyFetch, requestWithJsonBody } from "./transport.js";
+import { estimateInputTokens } from "./token-estimate.js";
 
 function responseModelFromCatalog(modelId, models) {
   return models.find((model) => model.id === modelId);
@@ -79,7 +80,14 @@ export async function proxyChatCompletions(request) {
 }
 
 export async function localCountTokens(request) {
-  const payload = await request.json().catch(() => ({}));
-  const serialized = JSON.stringify(payload.messages || payload.input || payload);
-  return Response.json({ input_tokens: Math.ceil(serialized.length / 4) });
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return Response.json({ error: { type: "invalid_request_error", message: "Expected a JSON object." } }, { status: 400 });
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return Response.json({ error: { type: "invalid_request_error", message: "Expected a JSON object." } }, { status: 400 });
+  }
+  return Response.json({ input_tokens: estimateInputTokens(payload) }, { headers: { "x-aerial-token-count": "estimate" } });
 }

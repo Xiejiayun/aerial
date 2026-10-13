@@ -2,15 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/utils.js";
+import { writePrivateFile } from "../shared/paths.js";
 import { CLIENTS } from "./clients.js";
+import { detachClientTakeover } from "./takeover.js";
 
 const BACKUP_PREFIX = ".aerial-backup-";
 const ISO_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 export function backupIfExists(file) {
   if (!fs.existsSync(file)) return undefined;
-  const backup = `${file}.aerial-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  fs.copyFileSync(file, backup);
+  let stamp = Date.now();
+  let backup;
+  do { backup = `${file}.aerial-backup-${new Date(stamp++).toISOString().replace(/[:.]/g, "-")}`; } while (fs.existsSync(backup));
+  writePrivateFile(backup, fs.readFileSync(file));
   return backup;
 }
 
@@ -94,13 +98,13 @@ export function restoreClient(target, { now = () => new Date() } = {}) {
   const targetExisted = fs.existsSync(writePath);
   const mode = resolveRestoreMode(writePath, latest.path, targetExisted);
   let snapshot;
-  if (targetExisted) {
-    const stamp = now().toISOString().replace(/[:.]/g, "-");
-    snapshot = `${writePath}${PRE_RESTORE_PREFIX}${stamp}`;
-    fs.copyFileSync(writePath, snapshot);
-  }
   const writeOpts = mode !== undefined ? { mode } : undefined;
   try {
+    if (targetExisted) {
+      const stamp = now().toISOString().replace(/[:.]/g, "-");
+      snapshot = `${writePath}${PRE_RESTORE_PREFIX}${stamp}`;
+      writePrivateFile(snapshot, fs.readFileSync(writePath));
+    }
     atomicWriteFile(writePath, backupContent, writeOpts);
   } catch (err) {
     if (err.code === "EXDEV") {
@@ -123,4 +127,15 @@ export function restoreAllClients(opts) {
   }
   const ok = Object.values(results).every((r) => r.ok);
   return { ok, results };
+}
+
+export function detachAllClients() {
+  const results = {};
+  for (const target of Object.keys(CLIENTS)) {
+    try {
+      const file = clientFile(target);
+      results[target] = detachClientTakeover({ target, file, backups: backupPathsFor(file) });
+    } catch (error) { results[target] = { target, ok: false, error: error.message }; }
+  }
+  return { ok: Object.values(results).every(result => result.ok), results };
 }

@@ -1,9 +1,7 @@
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+export { codexAuthCommand, claudeApiKeyHelper } from "../setup/auth-helper.js";
 
 const PACKAGE_JSON_URL = new URL("../../package.json", import.meta.url);
-const CLI_ENTRY = path.join(path.dirname(fileURLToPath(import.meta.url)), "index.js");
 
 export function readPackageVersion(packageJsonUrl = PACKAGE_JSON_URL) {
   try {
@@ -48,23 +46,6 @@ export function parseConfigHost(value) {
   const host = String(value).trim().toLowerCase();
   if (host === "127.0.0.1" || host === "localhost" || host === "::1") return host;
   throw new Error("host must be a loopback address: 127.0.0.1, localhost, or ::1");
-}
-
-export function codexAuthCommand() {
-  return {
-    command: process.execPath,
-    args: [CLI_ENTRY, "key", "print"],
-    timeout_ms: 5000,
-    refresh_interval_ms: 0
-  };
-}
-
-function quoteCommandPart(value) {
-  return `"${String(value).replace(/"/g, '\\"')}"`;
-}
-
-export function claudeApiKeyHelper() {
-  return [process.execPath, CLI_ENTRY, "key", "print"].map(quoteCommandPart).join(" ");
 }
 
 export function computeAppStatus(setup, service) {

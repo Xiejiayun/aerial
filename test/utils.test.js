@@ -111,3 +111,16 @@ test("atomicWriteFile removes the temporary file when write fails", () => {
   }
   assert.deepEqual(fs.readdirSync(dir), []);
 });
+
+test("atomicWriteFile keeps the original when Windows replacement is denied", () => {
+  const file = path.join(temp, "locked.txt");
+  fs.writeFileSync(file, "original");
+  const rename = mock.method(fs, "renameSync", () => {
+    throw Object.assign(new Error("locked"), { code: "EPERM" });
+  });
+  try {
+    assert.throws(() => atomicWriteFile(file, "new"), { code: "EPERM" });
+    assert.equal(fs.readFileSync(file, "utf8"), "original");
+    assert.equal(rename.mock.callCount(), 1);
+  } finally { rename.mock.restore(); }
+});

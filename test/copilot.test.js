@@ -75,10 +75,29 @@ function mockOpenAIFetch({ models = [] } = {}) {
   return { forwarded };
 }
 
+test("proxy forwards retry and diagnostic headers on upstream failures", async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    if (String(url).endsWith("/models")) return Response.json({ data: [] });
+    return Response.json({ error: { message: "busy" } }, { status: 503, headers: {
+      "retry-after": "30", "x-should-retry": "true", "x-request-id": "test-request", "x-ratelimit-remaining": "0",
+      "content-encoding": "gzip", "content-length": "999"
+    } });
+  };
+  const response = await proxyMessages(messagesRequest({ model: "claude-test", messages: [{ role: "user", content: "hello" }] }));
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("retry-after"), "30");
+  assert.equal(response.headers.get("x-should-retry"), "true");
+  assert.equal(response.headers.get("x-request-id"), "test-request");
+  assert.equal(response.headers.get("x-ratelimit-remaining"), "0");
+  assert.equal(response.headers.get("content-encoding"), null);
+  assert.equal(response.headers.get("content-length"), null);
+  assert.equal((await response.json()).error.message, "busy");
+});
+
 test("proxyModels annotates Aerial route support", async () => {
-  let calls = 0;
-  globalThis.fetch = async () => Response.json({
-    ...(calls++ === 0
+  globalThis.fetch = async url => Response.json({
+    ...(String(url).includes("copilot_internal")
       ? { token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" }
       : { data: [
           { id: "gpt", supported_endpoints: ["/responses", "ws:/responses"], capabilities: { type: "chat" } },

@@ -4,6 +4,12 @@ export function defaultRunCommand(file, args, opts = {}) {
   if (process.env.AERIAL_SERVICE_DRYRUN === "1") {
     const installed = process.env.AERIAL_SERVICE_DRYRUN_INSTALLED === "1";
     const fail = process.env.AERIAL_SERVICE_DRYRUN_FAIL || "";
+    if (file === "powershell.exe" && Array.isArray(args) && args.includes("-EncodedCommand")) {
+      const script = Buffer.from(args[args.indexOf("-EncodedCommand") + 1], "base64").toString("utf16le");
+      if (script.includes("[int]$task.State")) return {
+        status: 0, stdout: JSON.stringify(installed ? { installed: true, state: 4 } : { installed: false }), stderr: "", dryRun: true
+      };
+    }
     if (file === "schtasks.exe" && Array.isArray(args)) {
       if (args.includes("/Query")) {
         if (installed) {

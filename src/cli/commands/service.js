@@ -1,5 +1,6 @@
 import { serviceInstall, serviceRestart, serviceStart, serviceStatus, serviceStop, serviceUninstall } from "../../service/index.js";
 import { printServiceDiagnostics, printServiceWarning } from "../output.js";
+import { localBaseUrl } from "../../shared/urls.js";
 
 export function printServiceUninstallResult(r, { prefix = "Service uninstall" } = {}) {
   if (r.note === "no service installed") console.log(`${prefix}: no service installed`);
@@ -25,7 +26,7 @@ async function runServiceCliAction(action, render) {
 }
 
 function printServiceStatus(status) {
-  console.log(`Aerial: http://${status.config.host}:${status.config.port}  (platform: ${status.platform})`);
+  console.log(`Aerial: ${localBaseUrl(status.config)}  (platform: ${status.platform})`);
   if (status.supported === false) {
     console.log(`service: unsupported on ${status.platform}`);
     console.log(`summary: ${status.summary}`);

@@ -12,21 +12,25 @@ function firstModel(models, route) {
 }
 
 async function probeRoute(name, model, handler, payload, headers = {}) {
-  const response = await handler(new Request(`http://aerial.local/probe/${name}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify(payload)
-  }));
-  const body = await readJsonSafely(response);
-  return {
-    route: name,
-    model: model.id,
-    ok: response.ok,
-    status: response.status,
-    contentType: response.headers.get("content-type") || undefined,
-    usage: response.ok ? usageSummary(body) : undefined,
-    error: response.ok ? undefined : body.error || body
-  };
+  try {
+    const response = await handler(new Request(`http://aerial.local/probe/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(payload)
+    }));
+    const body = await readJsonSafely(response);
+    return {
+      route: name,
+      model: model.id,
+      ok: response.ok,
+      status: response.status,
+      contentType: response.headers.get("content-type") || undefined,
+      usage: response.ok ? usageSummary(body) : undefined,
+      error: response.ok ? undefined : body.error || body
+    };
+  } catch (error) {
+    return { route: name, model: model.id, ok: false, error: { message: error.message || String(error) } };
+  }
 }
 
 function summarizeModels(models) {
@@ -44,17 +48,22 @@ function summarizeModels(models) {
 }
 
 export async function runProbe({ live = false } = {}) {
-  const modelsResponse = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET" }));
+  const context = { generatedAt: new Date().toISOString(), live, scope: "proxy-handlers", notChecked: ["running-service", "client-configuration"] };
+  let modelsResponse;
+  try {
+    modelsResponse = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET" }));
+  } catch (error) {
+    return { ...context, ok: false, error: { message: error.message || String(error) } };
+  }
   const modelsPayload = await readJsonSafely(modelsResponse);
   if (!modelsResponse.ok) {
-    return { ok: false, generatedAt: new Date().toISOString(), error: modelsPayload.error || modelsPayload };
+    return { ...context, ok: false, status: modelsResponse.status, error: modelsPayload.error || modelsPayload };
   }
 
   const models = Array.isArray(modelsPayload.data) ? modelsPayload.data : [];
   const report = {
     ok: true,
-    generatedAt: new Date().toISOString(),
-    live,
+    ...context,
     summary: summarizeModels(models),
     routes: [],
     models: models.map((model) => ({
@@ -96,13 +105,17 @@ export async function runProbe({ live = false } = {}) {
     }));
   }
 
+  report.ok = report.routes.length > 0 && report.routes.every(route => route.ok);
+  report.skippedRoutes = ["responses", "messages", "chat"].filter(route => !report.routes.some(check => check.route === route));
+  if (!report.routes.length) report.error = { message: "No inference routes are available to test. Check your Copilot subscription, network and model catalog." };
   return report;
 }
 
 export function formatProbeReport(report) {
-  if (!report.ok) return `Aerial probe failed: ${JSON.stringify(report.error)}`;
+  if (!report.summary) return `Aerial probe failed: ${JSON.stringify(report.error)}`;
   const lines = [
-    `Aerial probe (${report.live ? "live" : "models"}) at ${report.generatedAt}`,
+    `Aerial probe (${report.live ? "live" : "models"}): ${report.ok ? "ok" : "FAILED"} at ${report.generatedAt}`,
+    "Scope: in-process proxy handlers and upstream API. Check local service/client readiness with aerial status.",
     `Models: ${report.models.length}`,
     `Routes: responses=${report.summary.responses}, responsesWebSocket=${report.summary.websocketResponses}, messages=${report.summary.messages}, chat=${report.summary.chat}`,
     `Unsupported: embeddings=${report.summary.embeddings}, noRoute=${report.summary.unsupported}`
@@ -112,9 +125,12 @@ export function formatProbeReport(report) {
     lines.push("", "Live route checks:");
     for (const route of report.routes) {
       const usage = route.usage ? ` input=${route.usage.input ?? "?"} output=${route.usage.output ?? "?"} cached=${route.usage.cached ?? 0}` : "";
-      lines.push(`- ${route.route}: ${route.ok ? "ok" : "fail"} status=${route.status} model=${route.model}${usage}`);
+      lines.push(`- ${route.route}: ${route.ok ? "ok" : "fail"} status=${route.status ?? "network-error"} model=${route.model}${usage}`);
+      if (route.error) lines.push(`  ${typeof route.error === "string" ? route.error : JSON.stringify(route.error)}`);
     }
   }
+  if (report.error) lines.push(`Error: ${JSON.stringify(report.error)}`);
+  if (report.skippedRoutes?.length) lines.push(`Unavailable routes (not tested): ${report.skippedRoutes.join(", ")}`);
 
   lines.push("", "Model matrix:");
   for (const model of report.models) {
