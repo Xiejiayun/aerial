@@ -84,5 +84,8 @@ jobs:
       - name: Audit locked dependencies
         run: npm audit --audit-level=low --registry=https://registry.npmjs.org
 
+      - name: Report authoritative npm release state
+        run: npm view @jiayunxie/aerial versions dist-tags --json --registry=https://registry.npmjs.org
+
       - name: Verify npm pack contents
         run: node scripts/verify-package.mjs
