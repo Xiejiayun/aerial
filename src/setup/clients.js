@@ -11,6 +11,7 @@ import { codexConfigFile, claudeSettingsFile } from "../shared/paths.js";
 import { codexAuthCommand, claudeApiKeyHelper, isAerialKeyHelper } from "./auth-helper.js";
 import { localBaseUrl } from "../shared/urls.js";
 import { claudeNativeModel, claudeModelSettingsKey, claudeSavedEffort, resolveClaudeSetupEffort } from "./claude-model.js";
+import { assertClaudeEnvironment, claudeEnvForAerial, claudeEnvironmentConflicts, claudeSettingsConflicts, claudeModelOverrides } from "./claude-conflicts.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -21,22 +22,6 @@ const DEFAULT_CODEX_AUTH = Object.freeze({
 
 function ensureParent(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-}
-
-function claudeEnvForAerial(currentEnv, config) {
-  const {
-    ANTHROPIC_API_KEY,
-    ANTHROPIC_AUTH_TOKEN,
-    ANTHROPIC_MODEL,
-    ANTHROPIC_DEFAULT_SONNET_MODEL,
-    ANTHROPIC_DEFAULT_OPUS_MODEL,
-    ...rest
-  } = currentEnv || {};
-  return {
-    ...rest,
-    ANTHROPIC_BASE_URL: localBaseUrl(config),
-    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1"
-  };
 }
 
 export function setupCodex({ model, effort, authCommand = codexAuthCommand() } = {}) {
@@ -74,32 +59,43 @@ export function setupCodex({ model, effort, authCommand = codexAuthCommand() } =
   return { file, backup, ...takeover, model: selectedModel, effort: normalizedEffort, auth: { type: "command", command: authCommand.command, args: authCommand.args || [] } };
 }
 
-export function setupClaude({ model, effort, supportedEfforts, apiKeyHelper = claudeApiKeyHelper() } = {}) {
+export function setupClaude({ model, effort, supportedEfforts, models, apiKeyHelper = claudeApiKeyHelper() } = {}) {
   const requestedEffort = effort === undefined ? undefined : assertValidEffort(effort);
   const config = loadConfig();
+  assertClaudeEnvironment(config);
   const selectedModel = model || config.defaultModel;
   const clientModel = claudeNativeModel(selectedModel) || selectedModel;
   const effortResolution = requestedEffort === undefined ? undefined : resolveClaudeSetupEffort(requestedEffort, selectedModel, supportedEfforts);
   const normalizedEffort = effortResolution?.resolvedEffort;
-  ensureApiKey();
   const file = claudeSettingsFile();
-  ensureParent(file);
   const original = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
   const current = original === null ? {} : JSON.parse(original);
   if (!current || typeof current !== "object" || Array.isArray(current)) throw new Error("Claude configuration must be an object.");
+  for (const field of ["env", "modelOverrides", "modelSettings"]) {
+    if (current[field] !== undefined && (!current[field] || typeof current[field] !== "object" || Array.isArray(current[field]))) throw new Error(`Claude ${field} must be an object. Client configuration was not changed.`);
+  }
+  ensureApiKey();
+  ensureParent(file);
   const next = {
     ...current,
     apiKeyHelper,
     env: claudeEnvForAerial(current.env, config)
   };
+  // Restore these user-scope selectors from the takeover journal on teardown.
+  // Project and managed policy files are never edited.
+  for (const key of ["maxEffortLevel", "availableModels", "enforceAvailableModels", "alwaysThinkingEnabled", "ultracode", "effortLevel"]) delete next[key];
   if (clientModel) {
     next.model = clientModel;
-    next.modelOverrides = { ...current.modelOverrides, [clientModel]: selectedModel };
+    next.modelOverrides = claudeModelOverrides(models, selectedModel);
   }
+  const key = claudeModelSettingsKey(clientModel);
+  const modelSettings = { ...current.modelSettings?.[key] };
+  delete modelSettings.maxEffortLevel;
+  delete modelSettings.effortLevel;
+  next.modelSettings = { ...current.modelSettings, ...(key ? { [key]: modelSettings } : {}) };
   if (normalizedEffort) {
     next.effortLevel = normalizedEffort;
-    const key = claudeModelSettingsKey(clientModel);
-    next.modelSettings = { ...current.modelSettings, [key]: { ...current.modelSettings?.[key], effortLevel: normalizedEffort } };
+    next.modelSettings[key] = { ...modelSettings, effortLevel: normalizedEffort };
   }
   const backup = backupIfExists(file);
   const takeover = writeClientTakeover({ target: "claude", file, original, next: `${JSON.stringify(next, null, 2)}\n`, backups: backupPathsFor(file) });
@@ -182,7 +178,7 @@ function claudeStateFromDoc(doc, expectedBaseUrl) {
   return "aerial-drift";
 }
 
-export function claudeStatus() {
+export function claudeStatus({ env = process.env } = {}) {
   const config = loadConfig();
   const expectedBaseUrl = localBaseUrl(config);
   const file = claudeSettingsFile();
@@ -191,6 +187,7 @@ export function claudeStatus() {
   let doc;
   try {
     doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) throw new Error("Claude configuration must be an object.");
   } catch (err) {
     return { target: "claude", state: "invalid", file, backups, error: err.message, effort: "missing" };
   }
@@ -198,10 +195,13 @@ export function claudeStatus() {
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
   const savedEffort = claudeSavedEffort(doc);
+  const conflicts = [...claudeSettingsConflicts(doc, config), ...claudeEnvironmentConflicts(env, config)];
   const needsMigration = savedEffort.invalidEffort !== undefined || claudeNativeModel(model) && claudeNativeModel(model) !== model;
-  if (state === "aerial" && needsMigration) state = "aerial-drift";
+  if (state === "aerial" && (needsMigration || conflicts.length)) state = "aerial-drift";
   return { target: "claude", state, file, backups, model, upstreamModel: doc?.modelOverrides?.[model] || model, baseUrl, ...savedEffort,
-    ...(needsMigration ? { migration: "run aerial setup claude" } : {}) };
+    ...(conflicts.length ? { conflicts } : {}),
+    ...(needsMigration || conflicts.length ? { migration: conflicts.some(item => item.source === "environment")
+      ? "clear the reported shell environment overrides, then run aerial setup claude" : "run aerial setup claude" } : {}) };
 }
 
 function validateTomlBackup(content) {

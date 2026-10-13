@@ -56,7 +56,8 @@ async function selectSetupOptions(target, route, args) {
     modelSource: selected.source,
     effortSource: effortChoice.source,
     modelDisplayed: Boolean(selected.displayed),
-    effortDisplayed: Boolean(effortChoice.displayed)
+    effortDisplayed: Boolean(effortChoice.displayed),
+    models: selected.choices
   };
 }
 
@@ -75,6 +76,7 @@ function printSetupStatus(status) {
     console.log(`${head}${effortText}  file=${cs.file}`);
     if (cs.backups.length) console.log(`         backups=${cs.backups.length}`);
     if (cs.error) console.log(`         error=${cs.error}`);
+    for (const conflict of cs.conflicts || []) console.log(`         override: ${conflict.source}.${conflict.key}`);
     if (cs.migration) console.log(`         migration=${cs.migration}`);
   }
 }
@@ -104,7 +106,7 @@ export async function runSetupCli(subcommand, rest) {
   }
   if (subcommand === "claude") {
     const options = await selectSetupOptions("Claude Code", "messages", rest);
-    const result = setupClaude({ model: options.model, effort: options.effort, apiKeyHelper: claudeApiKeyHelper() });
+    const result = setupClaude({ model: options.model, effort: options.effort, models: options.models, apiKeyHelper: claudeApiKeyHelper() });
     const config = loadConfig();
     printSetupCompletionSummary({
       heading: "Configured Claude Code",

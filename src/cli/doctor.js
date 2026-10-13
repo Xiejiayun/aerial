@@ -77,6 +77,12 @@ function buildClientChecks(setup) {
   const claude = setup.clients.claude;
   const aerialCodex = codex.state === "aerial";
   const aerialClaude = claude.state === "aerial";
+  for (const client of [codex, claude]) {
+    if (client.state.startsWith("aerial") && client.conflicts?.length) checks.push({
+      id: `clients.${client.target}.overrides`, ok: false, severity: "fail",
+      message: `${client.conflicts.map(item => `${item.source}.${item.key}`).join(", ")}. ${client.migration}.`
+    });
+  }
   if (!aerialCodex && !aerialClaude) {
     checks.push({
       id: "clients.aerial_client",

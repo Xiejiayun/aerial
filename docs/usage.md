@@ -129,7 +129,9 @@ aerial setup claude
 
 The setup command backs up and merges `~/.claude/settings.json`, asks you to choose a model whose Aerial routes include `messages`, then writes an absolute `apiKeyHelper` command and `ANTHROPIC_BASE_URL=http://127.0.0.1:18181`. The helper lets Claude Code read the local Aerial key automatically without relying on a shell `AERIAL_API_KEY` export or a refreshed `PATH`.
 
-If Claude Code was previously pointed at another Anthropic-compatible gateway, setup removes stale `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, and `ANTHROPIC_DEFAULT_*_MODEL` entries from the managed `env` block.
+When migrating from another provider, setup clears old authentication, Bedrock/Vertex/Foundry/Mantle/AWS provider selectors, all default family overrides (including Haiku), and conflicting effort variables in the user settings `env` block. It replaces provider model mappings with available Copilot mappings and resets user-scope model restrictions, thinking overrides, and effort caps before applying your choices. Unrelated settings are retained, and the takeover journal restores the original values on teardown. Project and managed policy files can still override user settings and are not edited.
+
+Overrides inherited from the launching shell cannot be removed by Aerial. Setup stops before writing the client file, names the conflicting variables without printing their values, and asks you to clear them in the shell that launches Claude. Status and doctor also report these conflicts.
 
 For a dry inspection without touching your real config, set `HOME`/`USERPROFILE` to a temporary directory before running this command.
 
@@ -141,7 +143,7 @@ To skip the prompts, pass `--model <messages-model-id>` and/or `--effort <low|me
 4. Otherwise Aerial injects Aerial `defaultEffort` from `~/.aerial/config.json` as `output_config.effort`.
 5. If no Aerial default is set, Aerial falls back to `medium`.
 
-Non-Opus-4.7 Claude requests are not modified.
+Explicit efforts remain client-controlled and are only adjusted to advertised upstream capabilities. Aerial's default-effort injection applies to recognized Opus model families.
 
 ## 7. Verify
 

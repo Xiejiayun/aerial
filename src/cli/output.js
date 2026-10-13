@@ -18,6 +18,7 @@ export function printSetupSummary(status) {
     const model = client.model ? ` model=${client.model}` : "";
     const effort = ` effort=${client.effort || "missing"}`;
     console.log(`  ${client.target}: ${client.state}${model}${effort}`);
+    for (const conflict of client.conflicts || []) console.log(`    override: ${conflict.source}.${conflict.key}`);
     if (client.migration) console.log(`    migration: ${client.migration}`);
   }
   console.log(`api key: ${status.auth.api_key.exists ? "present" : "missing"}`);
