@@ -152,7 +152,16 @@ aerial probe
 | `GET /v1/models` (with GitHub login) | not required | 200 + Copilot model list with Aerial route annotations |
 | `GET /v1/models` (no GitHub login) | not required | 401 + `error.aerial.status = "login_required"` |
 | `GET /v1/models` (GitHub login rejected by Copilot) | not required | 401/403 + `error.aerial.status = "upstream_auth_failed"` and `upstream_status` |
-| `POST /v1/responses`, `/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions` | required | 401 if key missing/invalid; otherwise proxied to Copilot |
+| `POST /v1/responses`, `/v1/messages`, `/v1/chat/completions` | required | 401 if key missing/invalid; otherwise proxied to Copilot |
+| `POST /v1/messages/count_tokens` | required | Local input estimate, including system prompts, tools, messages, and tool results; malformed JSON returns 400 |
+
+Token counts are estimates (`x-aerial-token-count: estimate`), not an upstream
+tokenizer result or a guarantee that the request fits the context window. Aerial
+counts the complete JSON input, uses UTF-8 bytes for non-ASCII text, and adds 20%
+headroom. Images reserve 4,096 tokens each and binary documents reserve 8,192
+before that headroom; base64 bytes are not counted as ordinary prompt text.
+Text documents are counted as text. Large or multi-page media can exceed these
+allowances; the model's actual usage and context limit remain authoritative.
 
 None of these endpoints emit `WWW-Authenticate` or open CORS (`Access-Control-Allow-Origin: *`). The `login_required` and `upstream_auth_failed` JSON shapes never include tokens, keys, or filesystem paths.
 
