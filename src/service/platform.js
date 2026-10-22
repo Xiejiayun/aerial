@@ -144,17 +144,23 @@ function darwinBootout(ctx) {
 function windowsConfigureRecovery(ctx) {
   // Update only Settings so the registered user, logon trigger, and hidden
   // launcher stay intact when refreshing a running service definition.
+  // Suppress progress and write failures directly to avoid EncodedCommand's CLIXML stderr.
   const script = [
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
-    `$task = Get-ScheduledTask -TaskName '${WIN_TASK_NAME}' -TaskPath '\\'`,
-    "$settings = $task.Settings",
-    "$settings.RestartInterval = 'PT1M'",
-    "$settings.RestartCount = 999",
-    "$settings.ExecutionTimeLimit = 'PT0S'",
-    "$settings.DisallowStartIfOnBatteries = $false",
-    "$settings.StopIfGoingOnBatteries = $false",
-    `Set-ScheduledTask -TaskName '${WIN_TASK_NAME}' -TaskPath '\\' -Settings $settings | Out-Null`
+    "try {",
+    `  $task = Get-ScheduledTask -TaskName '${WIN_TASK_NAME}' -TaskPath '\\'`,
+    "  $settings = $task.Settings",
+    "  $settings.RestartInterval = 'PT1M'",
+    "  $settings.RestartCount = 999",
+    "  $settings.ExecutionTimeLimit = 'PT0S'",
+    "  $settings.DisallowStartIfOnBatteries = $false",
+    "  $settings.StopIfGoingOnBatteries = $false",
+    `  Set-ScheduledTask -TaskName '${WIN_TASK_NAME}' -TaskPath '\\' -Settings $settings | Out-Null`,
+    "} catch {",
+    "  [Console]::Error.WriteLine(($_ | Out-String).TrimEnd())",
+    "  exit 1",
+    "}"
   ].join("\r\n");
   return ctx.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
 }
