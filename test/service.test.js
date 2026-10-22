@@ -323,7 +323,7 @@ test("Windows install skips recovery and start if task registration fails", { sk
   cleanupServiceArtifacts();
 });
 
-test("Windows recovery script updates the task settings and preserves unrelated settings", { skip: process.platform !== "win32", timeout: 70_000 }, async () => {
+test("Windows recovery script updates settings quietly and preserves readable errors", { skip: process.platform !== "win32", timeout: 70_000 }, async () => {
   cleanupServiceArtifacts();
   const run = makeRunner();
   const result = await serviceInstall({ run, healthFetch: healthSequence(ABSENT, AERIAL) });
@@ -338,6 +338,7 @@ test("Windows recovery script updates the task settings and preserves unrelated 
   const fixture = `
     function Get-ScheduledTask {
       param($TaskName, $TaskPath)
+      Write-Progress -Activity 'Preparing modules for first use.' -Completed
       if ($TaskName -ne 'AerialLocalProxy' -or $TaskPath -ne '\\') { throw 'Wrong task selected' }
       [pscustomobject]@{ Settings = [pscustomobject]@{
         RestartInterval = $null; RestartCount = 0; ExecutionTimeLimit = 'PT72H';
@@ -347,6 +348,7 @@ test("Windows recovery script updates the task settings and preserves unrelated 
     }
     function Set-ScheduledTask {
       param($TaskName, $TaskPath, $Settings)
+      Write-Progress -Activity 'Updating task settings' -Completed
       $script:captured = [pscustomobject]@{ TaskName = $TaskName; TaskPath = $TaskPath; Settings = $Settings }
     }
     ${script}
@@ -354,12 +356,15 @@ test("Windows recovery script updates the task settings and preserves unrelated 
   `;
   // Windows CI can cold-start PowerShell slowly while other test files run.
   // Allow both fixtures time to start without weakening their assertions.
-  const invoke = (source) => spawnSync("powershell.exe", [
-    "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(source, "utf16le").toString("base64")
-  ], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  const invoke = (source) => {
+    const args = [...command.args];
+    args[args.indexOf("-EncodedCommand") + 1] = Buffer.from(source, "utf16le").toString("base64");
+    return spawnSync(command.file, args, { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  };
   const success = invoke(fixture);
   assert.ifError(success.error);
   assert.equal(success.status, 0, success.stderr);
+  assert.equal(success.stderr, "", "successful recovery configuration must not emit progress on stderr");
   assert.deepEqual(JSON.parse(success.stdout), {
     TaskName: "AerialLocalProxy",
     TaskPath: "\\",
@@ -378,6 +383,7 @@ test("Windows recovery script updates the task settings and preserves unrelated 
   assert.ifError(failure.error);
   assert.notEqual(failure.status, 0, "a scheduler error must make the configuration command fail");
   assert.match(failure.stderr, /Recovery access denied/);
+  assert.doesNotMatch(failure.stderr, /#< CLIXML|<Objs\b|_x000[AD]_/);
   cleanupServiceArtifacts();
 });
 
