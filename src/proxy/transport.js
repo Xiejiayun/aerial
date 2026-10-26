@@ -25,7 +25,7 @@ export async function requestWithJsonBody(request, transform) {
   });
 }
 
-export async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride } = {}) {
+export async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride, onResponsePayload } = {}) {
   const signal = request.signal;
   const token = await getCopilotToken({ signal });
   const body = bodyOverride ?? (request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer());
@@ -46,7 +46,10 @@ export async function proxyFetch(path, request, { extraHeaders = {}, bodyOverrid
   if (path === "/models") {
     return new Response(upstream.body, { status: upstream.status, headers: copyResponseHeaders(upstream) });
   }
-  return wrapResponseWithCacheObserver(upstream, path, requestCache, { requestId: headers["x-request-id"] });
+  return wrapResponseWithCacheObserver(upstream, path, requestCache, {
+    requestId: headers["x-request-id"],
+    onResponsePayload
+  });
 }
 
 export async function fetchModelsCatalogForCopilot({ signal } = {}) {

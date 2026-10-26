@@ -15,6 +15,7 @@ import {
 } from "./cache-telemetry.js";
 import { fetchModelsCatalogForCopilot, proxyFetch, requestWithJsonBody } from "./transport.js";
 import { estimateInputTokens } from "./token-estimate.js";
+import { responsesToolReplayCache } from "./tool-replay.js";
 
 function responseModelFromCatalog(modelId, models) {
   return models.find((model) => model.id === modelId);
@@ -28,7 +29,8 @@ export async function proxyModels(request) {
 export async function proxyResponses(request) {
   const loadModels = () => fetchModelsCatalogForCopilot({ signal: request.signal });
   request.signal.throwIfAborted();
-  const payload = await withOpenAIDefaults(await request.json(), loadModels);
+  const replay = responsesToolReplayCache.prepare(await request.json());
+  const payload = await withOpenAIDefaults(replay.payload, loadModels);
   request.signal.throwIfAborted();
   const body = Buffer.from(JSON.stringify(payload));
 
@@ -49,7 +51,10 @@ export async function proxyResponses(request) {
       logEvent("responses_websocket", { model: payload.model });
       const response = await proxyResponsesWebSocket(payload, headers, { initiator, signal: request.signal });
       if (!response.body) return response;
-      const observer = createSseCacheObserver("/responses", requestCache, { requestId: headers["x-request-id"] });
+      const observer = createSseCacheObserver("/responses", requestCache, {
+        requestId: headers["x-request-id"],
+        onResponsePayload: replay.onResponsePayload
+      });
       return new Response(response.body.pipeThrough(observer), { status: response.status, headers: response.headers });
     }
     logEvent("responses_websocket_skip", {
@@ -59,7 +64,7 @@ export async function proxyResponses(request) {
   }
 
   const upstreamRequest = new Request(request.url, { method: request.method, headers: request.headers, body, duplex: "half", signal: request.signal });
-  return proxyFetch("/responses", upstreamRequest, { bodyOverride: body });
+  return proxyFetch("/responses", upstreamRequest, { bodyOverride: body, onResponsePayload: replay.onResponsePayload });
 }
 
 export async function proxyMessages(request) {
