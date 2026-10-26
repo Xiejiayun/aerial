@@ -49,6 +49,6 @@
     "smol-toml": "^1.9.0",
     "socks": "^2.8.10",
     "toml-eslint-parser": "^0.10.1",
-    "undici": "^7.30.0"
+    "undici": "^7.30.1"
   }
 }
