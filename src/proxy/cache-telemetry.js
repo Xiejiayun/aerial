@@ -127,6 +127,7 @@ export function createSseCacheObserver(route, requestCache, requestContext = {})
       const fields = usageFields(payload);
       if (Object.keys(fields).length) usage = { ...usage, ...fields };
       observeResponseFailure(payload, frame, route, requestCache, requestContext);
+      requestContext.onResponsePayload?.(payload);
     }
   };
 
@@ -149,13 +150,13 @@ export function createSseCacheObserver(route, requestCache, requestContext = {})
 
   return new TransformStream({
     transform(chunk, controller) {
-      controller.enqueue(chunk);
       try {
         buffer += decoder.decode(chunk, { stream: true });
         consume();
       } catch (error) {
         logEvent("cache_observe_error", { route, error: error.message });
       }
+      controller.enqueue(chunk);
     },
     flush() {
       try {
@@ -189,7 +190,8 @@ export function wrapResponseWithCacheObserver(upstream, route, requestCache, req
   if (contentType.includes("text/event-stream")) {
     const observer = createSseCacheObserver(route, requestCache, {
       requestId: requestContext.requestId,
-      upstreamRequestId: upstream.headers.get("x-request-id") || upstream.headers.get("x-github-request-id")
+      upstreamRequestId: upstream.headers.get("x-request-id") || upstream.headers.get("x-github-request-id"),
+      onResponsePayload: requestContext.onResponsePayload
     });
     return new Response(upstream.body.pipeThrough(observer), { status: upstream.status, headers });
   }
