@@ -49,7 +49,7 @@ export async function proxyResponses(request) {
       logEvent("responses_websocket", { model: payload.model });
       const response = await proxyResponsesWebSocket(payload, headers, { initiator, signal: request.signal });
       if (!response.body) return response;
-      const observer = createSseCacheObserver("/responses", requestCache);
+      const observer = createSseCacheObserver("/responses", requestCache, { requestId: headers["x-request-id"] });
       return new Response(response.body.pipeThrough(observer), { status: response.status, headers: response.headers });
     }
     logEvent("responses_websocket_skip", {
