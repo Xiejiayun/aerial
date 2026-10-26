@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-10-26
+
+### Fixed
+
+- Restore original encrypted function declarations for explicitly identified Codex compaction requests that omit tools. Bind completed streaming calls to snapshots from their generating request, including inline `additional_tools` and namespaces, and require an exact match within the same conversation, installation, and model. Both HTTP and opt-in upstream WebSocket streams share this handling.
+- Set `tool_choice: "none"` when restoring declarations so historical arguments can be interpreted without enabling new tool calls during compaction. Preserve input, encrypted arguments, response bytes, cancellation, and backpressure behavior.
+
+### Privacy and limits
+
+- Keep the replay cache process-local, with a six-hour TTL, at most 1,024 calls, and a 4 MiB content budget for serialized declarations and hashed keys. Do not store argument text; log only the restored declaration count. Missing or conflicting same-name schemas prevent restoration rather than guessing a historical declaration.
+- Restarting Aerial, cache eviction, missing session metadata, and calls generated before observation can prevent recovery. This compatibility fix does not guarantee repair of existing failed chats or every compaction/stream failure; it does not decrypt arguments locally or persist history.
+
 ## [0.3.7] - 2026-10-26
 
 ### Added
