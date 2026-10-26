@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-26
+
+### Added
+
+- Record `upstream_response_failed` diagnostics for Responses `response.failed` and `error` stream events, including bounded credential-redacted error details, the selected model, and available request/response IDs. Correlate HTTP authentication retries and opt-in upstream WebSocket requests without logging request input or response output fields.
+
+### Fixed
+
+- Observe failure events across fragmented UTF-8, CRLF, multiline SSE data, and a final frame without a delimiter while forwarding the original stream unchanged. Preserve existing cache telemetry and cancellation behavior.
+
+### Notes
+
+- This release makes upstream failures during Codex compaction diagnosable; it does not claim to resolve every upstream compaction failure, change compact thresholds, or automatically retry failed streams.
+
 ## [0.3.6] - 2026-10-13
 
 ### Added
