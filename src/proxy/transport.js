@@ -33,19 +33,20 @@ export async function proxyFetch(path, request, { extraHeaders = {}, bodyOverrid
   const contentType = request.headers.get("content-type") || "application/json";
   const requestCache = cacheRequestFields(parseJsonBody(body, contentType));
   if (hasExplicitCacheRequest(requestCache)) logEvent("cache_request", { route: path, ...requestCache });
-  const headers = upstreamHeaders(token, { accept, "content-type": contentType, ...extraHeaders });
+  let headers = upstreamHeaders(token, { accept, "content-type": contentType, ...extraHeaders });
   signal.throwIfAborted();
   let upstream = await upstreamFetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers, body, signal });
   if (upstream.status === 401) {
     await upstream.body?.cancel().catch(() => {});
     const refreshed = await getCopilotToken({ force: true, signal });
     signal.throwIfAborted();
-    upstream = await upstreamFetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers: upstreamHeaders(refreshed, { accept, "content-type": contentType, ...extraHeaders }), body, signal });
+    headers = upstreamHeaders(refreshed, { accept, "content-type": contentType, ...extraHeaders });
+    upstream = await upstreamFetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers, body, signal });
   }
   if (path === "/models") {
     return new Response(upstream.body, { status: upstream.status, headers: copyResponseHeaders(upstream) });
   }
-  return wrapResponseWithCacheObserver(upstream, path, requestCache);
+  return wrapResponseWithCacheObserver(upstream, path, requestCache, { requestId: headers["x-request-id"] });
 }
 
 export async function fetchModelsCatalogForCopilot({ signal } = {}) {

@@ -455,6 +455,8 @@ These logs deliberately omit prompt text and request bodies. If `cached` stays z
 Best practice: put stable system/project/tool context first, put changing user input last, and keep the prefix identical between requests. OpenAI-style prompt caching generally needs at least 1024 tokens before hits appear.
 ## Troubleshooting
 
+- Codex shows `Compaction interrupted` or `stream disconnected before completion: response.failed event received`: inspect the Aerial service log for `upstream_response_failed`. It records the upstream error code/type, a credential-redacted message (up to 2048 characters), model, and available request/response IDs for HTTP and opt-in upstream WebSocket Responses streams. It does not serialize request input or response output fields. HTTP 200 only confirms the stream was opened, not that inference completed. Use the recorded error to distinguish context/parameter errors, rate limits, and upstream failures before retrying; diagnostics do not change compact thresholds or automatically retry failed streams.
+
 - `503 Missing GitHub token`: run `aerial login`.
 - `401 Invalid or missing Aerial API key`: run `aerial setup codex` or `aerial setup claude` for the client you use, then restart the client terminal or VS Code.
 - Claude Code cannot read key: rerun `aerial setup claude` so the settings file gets a fresh absolute API-key helper command.

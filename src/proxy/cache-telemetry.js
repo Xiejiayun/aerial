@@ -80,38 +80,62 @@ function hasCacheUsage(fields) {
 }
 
 function sseJsonPayloads(text) {
-  return text.split(/\r?\n/)
+  const data = text.split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim())
-    .filter((line) => line && line !== "[DONE]")
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    });
+    .map((line) => line.slice("data:".length).replace(/^ /, ""))
+    .join("\n");
+  try {
+    return [JSON.parse(data)];
+  } catch {
+    return [];
+  }
+}
+
+function diagnosticText(value, limit = 256) {
+  return typeof value === "string" ? value.slice(0, limit) : undefined;
+}
+
+function observeResponseFailure(payload, frame, route, requestCache, requestContext) {
+  const eventType = payload?.type || frame.split(/\r?\n/).find((line) => line.startsWith("event:"))?.slice(6).trim();
+  if (eventType !== "response.failed" && eventType !== "error") return;
+  const error = payload?.response?.error || payload?.error || payload;
+  logEvent("upstream_response_failed", {
+    route,
+    eventType,
+    model: diagnosticText(requestCache.model),
+    requestId: diagnosticText(requestContext.requestId),
+    upstreamRequestId: diagnosticText(requestContext.upstreamRequestId),
+    responseId: diagnosticText(payload?.response?.id),
+    errorCode: diagnosticText(error?.code),
+    errorType: diagnosticText(error?.type),
+    message: diagnosticText(error?.message, 2048)
+  });
 }
 
 function shouldEmitCacheObserve(requestCache, usage) {
   return hasExplicitCacheRequest(requestCache) || hasCacheUsage(usage);
 }
 
-export function createSseCacheObserver(route, requestCache) {
+export function createSseCacheObserver(route, requestCache, requestContext = {}) {
   const decoder = new TextDecoder();
   let buffer = "";
   let usage = {};
   let logged = false;
+
+  const consumeFrame = (frame) => {
+    for (const payload of sseJsonPayloads(frame)) {
+      const fields = usageFields(payload);
+      if (Object.keys(fields).length) usage = { ...usage, ...fields };
+      observeResponseFailure(payload, frame, route, requestCache, requestContext);
+    }
+  };
 
   const consume = () => {
     let match;
     while ((match = SSE_FRAME_BOUNDARY.exec(buffer)) !== null) {
       const frame = buffer.slice(0, match.index);
       buffer = buffer.slice(match.index + match[0].length);
-      for (const payload of sseJsonPayloads(frame)) {
-        const fields = usageFields(payload);
-        if (Object.keys(fields).length) usage = { ...usage, ...fields };
-      }
+      consumeFrame(frame);
     }
   };
 
@@ -137,6 +161,7 @@ export function createSseCacheObserver(route, requestCache) {
       try {
         buffer += decoder.decode();
         consume();
+        if (buffer) consumeFrame(buffer);
       } catch (error) {
         logEvent("cache_observe_error", { route, error: error.message });
       }
@@ -157,12 +182,15 @@ async function logJsonCacheUsage(route, requestCache, clone) {
   }
 }
 
-export function wrapResponseWithCacheObserver(upstream, route, requestCache) {
+export function wrapResponseWithCacheObserver(upstream, route, requestCache, requestContext = {}) {
   const headers = copyResponseHeaders(upstream);
   const contentType = upstream.headers.get("content-type") || "";
   if (!upstream.body) return new Response(upstream.body, { status: upstream.status, headers });
   if (contentType.includes("text/event-stream")) {
-    const observer = createSseCacheObserver(route, requestCache);
+    const observer = createSseCacheObserver(route, requestCache, {
+      requestId: requestContext.requestId,
+      upstreamRequestId: upstream.headers.get("x-request-id") || upstream.headers.get("x-github-request-id")
+    });
     return new Response(upstream.body.pipeThrough(observer), { status: upstream.status, headers });
   }
   if (contentType.includes("json")) {
