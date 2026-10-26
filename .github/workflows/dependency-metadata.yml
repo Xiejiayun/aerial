@@ -1,0 +1,31 @@
+name: Temporary dependency metadata
+
+on:
+  push:
+    branches: [user/jiaxie/stream-failure-diagnostics]
+    paths: [.github/workflows/dependency-metadata.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Fetch exact security patches from the authoritative registry
+        run: |
+          mkdir dependency-artifacts
+          npm view undici@7.30.1 version dist engines license --json --registry=https://registry.npmjs.org > dependency-artifacts/undici.json
+          npm view ip-address@10.7.4 version dist engines license --json --registry=https://registry.npmjs.org > dependency-artifacts/ip-address.json
+          npm pack undici@7.30.1 --pack-destination dependency-artifacts --registry=https://registry.npmjs.org
+          npm pack ip-address@10.7.4 --pack-destination dependency-artifacts --registry=https://registry.npmjs.org
+          cat dependency-artifacts/undici.json dependency-artifacts/ip-address.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-dependency-artifacts
+          path: dependency-artifacts
+          retention-days: 1
