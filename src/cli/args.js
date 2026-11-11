@@ -1,6 +1,6 @@
 // Validate the complete command before dispatch: a typo must never turn into
 // a reset, an uninstall, a credential write, or an unintended server start.
-const spec = (usage, { flags = [], values = [], positional = 0 } = {}) => ({ usage, flags, values, positional });
+const spec = (usage, { flags = [], values = [], positional = 0, passthrough = false } = {}) => ({ usage, flags, values, positional, passthrough });
 const commands = {
   "--version": spec("--version"),
   update: spec("update [--check]", { flags: ["--check"] }),
@@ -11,6 +11,16 @@ const commands = {
   teardown: spec("teardown"),
   doctor: spec("doctor [--json]", { flags: ["--json"] }),
   probe: spec("probe [--live] [--json]", { flags: ["--live", "--json"] }),
+  cowork: {
+    configure: spec("cowork configure --profile <json>", { values: ["--profile"] }),
+    auth: spec("cowork auth [--interactive] [--origin <https-url>]", { flags: ["--interactive"], values: ["--origin"] }),
+    doctor: spec("cowork doctor [--json]", { flags: ["--json"] }),
+    models: spec("cowork models [--json]", { flags: ["--json"] }),
+    probe: spec("cowork probe --model <id>", { values: ["--model"] }),
+    operations: spec("cowork operations [--json]", { flags: ["--json"] }),
+    release: spec("cowork release <operation-id>", { positional: 1 }),
+    run: spec("cowork run --model <id> [--claude <path>] -- [Claude arguments]", { values: ["--model", "--claude"], passthrough: true })
+  },
   key: {
     generate: spec("key generate"),
     print: spec("key print")
@@ -44,7 +54,7 @@ export function parseGlobalArgs(args) {
 }
 
 export function validateCliArgs(args) {
-  if (!args.length || args.includes("--help") || args.includes("-h")) return { help: true };
+  if (!args.length || hasCliHelp(args)) return { help: true };
   const [command, ...tail] = args;
   let rule = commands[command];
   if (!rule) throw new Error(`Unknown command: ${command}. Run: aerial --help`);
@@ -59,6 +69,7 @@ export function validateCliArgs(args) {
   const positional = [];
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
+    if (arg === "--" && rule.passthrough) break;
     if (!arg.startsWith("-")) {
       positional.push(arg);
       continue;
@@ -75,4 +86,14 @@ export function validateCliArgs(args) {
   }
   if (positional.length !== rule.positional) throw new Error(`Usage: aerial ${rule.usage}`);
   return { help: false };
+}
+
+export function hasCliHelp(args) {
+  // Claude's arguments after the explicit separator belong to Claude, including
+  // --help; they must never be treated as Aerial help or Aerial options.
+  const commandOffset = args[0] === "--config-dir" ? 2 : 0;
+  const passthrough = args[commandOffset] === "cowork" && args[commandOffset + 1] === "run";
+  const separator = passthrough ? args.indexOf("--", commandOffset + 2) : -1;
+  const ownArgs = separator < 0 ? args : args.slice(0, separator);
+  return ownArgs.includes("--help") || ownArgs.includes("-h");
 }

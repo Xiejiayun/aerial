@@ -166,3 +166,8 @@ Advanced service lifecycle commands are documented in `docs/usage.md`.
 - Copilot inference routes are an observed compatibility target and may change upstream.
 
 More details: `docs/usage.md`.
+
+An experimental Windows Cowork session adapter is documented in
+[the usage guide](docs/usage.md#experimental-cowork-local-sessions). It requires
+an explicitly verified account protocol profile; local synthetic E2E passing
+does not establish real M365/Opus compatibility.

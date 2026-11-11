@@ -453,6 +453,111 @@ When `aerial start` is running in a terminal, Aerial also writes cache-only meta
 These logs deliberately omit prompt text and request bodies. If `cached` stays zero, first check that the repeated prefix is identical and at least 1024 tokens. This matches OpenAI's prompt caching requirements; GitHub's public Copilot REST docs cover management and usage-metrics APIs, but do not document Copilot inference cache fields.
 
 Best practice: put stable system/project/tool context first, put changing user input last, and keep the prefix identical between requests. OpenAI-style prompt caching generally needs at least 1024 tokens before hits appear.
+## Experimental Cowork local sessions
+
+This branch includes a gated Windows-only Cowork adapter for Claude Code
+2.1.281 and Node.js 24+. It has been exercised with the real Claude executable
+and a synthetic local upstream. Real M365/Opus compatibility requires the
+protocol evidence described below; an offline test is not a live verification.
+GitHub Copilot setup and background services are separate from this session.
+
+From a source checkout, use `node src/cli/index.js` in place of `aerial`:
+
+```powershell
+aerial cowork configure --profile C:\path\to\observed-cowork-profile.json
+aerial cowork auth
+aerial cowork models
+aerial cowork doctor
+aerial cowork probe --model <exact-opus-catalog-id>
+aerial cowork run --model <exact-opus-catalog-id>
+```
+
+`auth` is the only command that permits interactive WAM authentication. Complete
+Microsoft's account/MFA prompts yourself. Other commands use silent renewal and
+fail with `AUTH_REQUIRED` when interaction is needed. The Microsoft identity
+packages are optional npm dependencies; install with optional dependencies
+enabled to use Cowork. Other Aerial commands do not load these packages.
+
+The protocol profile contains only non-secret parameters observed in a normal
+authorized Cowork session. Do not copy tokens, cookies, or complete request
+headers into it. There is deliberately no built-in region, model, or borrowed
+identity. A starting profile has this shape; replace the placeholders using
+observed evidence:
+
+```json
+{
+  "version": 1,
+  "origin": "https://<observed-cowork-runtime-host>",
+  "clientId": "<observed-client-uuid>",
+  "resourceId": "<observed-resource-uuid>",
+  "scope": "<observed-resource-uuid>/access_as_user",
+  "authorityHost": "https://login.microsoftonline.com",
+  "evidence": { "source": "authorized-session", "observedAt": "<ISO-date>" },
+  "capabilities": {
+    "connectorsDisabled": "unverified",
+    "completion": "unverified",
+    "eventCorrelation": "unverified",
+    "verifiedEfforts": []
+  }
+}
+```
+
+Authentication and model listing can work before inference capabilities are
+verified. `probe` submits one fixed synthetic text task and consumes Cowork
+allowance. It reports sanitized protocol observations, never automatically
+promotes evidence, and does not prove that cloud tools are disabled. `run`
+requires independently verified cloud-tool isolation, event association, the
+`fr-plus-rl-ok` completion rule, and a compatible effort value. Do not change
+these flags merely to make startup pass. Keep the validation report alongside
+the profile. Pick the exact Opus catalog entry; unavailable routes fail without
+falling back to another provider or model.
+
+Each run opens a random authenticated loopback port and writes a temporary
+settings file protected by the current user's Windows ACL. Only the Claude
+child gets the route. Global/user/project settings remain unchanged; ordinary
+workspace trust and tool permissions remain active. Resume, background/cloud
+sessions, competing model/settings flags and unverified client versions are
+rejected for this trial. Managed organizational settings retain precedence;
+remote managed-provider conflicts have not been comprehensively verified.
+
+The adapter simulates tool proposals through validated JSON, buffers the full
+response before delivering content, and reports estimated token usage rather
+than Copilot Credits. Native signed thinking, multimodal inputs and tool search
+are unsupported. The client may show a conservative context-window warning;
+actual Cowork limits and automatic compaction still require live validation.
+
+Local state defaults to `%LOCALAPPDATA%\aerial\cowork`. Set
+`AERIAL_COWORK_CONFIG_DIR` for a separate account/profile; `--config-dir` also
+isolates Cowork under that Aerial configuration directory. Tokens remain in
+memory/WAM. Files contain account metadata and operation recovery metadata,
+not prompts, tool arguments, output text or bearer tokens.
+
+```powershell
+aerial cowork operations
+aerial cowork release <operation-id>
+```
+
+Close the running session before inspecting or releasing operations. Release
+only a reviewed operation: it removes repeat-submission protection and can
+allow another charged task later. It does not cancel any remote task or itself
+send inference. A local timeout or exit does not prove remote cancellation.
+After a crash, inspect `profile.lock` and confirm the recorded process has
+exited before moving that lock aside; live or uncertain locks are never stolen.
+Existing recovery records remain in place.
+
+To reproduce the offline E2E without contacting M365:
+
+```powershell
+node scripts/smoke-cowork-claude.mjs C:\path\to\claude.exe
+node scripts/smoke-cowork-claude.mjs C:\path\to\claude.exe --deny-write
+node scripts/smoke-cowork-claude.mjs C:\path\to\claude.exe --default-tools
+```
+
+These use fresh temporary workspaces and synthetic input. The first and third
+check actual file content after a Read/Write tool loop; the second verifies a
+real permission denial and absence of an output file. They do not establish
+model quality, live Cowork availability or actual billing.
+
 ## Troubleshooting
 
 - Codex shows `Compaction interrupted` or `stream disconnected before completion: response.failed event received`: inspect the Aerial service log for `upstream_response_failed`. It records the upstream error code/type, a credential-redacted message (up to 2048 characters), model, and available request/response IDs for HTTP and opt-in upstream WebSocket Responses streams. It does not serialize request input or response output fields. HTTP 200 only confirms the stream was opened, not that inference completed. Use the recorded error to distinguish context/parameter errors, rate limits, and upstream failures before retrying; diagnostics do not change compact thresholds or automatically retry failed streams.

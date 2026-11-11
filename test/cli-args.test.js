@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { validateCliArgs } from "../src/cli/args.js";
+import { hasCliHelp, validateCliArgs } from "../src/cli/args.js";
 import { mkHome, runCli } from "./helpers.js";
 
 test("help on every mutating command exits without touching configuration", () => {
@@ -18,7 +18,8 @@ test("help on every mutating command exits without touching configuration", () =
     ["teardown"], ["service", "install"], ["service", "start"],
     ["service", "stop"], ["service", "restart"], ["service", "uninstall"],
     ["key", "generate"], ["key", "print"], ["login", "--force"],
-    ["proxy", "enable"], ["proxy", "disable"], ["start"], ["update"], ["upgrade"]
+    ["proxy", "enable"], ["proxy", "disable"], ["start"], ["update"], ["upgrade"],
+    ["cowork", "configure"], ["cowork", "auth"], ["cowork", "run"], ["cowork", "probe"], ["cowork", "models"], ["cowork", "doctor"], ["cowork", "release", "synthetic-id"]
   ]) {
     const result = runCli([...command, "--help"], { home });
     assert.equal(result.status, 0, `${command.join(" ")}: ${result.stderr}`);
@@ -27,6 +28,21 @@ test("help on every mutating command exits without touching configuration", () =
     assert.deepEqual(fs.readdirSync(home), ["config"]);
     assert.deepEqual(fs.readdirSync(dir), ["config.json"]);
   }
+});
+
+test("Cowork validates its own options while preserving Claude arguments after the separator", () => {
+  assert.deepEqual(validateCliArgs(["cowork", "run", "--model", "cowork/test", "--", "--print", "hello", "--help"]), { help: false });
+  assert.equal(hasCliHelp(["--config-dir", "somewhere", "cowork", "run", "--model", "cowork/test", "--", "--help"]), false);
+  assert.equal(hasCliHelp(["cowork", "run", "--help", "--", "--print"]), true);
+  assert.deepEqual(validateCliArgs(["cowork", "auth", "--interactive", "--origin", "https://example.test"]), { help: false });
+  for (const args of [
+    ["cowork", "run", "--modle", "oops"], ["cowork", "run", "--model"],
+    ["cowork", "run", "--model", "test", "--print", "hello"],
+    ["cowork", "doctor", "--", "anything"], ["cowork", "auth", "--unknown"],
+    ["cowork", "probe", "--model", "test", "--prompt", "arbitrary text"]
+  ]) assert.throws(() => validateCliArgs(args));
+  assert.throws(() => validateCliArgs(["cowork", "release"]));
+  assert.deepEqual(validateCliArgs(["cowork", "operations", "--json"]), { help: false });
 });
 
 test("invalid options, extra arguments and missing values fail before dispatch", () => {

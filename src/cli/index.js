@@ -12,7 +12,7 @@ import { runStartCli } from "./commands/start.js";
 import { runUpdateCli } from "./commands/update.js";
 import { doctor, renderDoctorText } from "./doctor.js";
 import { formatProbeReport, runProbe } from "./probe.js";
-import { parseGlobalArgs, validateCliArgs } from "./args.js";
+import { hasCliHelp, parseGlobalArgs, validateCliArgs } from "./args.js";
 import { setStderrLogging } from "../shared/log.js";
 
 function printHelp(rawArgs = []) {
@@ -29,6 +29,16 @@ Usage:
   aerial service install|start|stop|restart|uninstall
   aerial status [--json]
   aerial proxy status|enable|disable [--json]
+
+Experimental Cowork sessions (Windows, Node.js 24+):
+  aerial cowork configure --profile <json>
+  aerial cowork auth [--interactive] [--origin <https-url>]
+  aerial cowork doctor [--json]
+  aerial cowork models [--json]
+  aerial cowork probe --model <id>
+  aerial cowork operations [--json]
+  aerial cowork release <operation-id>
+  aerial cowork run --model <id> [--claude <path>] -- [Claude arguments]
 
 Diagnostics and rollback:
   aerial setup status [--json]
@@ -55,13 +65,19 @@ Add --help to any command to view help without making changes.`);
 let longRunning = false;
 async function main() {
   const rawArgs = process.argv.slice(2);
-  if (rawArgs.includes("--help") || rawArgs.includes("-h")) return printHelp(rawArgs);
+  if (hasCliHelp(rawArgs)) return printHelp(rawArgs);
   const { args, configDir } = parseGlobalArgs(rawArgs);
   const [command, subcommand, ...rest] = args;
   if (validateCliArgs(args).help) return printHelp();
   if (configDir) process.env.AERIAL_CONFIG_DIR = configDir;
   if (command === "--version") return printVersion();
   setStderrLogging(command === "start" || process.env.AERIAL_DEBUG === "1");
+
+  if (command === "cowork") {
+    const { runCoworkCli } = await import("./commands/cowork.js");
+    process.exitCode = await runCoworkCli(subcommand, rest);
+    return;
+  }
 
   if (command === "update" || command === "upgrade") {
     runUpdateCli(args.slice(1));
@@ -140,8 +156,8 @@ main()
   .then(() => {
     // One-shot commands may leave keep-alive sockets (undici pools), a SOCKS5
     // bridge, or stdin open, which keeps the event loop alive and hangs the CLI
-    // after the work is done. `start` is the only long-running command, so for
-    // everything else exit explicitly once main() resolves.
+    // after the work is done. Cowork awaits its child and closes its gateway
+    // before resolving; only the ordinary `start` server outlives main().
     if (!longRunning) process.exit(process.exitCode ?? 0);
   })
   .catch((error) => {
