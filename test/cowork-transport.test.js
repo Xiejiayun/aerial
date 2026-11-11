@@ -8,11 +8,12 @@ const profile = {
   clientId: "11111111-1111-4111-8111-111111111111", resourceId: "22222222-2222-4222-8222-222222222222",
   scope: "22222222-2222-4222-8222-222222222222/access_as_user",
   evidence: { source: "authorized-session", observedAt: "2026-11-11T00:00:00Z" },
-  capabilities: { connectorsDisabled: "verified", completion: "fr-plus-rl-ok", eventCorrelation: "verified", verifiedEfforts: ["medium"] }
+  capabilities: { connectorsDisabled: "verified", completion: "fr-plus-rl-ok", eventCorrelation: "verified", verifiedEfforts: ["medium"], verifiedModelEfforts: { "exact-opus-fixture": ["medium"] } }
 };
 const identity = { tenantId: "33333333-3333-4333-8333-333333333333", objectId: "44444444-4444-4444-8444-444444444444" };
 const auth = { getToken: async () => ({ bearer: "synthetic-token", expiresAt: Date.now() + 3600_000, identity }) };
-const route = { upstreamId: "exact-opus-fixture", publicId: "cowork/claude-opus-fixture" };
+const route = { upstreamId: "exact-opus-fixture", publicId: "cowork/claude-opus-fixture", provider: "anthropic", displayName: "Claude Opus fixture",
+  supportedEfforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "medium" };
 const stream = () => new Response('event: fr\ndata: {"content":"done"}\n\nevent: rl\ndata: {"st":"ok"}\n\n', { headers: { "content-type": "text/event-stream" } });
 
 function submittedCompletion(text = "done") {
@@ -226,7 +227,7 @@ test("P0 effort reaches the container header without verifying ordinary inferenc
     let tokens = 0;
     let posts = 0;
     const completion = submittedCompletion("COWORK_PROTOCOL_TEXT_OK");
-    const notVerified = { ...profile, capabilities: { ...profile.capabilities, verifiedEfforts: [] } };
+    const notVerified = { ...profile, capabilities: { ...profile.capabilities, verifiedEfforts: [], verifiedModelEfforts: {} } };
     const transport = createCoworkTransport({ profile: notVerified, route,
       auth: { getToken: async () => { tokens++; return auth.getToken(); } },
       fetchImpl: async (url, init) => {

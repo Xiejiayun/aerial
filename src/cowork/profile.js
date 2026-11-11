@@ -2,6 +2,37 @@ import path from "node:path";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const MODEL_ID = /^[A-Za-z0-9._:/-]{1,200}$/;
+
+export function isSupportedCoworkModel(model) {
+  return /^(anthropic|claude)$/i.test(model?.provider || "")
+    && /\b(opus|sonnet|fable)\b/i.test(`${model?.displayName || ""} ${model?.upstreamId || ""}`);
+}
+
+export function modelVerifiedEfforts(profile, model) {
+  if (!isSupportedCoworkModel(model)) return [];
+  const scoped = profile.capabilities?.verifiedModelEfforts;
+  if (scoped && Object.hasOwn(scoped, model.upstreamId)) return [...scoped[model.upstreamId]];
+  // The legacy profile was verified against this exact Anthropic route. It
+  // cannot authorize another Opus version, Sonnet, Fable or a different vendor.
+  return model.upstreamId === "opus-5.5" && /^anthropic$/i.test(model.provider)
+    ? [...(profile.capabilities?.verifiedEfforts || [])] : [];
+}
+
+export function modelSupportedEfforts(profile, model) {
+  const verified = modelVerifiedEfforts(profile, model);
+  return [...new Set((model.supportedEfforts || []).filter(effort => EFFORTS.has(effort) && verified.includes(effort)))];
+}
+
+export function selectCoworkEffort(profile, model, requested) {
+  const supported = modelSupportedEfforts(profile, model);
+  if (requested !== undefined) {
+    if (!supported.includes(requested)) throw coworkError("UNSUPPORTED_CAPABILITY", "Select an effort advertised and verified for this exact Cowork model.", { statusCode: 400 });
+    return requested;
+  }
+  if (supported.includes(model.defaultEffort)) return model.defaultEffort;
+  return ["medium", "high", "low", "xhigh", "max"].find(effort => supported.includes(effort));
+}
 
 export function coworkError(code, message, { statusCode = 502, submitted = false } = {}) {
   return Object.assign(new Error(message), { code, statusCode, submitted });
@@ -23,13 +54,41 @@ export function validateProfile(value, { requireLive = false } = {}) {
   const capabilities = value.capabilities || {};
   if (capabilities.verifiedEfforts !== undefined && (!Array.isArray(capabilities.verifiedEfforts)
     || capabilities.verifiedEfforts.some((effort) => !EFFORTS.has(effort)))) invalid("verifiedEfforts must list only verified Cowork effort values.");
+  const verifiedModelEfforts = capabilities.verifiedModelEfforts;
+  if (verifiedModelEfforts !== undefined && (!verifiedModelEfforts || typeof verifiedModelEfforts !== "object"
+    || Array.isArray(verifiedModelEfforts)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(verifiedModelEfforts)) || Object.entries(verifiedModelEfforts).length > 128
+    || Object.entries(verifiedModelEfforts).some(([model, efforts]) => !MODEL_ID.test(model)
+      || ["__proto__", "prototype", "constructor"].includes(model)
+      || !Array.isArray(efforts) || efforts.length > 5 || new Set(efforts).size !== efforts.length
+      || efforts.some(effort => !EFFORTS.has(effort))))) {
+    invalid("verifiedModelEfforts must map exact upstream model IDs to unique verified Cowork effort values.");
+  }
+  const verifiedModelConversationReuse = capabilities.verifiedModelConversationReuse;
+  if (verifiedModelConversationReuse !== undefined && (!verifiedModelConversationReuse || typeof verifiedModelConversationReuse !== "object"
+    || Array.isArray(verifiedModelConversationReuse)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(verifiedModelConversationReuse))
+    || Object.entries(verifiedModelConversationReuse).length > 128
+    || Object.entries(verifiedModelConversationReuse).some(([model, verified]) => !MODEL_ID.test(model)
+      || ["__proto__", "prototype", "constructor"].includes(model) || verified !== true))) {
+    invalid("verifiedModelConversationReuse must map exact upstream model IDs to true after conversation verification.");
+  }
+  const localTrial = value.localTrial;
+  if (localTrial !== undefined && (!localTrial || typeof localTrial !== "object" || Array.isArray(localTrial)
+    || Object.keys(localTrial).length !== 1 || !Object.hasOwn(localTrial, "allowUnverifiedCloudTools")
+    || typeof localTrial.allowUnverifiedCloudTools !== "boolean")) {
+    invalid("localTrial must contain only the boolean allowUnverifiedCloudTools option.");
+  }
   if (requireLive && (value.evidence.source !== "authorized-session"
-    || capabilities.connectorsDisabled !== "verified"
+    || (capabilities.connectorsDisabled !== "verified" && localTrial?.allowUnverifiedCloudTools !== true)
     || capabilities.completion !== "fr-plus-rl-ok"
     || capabilities.eventCorrelation !== "verified")) {
-    throw coworkError("PROTOCOL_UNVERIFIED", "Cowork live inference requires authorized-session evidence, verified cloud-tool isolation, event correlation, and completion semantics.", { statusCode: 503 });
+    throw coworkError("PROTOCOL_UNVERIFIED", "Cowork live inference requires authorized-session evidence, event correlation, completion semantics, and verified cloud-tool isolation or an explicitly enabled local experimental trial.", { statusCode: 503 });
   }
-  return { ...value, origin: origin.origin, capabilities: { ...capabilities, verifiedEfforts: [...(capabilities.verifiedEfforts || [])] } };
+  return { ...value, origin: origin.origin, capabilities: { ...capabilities, verifiedEfforts: [...(capabilities.verifiedEfforts || [])],
+    ...(verifiedModelEfforts !== undefined ? { verifiedModelEfforts: Object.fromEntries(Object.entries(verifiedModelEfforts).map(([model, efforts]) => [model, [...efforts]])) } : {}),
+    ...(verifiedModelConversationReuse !== undefined ? { verifiedModelConversationReuse: { ...verifiedModelConversationReuse } } : {}) },
+    ...(localTrial !== undefined ? { localTrial: { allowUnverifiedCloudTools: localTrial.allowUnverifiedCloudTools } } : {}) };
 }
 
 export function requireAuthorizedProfile(profile) {

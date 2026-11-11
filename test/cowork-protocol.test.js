@@ -84,6 +84,46 @@ test("Cowork rejects duplicate and unassociated tool results", () => {
   assert.throws(() => prepare({ ...request, tools: [tool, tool] }), { code: "INVALID_REQUEST" });
 });
 
+test("Cowork explains unsupported media returned by a local Read without exposing or dropping it", () => {
+  for (const type of ["image", "document"]) {
+    const block = { type, source: { type: "base64", media_type: type === "image" ? "image/png" : "application/pdf", data: "SYNTHETIC_PRIVATE_MEDIA" } };
+    const body = { ...request, tools: [tool], messages: [
+      { role: "assistant", content: [{ type: "tool_use", id: "read", name: "Read", input: { file_path: "synthetic-file" } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "read", content: [{ type: "text", text: "SYNTHETIC_PRIVATE_TEXT" }, block] }] }
+    ] };
+    const before = structuredClone(body);
+    assert.throws(() => prepare(body), error => {
+      assert.equal(error.code, "UNSUPPORTED_CAPABILITY");
+      assert.ok(error.message.includes(`tool_result.content ${type} block`));
+      assert.match(error.message, /history resends this block/);
+      assert.match(error.message, /start a new Claude conversation/);
+      assert.doesNotMatch(error.message, /SYNTHETIC_PRIVATE|synthetic-file/);
+      return true;
+    });
+    assert.deepEqual(body, before);
+  }
+});
+
+test("Cowork media diagnostics apply to direct inputs and do not echo arbitrary block types", () => {
+  assert.throws(() => prepare({ ...request, messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://example.test/private" } }] }] }), error => {
+    assert.match(error.message, /message.content image block/);
+    assert.doesNotMatch(error.message, /example.test/);
+    return error.code === "UNSUPPORTED_CAPABILITY";
+  });
+  assert.throws(() => prepare({ ...request, system: [{ type: "PRIVATE_CLIENT_VALUE" }] }), error => {
+    assert.equal(error.message, "Unsupported Cowork capability: system unknown block.");
+    return error.code === "UNSUPPORTED_CAPABILITY";
+  });
+});
+
+test("Cowork prompt limits reuse to the latest full transcript and text-capable local tools", () => {
+  const prepared = prepare({ ...request, tools: [tool] });
+  assert.match(prepared.prompt, /latest LOCAL_CLIENT_REQUEST is the authoritative full current conversation and tool schema/);
+  assert.match(prepared.prompt, /Do not carry forward earlier Cowork requests, tool schemas, or output nonces/);
+  assert.match(prepared.prompt, /Do not request image or PDF reads/);
+  assert.match(prepared.prompt, /Only propose declared client tools/);
+});
+
 test("Cowork validates the default Claude WebFetch URI format rather than ignoring it", () => {
   const prepared = prepare({ ...request, tools: [{ name: "WebFetch", input_schema: {
     $schema: "https://json-schema.org/draft/2020-12/schema", type: "object",

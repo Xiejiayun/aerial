@@ -70,12 +70,12 @@ async function readJson(req, signal) {
 
 function requestScope(req, body) {
   const header = req.headers["x-claude-code-session-id"];
-  if (typeof header === "string" && header.length <= 256) return header;
+  if (typeof header === "string" && header.length > 0 && header.length <= 256) return header;
   // Claude's attribution metadata can contain a session selector. Never put its
   // device/account identifiers into the prompt or operation records.
   try {
     const metadata = JSON.parse(body.metadata?.user_id);
-    if (typeof metadata.session_id === "string" && metadata.session_id.length <= 256) return metadata.session_id;
+    if (typeof metadata.session_id === "string" && metadata.session_id.length > 0 && metadata.session_id.length <= 256) return metadata.session_id;
   } catch { /* Attribution metadata is otherwise ignored. */ }
   return "";
 }
@@ -86,14 +86,15 @@ export function createCoworkGateway({ key, route, capabilities = {}, execute, op
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_423_647) throw new Error("Invalid Cowork timeout.");
   if (!Number.isSafeInteger(maxActive) || maxActive < 1 || maxActive > 32 || !Number.isSafeInteger(maxQueued) || maxQueued < 0 || maxQueued > 128
     || !Number.isSafeInteger(heartbeatMs) || heartbeatMs < 1 || heartbeatMs > 2_147_423_647) throw new Error("Invalid Cowork concurrency or heartbeat limits.");
-  const store = createOperationStore({ directory: operationDirectory, route });
+  const store = createOperationStore({ directory: operationDirectory, route, conversationReuse: capabilities.conversationReuseVerified === true });
   const controllers = new Set();
   const queued = [];
+  const activeConversations = new Set();
   let active = 0;
   let outstandingRequests = 0;
   const closeWaiters = [];
   let closing = false;
-  const stats = { requests: 0, upstreamTurns: 0, toolCalls: 0, toolResults: 0, errors: 0, reused: 0 };
+  const stats = { requests: 0, upstreamTurns: 0, toolCalls: 0, toolResults: 0, errors: 0, reused: 0, conversations: 0 };
   const safeLog = value => { try { log(value); } catch { /* Logging must not alter task submission or delivery. */ } };
   const authenticate = req => {
     const matches = value => {
@@ -104,24 +105,39 @@ export function createCoworkGateway({ key, route, capabilities = {}, execute, op
     return matches(req.headers["x-api-key"]) || matches(/^Bearer\s+(.+)$/i.exec(req.headers.authorization || "")?.[1]);
   };
 
-  const takeSlot = async signal => {
+  const takeSlot = async (signal, conversationKey) => {
     if (signal.aborted) throw abortError(signal);
-    if (active < maxActive) { active++; return; }
+    if (active < maxActive && !activeConversations.has(conversationKey)) {
+      active++; if (conversationKey) activeConversations.add(conversationKey); return;
+    }
     if (queued.length >= maxQueued) throw new CoworkError("QUEUE_FULL", "Cowork request queue is full.", 429);
     await new Promise((resolve, reject) => {
-      const waiter = { signal, resolve: () => { signal.removeEventListener("abort", abort); active++; resolve(); } };
+      const waiter = { signal, conversationKey, resolve: () => {
+        signal.removeEventListener("abort", abort); active++;
+        if (conversationKey) activeConversations.add(conversationKey); resolve();
+      } };
       const abort = () => { const index = queued.indexOf(waiter); if (index >= 0) queued.splice(index, 1); reject(abortError(signal)); };
       queued.push(waiter); signal.addEventListener("abort", abort, { once: true });
     });
   };
-  const releaseSlot = () => { active--; const waiter = queued.shift(); if (waiter) waiter.resolve(); };
+  const releaseSlot = conversationKey => {
+    active--; if (conversationKey) activeConversations.delete(conversationKey);
+    // A blocked conversation must not consume global slots or prevent another
+    // Claude session from making progress. Same-conversation order stays FIFO.
+    while (active < maxActive) {
+      const index = queued.findIndex(waiter => !activeConversations.has(waiter.conversationKey));
+      if (index < 0) break;
+      queued.splice(index, 1)[0].resolve();
+    }
+  };
 
   const server = http.createServer(async (req, res) => {
     outstandingRequests++;
     let controller, timer, ping, record, acquired = false, pendingPing;
-    let remoteCompleted = false;
+    let remoteCompleted = false, endpoint = "unsupported", requestedEffort, requestedThinking;
     try {
       const url = new URL(req.url || "/", "http://127.0.0.1");
+      if (["/api/hello", "/v1/messages", "/v1/messages/count_tokens", "/v1/models", "/health", "/healthz", "/readyz", "/_gateway/capabilities"].includes(url.pathname)) endpoint = url.pathname;
       if (req.headers.origin !== undefined) throw new CoworkError("LOCAL_ORIGIN_DENIED", "This gateway accepts local CLI clients only.", 403);
       if (req.method === "HEAD" && url.pathname === "/api/hello") { res.writeHead(200, { "content-length": "0", "cache-control": "no-store" }); res.end(); return; }
       if (!authenticate(req)) throw new CoworkError("LOCAL_AUTH_REQUIRED", "A valid local Cowork gateway key is required.", 401);
@@ -142,6 +158,8 @@ export function createCoworkGateway({ key, route, capabilities = {}, execute, op
       res.once("close", disconnect);
       timer = setTimeout(() => controller.abort(new CoworkError("LOCAL_TIMEOUT", "Cowork total deadline exceeded; remote status may be unknown.", 504)), timeoutMs);
       const body = await readJson(req, controller.signal);
+      if (["low", "medium", "high", "xhigh", "max"].includes(body?.output_config?.effort)) requestedEffort = body.output_config.effort;
+      if (["adaptive", "disabled", "enabled"].includes(body?.thinking?.type)) requestedThinking = body.thinking.type;
       const prepared = prepareRequest(body, { route, capabilities, beta: req.headers["anthropic-beta"] });
       controller.signal.throwIfAborted();
       const idempotencyKey = req.headers["idempotency-key"] || "";
@@ -153,7 +171,8 @@ export function createCoworkGateway({ key, route, capabilities = {}, execute, op
       let message = claimed.message;
       if (claimed.reused) stats.reused++;
       else {
-        await takeSlot(controller.signal); acquired = true;
+        await takeSlot(controller.signal, record.conversationKey); acquired = true;
+        store.ready(record);
         stats.toolResults += body.messages.flatMap(item => Array.isArray(item.content) ? item.content : []).filter(block => block.type === "tool_result").length;
       }
       if (body.stream) {
@@ -167,10 +186,11 @@ export function createCoworkGateway({ key, route, capabilities = {}, execute, op
       if (!message) {
         const upstream = await withSignal(Promise.resolve().then(() => execute({
           prompt: prepared.prompt, effort: prepared.effort, signal: controller.signal, operationId: record.id,
+          ...(record.conversationKey ? { conversationKey: record.conversationKey } : {}),
           onPhase: async (phase, ids) => {
             controller.signal.throwIfAborted();
-            store.phase(record, phase, ids);
-            if (phase === "SUBMITTING") stats.upstreamTurns++;
+            const transition = store.phase(record, phase, ids);
+            if (phase === "SUBMITTING") { stats.upstreamTurns++; if (transition.newConversation) stats.conversations++; }
             safeLog({ event: "cowork_phase", operationId: record.id, phase });
           }
         })), controller.signal);
@@ -209,7 +229,19 @@ export function createCoworkGateway({ key, route, capabilities = {}, execute, op
         catch { safeLog({ event: "cowork_operation_store_failed", operationId: record.id }); }
       }
       const body = errorBody(error, record?.id || error.operationId);
-      safeLog({ event: "cowork_error", operationId: record?.id || error.operationId, code: body.error.code, remoteState: record?.remoteState });
+      // Only fixed capability names and effort values enter diagnostics; never
+      // log arbitrary field names, beta headers, prompts or tool arguments.
+      const unsupportedCapability = error instanceof CoworkError && error.code === "UNSUPPORTED_CAPABILITY"
+        ? ["output_config.effort", "output_config.format", "thinking", "tool.strict", "tools.input_schema.format"].find(field => error.message === `Unsupported Cowork capability: ${field}.`)
+          || (error.message.startsWith("Unsupported Cowork capability: anthropic-beta ") ? "anthropic-beta" : "other")
+        : undefined;
+      const unsupportedBeta = unsupportedCapability === "anthropic-beta"
+        ? ["fallback-credit-2026-06-01"].find(beta => error.message === `Unsupported Cowork capability: anthropic-beta ${beta}.`)
+        : undefined;
+      safeLog({ event: "cowork_error", operationId: record?.id || error.operationId, code: body.error.code,
+        remoteState: record?.remoteState, endpoint, unsupportedCapability,
+        ...(unsupportedBeta ? { unsupportedBeta } : {}), ...(requestedEffort ? { requestedEffort } : {}),
+        ...(requestedThinking ? { requestedThinking } : {}) });
       if (!res.destroyed && !res.writableEnded) {
         try {
           if (res.headersSent) { await writeChunk(res, eventFrame(body), 1000); res.end(); }
@@ -219,7 +251,7 @@ export function createCoworkGateway({ key, route, capabilities = {}, execute, op
     } finally {
       clearTimeout(timer); clearInterval(ping);
       if (controller) { controller.abort(new CoworkError("LOCAL_CANCELLED", "Local request finished.", 499)); controllers.delete(controller); }
-      if (acquired) releaseSlot();
+      if (acquired) releaseSlot(record.conversationKey);
       outstandingRequests--;
       if (!outstandingRequests) for (const resolve of closeWaiters.splice(0)) resolve();
     }

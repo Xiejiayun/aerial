@@ -21,6 +21,7 @@ import { assertClaudeEnvironment } from "../../setup/claude-conflicts.js";
 async function selectSetupOptions(target, route, args) {
   const configureOnly = args.includes("--configure-only");
   const explicitModel = requiredArgValue(args, "--model");
+  if (/^cowork\//i.test(explicitModel || "")) throw new Error("Cowork models require aerial setup claude --provider cowork --model <id>. GitHub setup does not select Cowork routes.");
   if (configureOnly && !explicitModel) throw new Error("--configure-only requires --model <id>; offline setup cannot discover available models.");
   const explicitEffort = requiredArgValue(args, "--effort");
   if (explicitEffort !== undefined) {
@@ -91,6 +92,13 @@ export async function runSetupCli(subcommand, rest) {
     const isCodex = subcommand === "codex";
     const cli = isCodex ? "Codex" : "Claude Code";
     const route = isCodex ? "responses" : "messages";
+    const provider = requiredArgValue(rest, "--provider") || "github";
+    if (provider !== "github" && provider !== "cowork") throw new Error("Unknown setup provider. Use github or cowork.");
+    if (provider === "cowork") {
+      if (isCodex) throw new Error("Cowork setup supports Claude Code only; Codex continues using GitHub Copilot.");
+      const { runCoworkSetupCli } = await import("../setup-cowork.js");
+      return runCoworkSetupCli(rest);
+    }
     if (!isCodex) assertClaudeEnvironment(loadConfig());
     const client = CLIENTS[subcommand];
     if (fs.existsSync(client.file())) {

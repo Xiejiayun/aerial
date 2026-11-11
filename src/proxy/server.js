@@ -4,6 +4,8 @@ import { loadConfig, validateLocalAuth } from "../shared/config.js";
 import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses, localCountTokens } from "./index.js";
 import { readGitHubToken } from "../shared/auth.js";
 import { logEvent } from "../shared/log.js";
+import { createCoworkService } from "../cowork/service.js";
+import { CoworkError, errorBody } from "../cowork/protocol.js";
 
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
@@ -40,6 +42,43 @@ async function modelsRouteOrUpstreamAuthFailed(fetchRequest) {
   return response;
 }
 
+async function modelsRoute(fetchRequest, config, coworkService) {
+  const coworkModels = await coworkService.models(config);
+  if (!coworkModels.length) return modelsRouteOrUpstreamAuthFailed(fetchRequest);
+  const configuredModels = coworkModels.map(model => ({
+    ...model,
+    aerial: { ...model.aerial, provider: "cowork", authentication: "unverified" }
+  }));
+  const result = (models, githubStatus, payload = {}) => json(200, {
+    ...payload,
+    object: payload.object || "list",
+    data: [...models.map(model => ({ ...model, aerial: { ...model.aerial, provider: "github" } })), ...configuredModels],
+    aerial: { ...payload.aerial, providers: {
+      github: { status: githubStatus },
+      cowork: { status: "configured", authentication: "unverified" }
+    } }
+  });
+  const githubConfigured = Boolean(readGitHubToken());
+  let upstream;
+  try {
+    upstream = await modelsRouteOrUpstreamAuthFailed(fetchRequest);
+    if (!upstream.ok) {
+      await upstream.body?.cancel();
+      const status = upstream.status === 401 ? (githubConfigured ? "upstream_auth_failed" : "login_required")
+        : upstream.status === 403 ? "upstream_access_denied" : "unavailable";
+      return result([], status);
+    }
+    const payload = await upstream.json();
+    if (!Array.isArray(payload?.data)) return result([], "unavailable");
+    return result(payload.data, "available", payload);
+  } catch (error) {
+    if (fetchRequest.signal.aborted || error.name === "AbortError") throw error;
+    // The local configured route remains discoverable when the independent
+    // GitHub catalog is unavailable. This does not verify Cowork authentication.
+    return result([], "unavailable");
+  }
+}
+
 function upstreamAccessFailure(status) {
   const denied = status === 403;
   return json(status, { error: {
@@ -67,7 +106,25 @@ function publicRoute(req) {
   const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
   return (req.method === "GET" && url.pathname === "/health")
     || (req.method === "GET" && url.pathname === "/")
-    || (req.method === "GET" && url.pathname === "/v1/models");
+    || (req.method === "GET" && url.pathname === "/v1/models")
+    || (req.method === "HEAD" && url.pathname === "/api/hello");
+}
+
+function requestedModel(body) {
+  if (!body.length) return undefined;
+  // Match Request.json() decoding, including its removal of a UTF-8 BOM, so
+  // routing cannot disagree with the downstream endpoint's model selection.
+  try { return JSON.parse(new TextDecoder().decode(body))?.model; }
+  catch {
+    // Preserve each endpoint's existing JSON validation and error behavior.
+    return undefined;
+  }
+}
+
+function rejectCoworkOrigin(request) {
+  return request.headers.has("origin")
+    ? json(403, { error: { type: "permission_error", message: "Browser Origin is not allowed for Cowork routes." } })
+    : undefined;
 }
 
 function bodyTooLarge(limit) {
@@ -134,6 +191,10 @@ function waitForDrain(res, signal) {
 async function handle(fetchRequest, runtime = {}) {
   const url = new URL(fetchRequest.url);
   const config = runtime.config || loadConfig();
+  if (fetchRequest.method === "HEAD" && url.pathname === "/api/hello") {
+    return rejectCoworkOrigin(fetchRequest)
+      || new Response(null, { status: 200, headers: { "content-length": "0", "cache-control": "no-store" } });
+  }
   if (fetchRequest.method === "GET" && url.pathname === "/health") {
     return Response.json({ ok: true, service: "aerial", host: runtime.host || config.host, port: runtime.port || config.port });
   }
@@ -147,11 +208,36 @@ async function handle(fetchRequest, runtime = {}) {
     });
   }
   if (fetchRequest.method === "GET" && url.pathname === "/v1/models") {
-    return modelsRouteOrUpstreamAuthFailed(fetchRequest);
+    return modelsRoute(fetchRequest, config, runtime.coworkService);
   }
 
   if (!runtime.localAuthValidated && !validateLocalAuth(Object.fromEntries(fetchRequest.headers), config)) {
     return json(401, { error: { type: "authentication_error", message: "Invalid or missing Aerial API key" } });
+  }
+
+  if (fetchRequest.method === "GET" && ["/_aerial/cowork/status", "/_aerial/cowork/catalog"].includes(url.pathname)) {
+    const rejected = rejectCoworkOrigin(fetchRequest);
+    if (rejected) return rejected;
+    return json(200, await runtime.coworkService[url.pathname.endsWith("/catalog") ? "catalog" : "status"](config));
+  }
+  if (fetchRequest.method === "POST" && url.pathname === "/_aerial/cowork/reload") {
+    const rejected = rejectCoworkOrigin(fetchRequest);
+    if (rejected) return rejected;
+    return json(200, await runtime.coworkService.reload(config));
+  }
+  if (fetchRequest.method === "POST" && url.pathname === "/_aerial/cowork/close") {
+    const rejected = rejectCoworkOrigin(fetchRequest);
+    if (rejected) return rejected;
+    await runtime.coworkService.close();
+    return json(200, { ok: true, provider: "cowork", closed: true });
+  }
+  if (fetchRequest.method === "POST" && typeof runtime.requestModel === "string" && runtime.requestModel.startsWith("cowork/")) {
+    const rejected = rejectCoworkOrigin(fetchRequest);
+    if (rejected) return rejected;
+    if (url.pathname !== "/v1/messages" && url.pathname !== "/v1/messages/count_tokens") {
+      return json(400, { error: { type: "invalid_request_error", message: "Cowork models support only /v1/messages and /v1/messages/count_tokens." } });
+    }
+    return runtime.coworkService.handle(fetchRequest, config);
   }
 
   if (fetchRequest.method === "POST" && url.pathname === "/v1/responses") return proxyResponses(fetchRequest);
@@ -192,16 +278,22 @@ async function writeNodeResponse(res, fetchResponse, signal) {
 }
 
 export function createServer(runtime = {}) {
+  const coworkService = runtime.coworkService || createCoworkService();
+  let closing = false;
   const server = http.createServer(async (req, res) => {
     const started = Date.now();
     const controller = new AbortController();
+    let coworkRequest = false;
     res.on("close", () => controller.abort());
     try {
       logEvent("request_start", { method: req.method, path: req.url });
+      if (closing) {
+        await writeNodeResponse(res, json(503, { error: { type: "unavailable_error", message: "Aerial is shutting down." } }), controller.signal);
+        return;
+      }
       let localAuthValidated = false;
-      let config;
+      const config = runtime.config || loadConfig();
       if (!publicRoute(req)) {
-        config = loadConfig();
         if (!validateLocalAuth(nodeHeaderObject(req.headers), config)) {
           const fetchResponse = json(401, { error: { type: "authentication_error", message: "Invalid or missing Aerial API key" } });
           await writeNodeResponse(res, fetchResponse, controller.signal);
@@ -212,7 +304,11 @@ export function createServer(runtime = {}) {
       }
       const body = await readBody(req);
       const fetchRequest = nodeRequestToFetch(req, body, controller.signal);
-      const fetchResponse = await handle(fetchRequest, { ...runtime, localAuthValidated, config });
+      const requestModel = req.method === "POST" ? requestedModel(body) : undefined;
+      coworkRequest = new URL(fetchRequest.url).pathname.startsWith("/_aerial/cowork/")
+        || (typeof requestModel === "string" && requestModel.startsWith("cowork/"));
+      const fetchResponse = await handle(fetchRequest, { ...runtime, coworkService, localAuthValidated, config,
+        requestModel });
       await writeNodeResponse(res, fetchResponse, controller.signal);
       if (controller.signal.aborted && !res.writableFinished) {
         logEvent("request_aborted", { method: req.method, path: req.url, ms: Date.now() - started });
@@ -224,7 +320,7 @@ export function createServer(runtime = {}) {
         logEvent("request_aborted", { method: req.method, path: req.url, ms: Date.now() - started });
         return;
       }
-      const status = error.statusCode || (error.message?.includes("Missing GitHub token") ? 503 : 500);
+      const status = error.statusCode || error.status || (error.message?.includes("Missing GitHub token") ? 503 : 500);
       logEvent("request_end", { method: req.method, path: req.url, status, ms: Date.now() - started, error: error.message });
       if (res.headersSent || res.writableEnded) {
         if (!res.destroyed) res.destroy(error);
@@ -232,9 +328,28 @@ export function createServer(runtime = {}) {
       }
       res.statusCode = status;
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ error: { type: status === 413 ? "request_entity_too_large" : "aerial_error", message: error.message } }));
+      res.end(JSON.stringify(coworkRequest || error instanceof CoworkError ? errorBody(error)
+        : { error: { type: status === 413 ? "request_entity_too_large" : "aerial_error", message: error.message } }));
     }
   });
+
+  const closeHttpServer = server.close.bind(server);
+  let closePromise;
+  server.close = callback => {
+    closing = true;
+    closePromise ||= (async () => {
+      let closeError;
+      try { await coworkService.close(); }
+      catch (error) {
+        closeError = error;
+        logEvent("cowork_close_error", { code: error.code || "COWORK_CLOSE_FAILED", error: error.message });
+      }
+      await new Promise(resolve => closeHttpServer(error => { closeError ||= error; resolve(); }));
+      return closeError;
+    })();
+    if (typeof callback === "function") closePromise.then(error => callback(error));
+    return server;
+  };
 
   server.on("upgrade", (req, socket) => {
     // Node hands ownership of the raw socket to the upgrade handler. Keep an

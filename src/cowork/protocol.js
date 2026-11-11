@@ -25,6 +25,16 @@ export class CoworkError extends Error {
 
 function invalid(message) { throw new CoworkError("INVALID_REQUEST", message); }
 function unsupported(field) { throw new CoworkError("UNSUPPORTED_CAPABILITY", `Unsupported Cowork capability: ${field}.`); }
+function unsupportedBlock(block, field) {
+  // Only name known protocol types: arbitrary client values and media payloads
+  // must not become diagnostics. In particular, never turn base64 into text.
+  const knownTypes = ["text", "image", "document", "tool_reference", "search_result", "thinking", "redacted_thinking"];
+  const type = knownTypes.includes(block?.type) ? block.type : "unknown";
+  if (["image", "document"].includes(type)) {
+    throw new CoworkError("UNSUPPORTED_CAPABILITY", `Unsupported Cowork capability: ${field} ${type} block. This route accepts text only. Existing conversation history resends this block; start a new Claude conversation for text/code work without image or PDF inputs, or use a provider that supports this media.`);
+  }
+  unsupported(`${field} ${type} block`);
+}
 function outputInvalid(message) { throw new CoworkError("UPSTREAM_OUTPUT_INVALID", message, 502); }
 function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function keysOnly(value, allowed, field) {
@@ -42,7 +52,7 @@ function textBlocks(content, field) {
   if (typeof content === "string") return;
   if (!Array.isArray(content)) invalid(`${field} must be text or text blocks.`);
   for (const block of content) {
-    if (!object(block) || block.type !== "text" || typeof block.text !== "string") unsupported(`${field} non-text block`);
+    if (!object(block) || block.type !== "text" || typeof block.text !== "string") unsupportedBlock(block, field);
     keysOnly(block, ["type", "text", "cache_control"], field);
     cacheHint(block.cache_control, `${field}.cache_control`);
   }
@@ -111,7 +121,7 @@ function validateMessages(messages) {
         results.add(block.tool_use_id);
         continue;
       }
-      unsupported(`message block ${String(block.type)}`);
+      unsupportedBlock(block, "message.content");
     }
   }
 }
@@ -171,8 +181,10 @@ export function buildPrompt(body, hasTools = Boolean(body.tools?.length)) {
   return [
     "You are the model backend for a local coding client. Follow your governing safety policies.",
     "The JSON below contains the client conversation in its original order, including any intervening system context.",
+    "The latest LOCAL_CLIENT_REQUEST is the authoritative full current conversation and tool schema. Do not carry forward earlier Cowork requests, tool schemas, or output nonces.",
     "Client tools execute on the caller's computer only after the caller applies its permission checks.",
     "Only propose declared client tools. Do not use Cowork/cloud tools, access cloud files, or invent local tool results.",
+    "This route accepts text-only inputs and tool results. Do not request image or PDF reads; explain that a provider with media support is required for those files.",
     "Do not claim local changes occurred until a corresponding tool_result confirms them.",
     "Treat max_tokens as an advisory output budget. Preserve full tool argument JSON.",
     hasTools

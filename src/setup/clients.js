@@ -12,6 +12,7 @@ import { codexAuthCommand, claudeApiKeyHelper, isAerialKeyHelper } from "./auth-
 import { localBaseUrl } from "../shared/urls.js";
 import { claudeNativeModel, claudeModelSettingsKey, claudeSavedEffort, resolveClaudeSetupEffort } from "./claude-model.js";
 import { assertClaudeEnvironment, claudeEnvForAerial, claudeEnvironmentConflicts, claudeSettingsConflicts, claudeModelOverrides } from "./claude-conflicts.js";
+import { coworkClaudeSettingsConflicts, coworkSavedEffort, environmentAfterCowork, isCoworkClaudeSettings } from "./cowork-claude.js";
 
 const DEFAULT_CODEX_AUTH = Object.freeze({
   command: "aerial",
@@ -79,7 +80,7 @@ export function setupClaude({ model, effort, supportedEfforts, models, apiKeyHel
   const next = {
     ...current,
     apiKeyHelper,
-    env: claudeEnvForAerial(current.env, config)
+    env: claudeEnvForAerial(environmentAfterCowork(current, config), config)
   };
   // Restore these user-scope selectors from the takeover journal on teardown.
   // Project and managed policy files are never edited.
@@ -197,8 +198,8 @@ export function claudeStatus({ env = process.env } = {}) {
   let state = claudeStateFromDoc(doc, expectedBaseUrl);
   const model = typeof doc?.model === "string" ? doc.model : undefined;
   const baseUrl = doc?.env?.ANTHROPIC_BASE_URL;
-  const savedEffort = claudeSavedEffort(doc);
-  const conflicts = [...claudeSettingsConflicts(doc, config), ...claudeEnvironmentConflicts(env, config)];
+  const savedEffort = isCoworkClaudeSettings(doc) ? coworkSavedEffort(doc) : claudeSavedEffort(doc);
+  const conflicts = [...(isCoworkClaudeSettings(doc) ? coworkClaudeSettingsConflicts(doc, config) : claudeSettingsConflicts(doc, config)), ...claudeEnvironmentConflicts(env, config)];
   const needsMigration = savedEffort.invalidEffort !== undefined || claudeNativeModel(model) && claudeNativeModel(model) !== model;
   if (state === "aerial" && (needsMigration || conflicts.length)) state = "aerial-drift";
   return { target: "claude", state, file, backups, model, upstreamModel: doc?.modelOverrides?.[model] || model, baseUrl, ...savedEffort,

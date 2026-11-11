@@ -5,6 +5,8 @@ import { CoworkError, semanticRequest } from "./protocol.js";
 
 const PHASES = ["CREATED", "AUTHENTICATING", "SUBSCRIBING", "READY_TO_SUBMIT", "SUBMITTING", "ACCEPTED", "RUNNING", "RESULT_RECEIVED"];
 const FINAL = new Set(["SUCCEEDED", "FAILED", "UNKNOWN"]);
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const HASH = /^[a-f0-9]{64}$/;
 
 function digest(value) { return createHash("sha256").update(value).digest("hex"); }
 function canonical(value) {
@@ -20,18 +22,29 @@ function problem(code, message, record) {
 
 // The parent owns the account/profile lock. All mutations here are synchronous,
 // so the metadata reaches disk before an async transport can submit a task.
-export function createOperationStore({ directory, route, now = Date.now, resultTtlMs = 600_000, maxRecords = 1000, maxResultBytes = 16 * 1024 * 1024 } = {}) {
+export function createOperationStore({ directory, route, conversationReuse = false, now = Date.now, resultTtlMs = 600_000, maxRecords = 1000, maxResultBytes = 16 * 1024 * 1024 } = {}) {
   if (!directory || !path.isAbsolute(directory)) throw new Error("An absolute operationDirectory is required.");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (!fs.lstatSync(directory).isDirectory() || fs.lstatSync(directory).isSymbolicLink()) throw new CoworkError("OPERATION_STORE_INVALID", "Cowork operation storage must be a real directory.", 503);
   const file = path.join(directory, "operations.json");
   let records = [];
+  let conversations = [];
   try {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) throw new Error("Invalid operation metadata file.");
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
     if (data.version !== 1 || !Array.isArray(data.records) || data.records.length > maxRecords || data.records.some(record => !record || typeof record.id !== "string" || typeof record.key !== "string" || typeof record.fingerprint !== "string" || typeof record.phase !== "string")) throw new Error("Invalid operation metadata.");
     records = data.records;
+    conversations = data.conversations || [];
+    if (!Array.isArray(conversations) || conversations.length > maxRecords
+      || conversations.some(item => !item || typeof item.scope !== "string" || !HASH.test(item.scope)
+        || typeof item.key !== "string" || !UUID.test(item.key)
+        || typeof item.publicModel !== "string" || typeof item.upstreamModel !== "string"
+        || item.submittedAt !== undefined && (!Number.isSafeInteger(item.submittedAt) || item.submittedAt <= 0))
+      || new Set(conversations.map(item => item.scope)).size !== conversations.length
+      || new Set(conversations.map(item => item.key)).size !== conversations.length
+      || records.some(record => record.conversationKey !== undefined && (typeof record.conversationKey !== "string" || !UUID.test(record.conversationKey)
+        || typeof record.conversationScope !== "string" || !HASH.test(record.conversationScope)))) throw new Error("Invalid conversation metadata.");
   } catch (error) {
     if (error.code !== "ENOENT") throw new CoworkError("OPERATION_STORE_INVALID", "Cowork operation metadata could not be read safely.", 503);
   }
@@ -41,7 +54,7 @@ export function createOperationStore({ directory, route, now = Date.now, resultT
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
       const fd = fs.openSync(temporary, "wx", 0o600);
-      try { fs.writeFileSync(fd, `${JSON.stringify({ version: 1, records })}\n`); fs.fsyncSync(fd); }
+      try { fs.writeFileSync(fd, `${JSON.stringify({ version: 1, records, conversations })}\n`); fs.fsyncSync(fd); }
       finally { fs.closeSync(fd); }
       fs.renameSync(temporary, file);
     } catch {
@@ -66,6 +79,14 @@ export function createOperationStore({ directory, route, now = Date.now, resultT
   function known(record) {
     if (!records.includes(record)) throw new Error("Unknown operation.");
   }
+  function ready(record) {
+    known(record);
+    if (!record.conversationKey) return;
+    const conversation = conversations.find(item => item.scope === record.conversationScope);
+    if (conversation?.key !== record.conversationKey) throw problem("CONVERSATION_REPLACED", "This Cowork conversation was explicitly replaced. Start a new request.", record);
+    const uncertain = records.find(item => item.conversationKey === record.conversationKey && item.phase === "UNKNOWN" && item.submitted);
+    if (uncertain) throw problem("SUBMISSION_UNKNOWN", "This Cowork conversation has an unknown remote operation. Inspect and explicitly release it before continuing in a fresh conversation.", uncertain);
+  }
 
   return {
     claim({ body, sessionId = "", idempotencyKey = "" }) {
@@ -89,20 +110,36 @@ export function createOperationStore({ directory, route, now = Date.now, resultT
       }
       if (records.length >= maxRecords) records = records.filter(record => !record.releasedAt);
       if (records.length >= maxRecords) throw new CoworkError("OPERATION_STORE_FULL", "Cowork operation history is full. Explicitly release reviewed operations before starting another operation.", 503);
+      // The owner supplies a private account/profile directory. Add the exact
+      // route to the hashed selector; never persist Claude's raw session ID.
+      const scope = conversationReuse && sessionId ? digest(JSON.stringify({ sessionId, publicModel: route.publicId, upstreamModel: route.upstreamId })) : undefined;
+      let conversation = scope && conversations.find(item => item.scope === scope);
+      const newConversation = scope && !conversation;
+      if (newConversation) {
+        // Explicitly released operations no longer retain a session mapping.
+        // Never evict a mapping still needed by an active or unreleased record.
+        if (conversations.length >= maxRecords) conversations = conversations.filter(item => records.some(record => record.conversationKey === item.key && !record.releasedAt));
+        if (conversations.length >= maxRecords) throw new CoworkError("OPERATION_STORE_FULL", "Cowork conversation history is full.", 503);
+        conversation = { scope, key: randomUUID(), publicModel: route.publicId, upstreamModel: route.upstreamId, createdAt: now() };
+        conversations.push(conversation);
+      }
       const record = {
         id: randomUUID(), messageId: `msg_aerial_${randomUUID().replaceAll("-", "")}`,
         key, fingerprint, phase: "CREATED", submitted: false,
         publicModel: route.publicId, upstreamModel: route.upstreamId,
-        createdAt: now(), updatedAt: now(), remoteState: "not_submitted", delivery: "PENDING"
+        createdAt: now(), updatedAt: now(), remoteState: "not_submitted", delivery: "PENDING",
+        ...(conversation ? { conversationKey: conversation.key, conversationScope: scope } : {})
       };
       records.push(record);
-      try { persist(); } catch (error) { records.pop(); throw error; }
+      try { ready(record); persist(); } catch (error) { records.pop(); if (newConversation) conversations.pop(); throw error; }
       return { record, reused: false };
     },
+    ready,
     phase(record, phase, ids = {}) {
       known(record);
       if (!PHASES.includes(phase) || FINAL.has(record.phase) || PHASES.indexOf(phase) < PHASES.indexOf(record.phase)) throw new CoworkError("PROTOCOL_CHANGED", "Cowork transport reported an invalid operation phase.", 502);
       if (phase === "SUBMITTING" && record.submitted) throw new CoworkError("DUPLICATE_SUBMISSION", "A Cowork operation may submit only once.", 502);
+      if (phase === "SUBMITTING") ready(record);
       if (PHASES.indexOf(phase) > PHASES.indexOf("SUBMITTING") && !record.submitted) throw new CoworkError("PROTOCOL_CHANGED", "Cowork transport omitted the submission boundary.", 502);
       record.phase = phase;
       if (phase === "SUBMITTING") { record.submitted = true; record.remoteState = "unknown"; }
@@ -114,7 +151,11 @@ export function createOperationStore({ directory, route, now = Date.now, resultT
         }
       }
       record.updatedAt = now();
+      const conversation = record.conversationKey && conversations.find(item => item.key === record.conversationKey);
+      const newConversation = phase === "SUBMITTING" && !conversation?.submittedAt;
+      if (phase === "SUBMITTING" && conversation && !conversation.submittedAt) conversation.submittedAt = now() || 1;
       persist();
+      return { newConversation };
     },
     succeed(record, message) {
       known(record);
@@ -148,6 +189,12 @@ export function createOperationStore({ directory, route, now = Date.now, resultT
       const record = records.find(item => item.id === id);
       if (!record) throw problem("OPERATION_NOT_FOUND", "Unknown Cowork operation.");
       if (!FINAL.has(record.phase)) throw problem("OPERATION_IN_PROGRESS", "An active operation cannot be released.", record);
+      // Releasing an uncertain operation permits a fresh conversation only.
+      // It cannot make the possibly still-running remote conversation reusable.
+      if (record.phase === "UNKNOWN" && record.submitted && record.conversationKey) {
+        const conversation = conversations.find(item => item.key === record.conversationKey);
+        if (conversation) { conversation.key = randomUUID(); conversation.createdAt = now(); delete conversation.submittedAt; }
+      }
       record.releasedAt = now(); persist();
     }
   };

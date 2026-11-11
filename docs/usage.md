@@ -456,7 +456,7 @@ Best practice: put stable system/project/tool context first, put changing user i
 ## Experimental Cowork local sessions
 
 This branch includes a gated Windows-only Cowork adapter for Claude Code
-2.1.281 and Node.js 24+. It has been exercised with the real Claude executable
+2.1.281 or 2.1.322 and Node.js 24+. It has been exercised with the real Claude executable
 and a synthetic local upstream. Real M365/Opus compatibility requires the
 protocol evidence described below; an offline test is not a live verification.
 GitHub Copilot setup and background services are separate from this session.
@@ -469,8 +469,90 @@ aerial login --provider cowork
 aerial cowork models
 aerial cowork doctor
 aerial cowork probe --model <exact-opus-catalog-id> [--effort medium]
-aerial cowork run --model <exact-opus-catalog-id>
+aerial cowork verify --model <exact-anthropic-catalog-id> --effort medium
+aerial cowork run --model <exact-anthropic-catalog-id> --effort medium
 ```
+
+To use Cowork from ordinary `claude` sessions while Codex continues using GitHub
+Copilot, keep Aerial running and configure Claude through the shared proxy:
+
+```powershell
+aerial setup claude --provider cowork --model opus-5.5 --effort medium
+claude
+```
+
+Use the exact model ID from your catalog. This setup validates Claude Code
+2.1.281 or 2.1.322, the authenticated profile, the selected route and its verified
+effort before changing Claude's settings. It sends one brief Cowork
+request through Aerial, backs up the Claude file and records its changes for
+restoration. The default endpoint is `http://127.0.0.1:18181`; authentication uses
+Aerial's key helper, without saving a temporary Cowork bearer token. Codex
+settings and GitHub's default model/effort are unchanged. Cowork setup requires
+online verification and does not support `--configure-only`. Rerun setup after
+manually changing the Claude version.
+
+Cowork supports advertised Anthropic Opus, Sonnet and Fable routes. Effort choices
+are `low`, `medium`, `high`, `xhigh` and `max`, intersected with the selected
+model's catalog and model-specific verification evidence. For example:
+
+```powershell
+aerial cowork models
+aerial setup claude --provider cowork --model sonnet-5.5 --effort high
+aerial setup claude --provider cowork --model fable-5-2 --effort max
+claude
+```
+
+Wait for the current Claude request to finish before changing model or effort,
+then start a new Claude session to load its saved settings. Setup reloads only
+Cowork; the GitHub Copilot listener remains available. An active Cowork request
+blocks the reload. `max` is persisted in the verified Claude environment setting
+`CLAUDE_CODE_EFFORT_LEVEL`, rather than the client's persistent effort fields.
+No unsupported effort is silently substituted.
+
+For a new model/effort pair without evidence, stop the owning service, run
+`aerial cowork verify --model <id> --effort <level>`, then start the service and
+rerun setup. Verification submits a fixed synthetic text request and records
+model-specific acceptance only after correlated completion. It does not prove
+the model's internal reasoning behavior or cloud-tool isolation.
+
+With verified conversation reuse, a stable Claude session reuses one Cowork
+conversation for its tool rounds. Different sessions and models are isolated;
+requests without a session identifier remain independent. Each round has a
+fresh message ID and response nonce, and requests in the same conversation are
+serialized. A remote operation with unknown outcome blocks further turns until
+reviewed and explicitly released; release starts a fresh Cowork conversation.
+From a checkout, `node scripts/verify-cowork-conversation.mjs --model <id>` runs
+the two fixed probes needed to record model-specific reuse evidence.
+
+To switch Claude back, run `aerial setup claude --provider github --model
+<github-model-id>`; omitting `--provider` also selects GitHub. This removes
+unchanged Cowork compatibility overrides, including its disabled thinking and
+updater settings, while retaining subsequent user edits. Full pre-Aerial
+restoration remains available through the takeover journal and `aerial teardown`.
+
+For a local experimental trial before cloud-tool isolation has been proven,
+explicitly configure the profile with:
+
+```powershell
+aerial cowork configure --profile C:\path\to\observed-cowork-profile.json --allow-unverified-cloud-tools
+aerial cowork doctor
+aerial cowork run --model opus-5.5
+```
+
+Use the exact model ID shown by your catalog. This option saves a local trial
+policy; it does not mark cloud-tool isolation as verified. Doctor reports
+`ready_experimental` when all other requirements pass. Each launch explains
+that Claude's local tool permissions do not control Cowork's cloud tools.
+Authorization, completion, event correlation, verified effort and local Claude
+permissions are still required. Aerial continues requesting empty connectors
+and packages with defaults disabled, but cannot confirm that this disables
+every cloud tool. To restore strict mode, configure the same profile again
+without `--allow-unverified-cloud-tools`.
+
+`AERIAL_COWORK_CONFIG_DIR` selects the directory containing the profile, account
+selectors and operation records, taking precedence over `--config-dir`. A
+PowerShell `$env:AERIAL_COWORK_CONFIG_DIR = ...` assignment only affects that
+shell and its children; use the same shell for subsequent Cowork commands.
 
 `aerial login --provider cowork` and `aerial cowork auth` both use interactive
 Windows WAM authentication; `--force` on the login entry means explicit sign-in
@@ -537,11 +619,12 @@ the accepted diagnostic values are `low`, `medium`, `high`, `xhigh` and `max`.
 Omitting the flag preserves the upstream default. The report's optional
 `requestedEffort` records the request, not proof that the upstream applied it.
 The probe reports sanitized protocol observations, never adds entries to
-`verifiedEfforts` automatically, and does not prove that cloud tools are disabled. `run`
-requires independently verified cloud-tool isolation, event association, the
-`fr-plus-rl-ok` completion rule, and a compatible effort value. Do not change
-these flags merely to make startup pass. Keep the validation report alongside
-the profile. Pick the exact Opus catalog entry; unavailable routes fail without
+`verifiedEfforts` automatically, and does not prove that cloud tools are disabled.
+By default, `run` requires independently verified cloud-tool isolation, event
+association, the `fr-plus-rl-ok` completion rule, and a compatible effort value.
+The explicit experimental option above waives only the isolation prerequisite.
+Keep evidence flags truthful and retain the validation report alongside
+the profile. Pick the exact supported Anthropic catalog entry; unavailable routes fail without
 falling back to another provider or model.
 
 Each run opens a random authenticated loopback port and writes a temporary
@@ -551,17 +634,34 @@ workspace trust and tool permissions remain active. Resume, background/cloud
 sessions, competing model/settings flags and unverified client versions are
 rejected for this trial. Managed organizational settings retain precedence;
 remote managed-provider conflicts have not been comprehensively verified.
+The session disables Claude's updater and client-side thinking requests while
+it is running. This keeps the tested client protocol stable without changing
+global Claude settings or the updater behavior of ordinary Claude sessions.
 
 The adapter simulates tool proposals through validated JSON, buffers the full
 response before delivering content, and reports estimated token usage rather
 than Copilot Credits. Native signed thinking, multimodal inputs and tool search
-are unsupported. The client may show a conservative context-window warning;
+are unsupported. Ordinary text/code `Read` results are supported. If `Read`
+returns an image or PDF/document block, the gateway rejects the request before
+submission and names the unsupported block type; it never drops the media or
+sends its base64 data as text. Claude resends that block with the existing
+conversation history, so continuing the same conversation will repeat the
+error. Start a new Claude conversation for text/code work without media inputs,
+or use a provider with media support when the task needs those files.
+The client may show a conservative context-window warning;
 actual Cowork limits and automatic compaction still require live validation.
 
-Local state defaults to `%LOCALAPPDATA%\aerial\cowork`. Set
-`AERIAL_COWORK_CONFIG_DIR` for a separate account/profile; `--config-dir` also
-isolates Cowork under that Aerial configuration directory. Tokens remain in
-memory/WAM. Files contain account metadata and operation recovery metadata,
+Local state defaults to `~/.aerial/cowork` (`%USERPROFILE%\.aerial\cowork` on
+Windows). Keeping it outside AppData lets packaged applications and ordinary
+PowerShell sessions use the same directory. `AERIAL_COWORK_CONFIG_DIR` has
+highest priority and selects the state directory directly. Otherwise, an
+explicit `AERIAL_CONFIG_DIR` or `aerial --config-dir <directory> ...` stores
+Cowork state in that directory's `cowork` subdirectory.
+
+Aerial does not automatically copy profiles, account metadata or operation
+recovery records from a previous directory. To keep using existing state,
+select its directory explicitly with `AERIAL_COWORK_CONFIG_DIR`. Tokens remain
+in memory/WAM. Files contain account metadata and operation recovery metadata,
 not prompts, tool arguments, output text or bearer tokens.
 
 ```powershell

@@ -1,13 +1,22 @@
 # Cowork-backed Claude Code: local trial design and implementation
 
+The subsequent persistent-provider increment is implemented and installed for
+local acceptance: native Claude uses M365 Cowork and Codex retains GitHub
+Copilot, both through port 18181. See [the persistent proxy design](cowork-persistent-proxy.md)
+and [validation results](cowork-validation.md). The session architecture below
+records the first increment and remains available when its profile is not
+owned by the persistent service.
+
 Date: 2026-11-11
 Base: origin/main at 9c492d1
 Branch: user/jiaxie/cowork-claude-local
 Status: local implementation and synthetic E2E complete; WAM authentication and
 the real model-catalog request passed, including visibility of `opus-5.5`.
 Independent silent authentication/catalog checks also passed. A fixed-text live
-probe passed through the `opus-5.5` route. Connector isolation, event/effort
-capabilities and real Claude tool-loop compatibility remain unverified. See
+probe passed through the `opus-5.5` route. Completion, event correlation and
+the medium effort request are verified; cloud-tool isolation remains unverified.
+An explicitly selected local experimental policy now permits trials while
+preserving that evidence status. See
 [validation results](cowork-validation.md).
 
 ## Outcome and scope
@@ -74,8 +83,13 @@ Record only non-secret parameters and sanitized event structures.
    thinking/beta fields, Read/Write tools and tool results.
 
 An unverified profile may perform authentication/catalog diagnostics, but cannot
-start the general programming gateway. Failed gates remain explicit blockers;
-offline tests cannot promote a profile to live-verified.
+start the general programming gateway by default. The user's updated local-trial
+requirement permits `configure --allow-unverified-cloud-tools` to save a separate
+`localTrial.allowUnverifiedCloudTools` policy. It waives only the cloud-tool
+isolation prerequisite, never authorization, event correlation, completion or
+effort requirements. Imported profiles cannot silently enable that option;
+the configure flag is required. Doctor and launch disclose the experimental
+status. Offline tests and this option do not promote protocol evidence.
 
 The independent source-checkout diagnostic is
 `scripts/probe-cowork-auth.mjs`. It tests one explicit candidate through WAM and
@@ -98,9 +112,10 @@ probe subsequently passed with silent WAM in a new process: HTTP 202 accepted,
 `expectedTextMatched: true`, and observed `fr` plus `rl:ok` completion for the
 selected `opus-5.5` upstream route. This does not confirm the internal serving
 model's identity or verify a Claude tool loop. Sanitized `cs` server/package and
-`tk` tool-directory metadata remain investigation leads. Connector controls,
-event association/completion semantics and effort are not yet verified, so the
-general programming profile gate remains enforced.
+`tk` tool-directory metadata remain investigation leads. Connector controls
+remain unverified. Subsequent probes verified event association, completion and
+acceptance of medium effort. Strict mode retains the isolation gate; the explicit
+local experimental policy permits a trial.
 
 ## Protocol and failure behavior
 

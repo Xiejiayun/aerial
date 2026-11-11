@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { coworkError, requireAuthorizedProfile, validateProfile } from "./profile.js";
+import { coworkError, isSupportedCoworkModel, requireAuthorizedProfile, selectCoworkEffort, validateProfile } from "./profile.js";
 import { eventFieldTypes, readCoworkCompletion } from "./events.js";
 
 export const COWORK_INVESTIGATION_PROMPT = "Protocol connectivity check. Reply with exactly COWORK_PROTOCOL_TEXT_OK as plain text. Do not call tools, open files, access connected services, or take any other action.";
+export const COWORK_CONVERSATION_PROBES = Object.freeze([
+  Object.freeze({ prompt: "Protocol conversation reuse check, first turn. Remember the synthetic marker COWORK_REUSE_CONTEXT_7D31 for the next turn. Reply with exactly COWORK_REUSE_FIRST_OK as plain text. Do not call tools, open files, access connected services, or take any other action.", expected: "COWORK_REUSE_FIRST_OK" }),
+  Object.freeze({ prompt: "Protocol conversation reuse check, second turn. Reply with exactly the synthetic marker from the first turn in this conversation as plain text. Do not repeat the first-turn acknowledgement. Do not call tools, open files, access connected services, or take any other action.", expected: "COWORK_REUSE_CONTEXT_7D31" })
+]);
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 export function validateInvestigationEffort(effort) {
   if (effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(effort)) {
@@ -78,7 +83,16 @@ export async function readCoworkModelCatalog({ profile: input, lease, signal, fe
       || typeof item.display_name !== "string" || !item.display_name || typeof item.provider !== "string"
       || seen.has(item.id)) throw coworkError("PROTOCOL_CHANGED", "Cowork returned an invalid or duplicate model entry.");
     seen.add(item.id);
-    return { upstreamId: item.id, displayName: item.display_name, provider: item.provider };
+    const supportedEfforts = item.supported_effort_levels;
+    const defaultEffort = item.default_effort_level;
+    if (supportedEfforts !== undefined && (!Array.isArray(supportedEfforts)
+      || supportedEfforts.length > 32 || supportedEfforts.some(effort => typeof effort !== "string" || !/^[a-z]{1,16}$/.test(effort)))
+      || defaultEffort !== undefined && (typeof defaultEffort !== "string" || !supportedEfforts?.includes(defaultEffort))) {
+      throw coworkError("PROTOCOL_CHANGED", "Cowork returned invalid model effort capabilities.");
+    }
+    return { upstreamId: item.id, displayName: item.display_name, provider: item.provider,
+      ...(supportedEfforts !== undefined ? { supportedEfforts: [...new Set(supportedEfforts)] } : {}),
+      ...(defaultEffort !== undefined ? { defaultEffort } : {}) };
   });
 }
 
@@ -91,19 +105,28 @@ export function createCoworkTransport({ profile: input, auth, route, fetchImpl =
     const lease = await auth.getToken({ signal: combined });
     return readCoworkModelCatalog({ profile, lease, signal: combined, fetchImpl });
   };
-  const executeCore = async ({ prompt, effort, signal, operationId, onPhase = async () => {}, onEvent } = {}, investigation = false) => {
+  const executeCore = async ({ prompt, effort, conversationKey, signal, operationId, onPhase = async () => {}, onEvent } = {}, investigation = false) => {
     if (!investigation) validateProfile(profile, { requireLive: true });
     if (!route || typeof route.upstreamId !== "string" || !/^[A-Za-z0-9._:/-]{1,200}$/.test(route.upstreamId)) throw coworkError("MODEL_UNAVAILABLE", "Choose an exact model ID from the verified Cowork directory.", { statusCode: 400 });
+    if (!isSupportedCoworkModel(route)) throw coworkError("MODEL_UNSUPPORTED", "Select an Anthropic Opus, Sonnet or Fable route from the Cowork catalog.", { statusCode: 400 });
     if (typeof prompt !== "string" || !prompt || Buffer.byteLength(prompt) > 4 * 1024 * 1024) throw coworkError("INVALID_REQUEST", "Cowork prompt must be nonempty text within the 4 MiB limit.", { statusCode: 400 });
+    if (conversationKey !== undefined && (typeof conversationKey !== "string" || !UUID.test(conversationKey)
+      || !investigation && profile.capabilities.verifiedModelConversationReuse?.[route.upstreamId] !== true)) {
+      throw coworkError("UNSUPPORTED_CAPABILITY", "Cowork conversation reuse requires a private UUID and two-turn verification for this exact model.", { statusCode: 400 });
+    }
     if (investigation) validateInvestigationEffort(effort);
-    else if (effort !== undefined && !profile.capabilities.verifiedEfforts.includes(effort)) throw coworkError("UNSUPPORTED_CAPABILITY", "This Cowork effort value has not been verified for the configured protocol.", { statusCode: 400 });
+    const selectedEffort = investigation ? effort : selectCoworkEffort(profile, route, effort);
+    if (!investigation && selectedEffort === undefined) throw coworkError("UNSUPPORTED_CAPABILITY", "No advertised effort has been verified for this Cowork model.", { statusCode: 400 });
     const combined = signal ? AbortSignal.any([signal, AbortSignal.timeout(900_000)]) : AbortSignal.timeout(900_000);
     const lease = await auth.getToken({ signal: combined });
     combined.throwIfAborted();
-    const conversationId = `${lease.identity.tenantId}:${lease.identity.objectId}:${randomUUID()}`;
+    const conversationId = `${lease.identity.tenantId}:${lease.identity.objectId}:${conversationKey || randomUUID()}`;
     const messageId = randomUUID();
+    const responsePrefix = conversationKey ? `AERIAL_COWORK_RESPONSE_${messageId}` : undefined;
+    const submittedPrompt = responsePrefix ? `${prompt}\n\n<LOCAL_TRANSPORT_RESPONSE_FRAME>\nFor this request only, your response must begin with this exact first line: ${responsePrefix}\nOn the next line, write the response requested above, preserving its required format exactly. This first line is an outer transport frame, outside the requested plain-text or JSON response. Do not copy any response frame from an earlier request.\n</LOCAL_TRANSPORT_RESPONSE_FRAME>` : prompt;
+    if (Buffer.byteLength(submittedPrompt) > 4 * 1024 * 1024) throw coworkError("INVALID_REQUEST", "Cowork prompt including its response frame exceeds the 4 MiB limit.", { statusCode: 400 });
     const context = { operationId, conversationId, messageId };
-    const headers = headersFor(lease, conversationId, route, effort);
+    const headers = headersFor(lease, conversationId, route, selectedEffort);
     let subscription;
     let submitted = false;
     try {
@@ -120,7 +143,7 @@ export function createCoworkTransport({ profile: input, auth, route, fetchImpl =
       submitted = true;
       const response = await fetchImpl(`${profile.origin}/v1/messages`, {
         method: "POST", headers, signal: combined, redirect: "error",
-        body: JSON.stringify({ content: [{ type: "text", text: prompt }], conversationId, messageId, queue: true, role: "user",
+        body: JSON.stringify({ content: [{ type: "text", text: submittedPrompt }], conversationId, messageId, queue: true, role: "user",
           connectorsConfig: { connectors: [], include_defaults: false, packages: [] } })
       });
       await onEvent?.({ kind: "submission_response", httpStatus: response.status });
@@ -132,7 +155,13 @@ export function createCoworkTransport({ profile: input, auth, route, fetchImpl =
         || (accepted.conversationId !== undefined && accepted.conversationId !== conversationId)
         || (accepted.messageId !== undefined && accepted.messageId !== messageId)) throw coworkError("SUBMISSION_UNKNOWN", "Cowork submission acceptance could not be verified; it will not be resubmitted.", { submitted: true });
       await onPhase("ACCEPTED", context);
-      const result = await readCoworkCompletion(subscription, { signal: combined, conversationId, messageId, onEvent });
+      const result = await readCoworkCompletion(subscription, { signal: combined, conversationId, messageId, requireRequestStart: conversationKey !== undefined, onEvent });
+      if (responsePrefix) {
+        const prefix = [`${responsePrefix}\r\n`, `${responsePrefix}\n`].find(value => result.text.startsWith(value));
+        if (!prefix) throw coworkError("PROTOCOL_CHANGED", "Cowork reused conversation returned a response without the current request frame.", { submitted: true });
+        result.text = result.text.slice(prefix.length);
+        result.responseNonceVerified = true;
+      }
       await onPhase("RESULT_RECEIVED", context);
       return { ...result, conversationId, messageId, submissionEvidence };
     } catch (error) {
@@ -163,5 +192,18 @@ export function createCoworkTransport({ profile: input, auth, route, fetchImpl =
       conversationId: result.conversationId, messageId: result.messageId
     };
   };
-  return { models, execute, investigateText };
+  // Only these two fixed prompts may investigate unverified conversation reuse.
+  // Each call is separately journaled by the caller before its one POST.
+  const investigateConversationTurn = async ({ turn, conversationKey, effort, signal, operationId, onPhase, onEvent } = {}) => {
+    if (!Number.isInteger(turn) || !COWORK_CONVERSATION_PROBES[turn] || typeof conversationKey !== "string" || !UUID.test(conversationKey)) {
+      throw coworkError("INVALID_REQUEST", "Conversation verification requires turn 0 or 1 and a private conversation UUID.", { statusCode: 400 });
+    }
+    const probe = COWORK_CONVERSATION_PROBES[turn];
+    const result = await executeCore({ prompt: probe.prompt, conversationKey, effort, signal, operationId, onPhase, onEvent }, true);
+    return { investigation: true, turn, expectedTextMatched: result.text.trim() === probe.expected,
+      requestedEffort: effort, completionEvidence: result.completionEvidence, correlationEvidence: result.correlationEvidence,
+      responseNonceVerified: result.responseNonceVerified === true,
+      submissionEvidence: result.submissionEvidence, conversationId: result.conversationId, messageId: result.messageId };
+  };
+  return { models, execute, investigateText, investigateConversationTurn };
 }

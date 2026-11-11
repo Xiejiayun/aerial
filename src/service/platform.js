@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../shared/config.js";
+import { configDir } from "../shared/paths.js";
 import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/utils.js";
 import {
@@ -97,6 +99,18 @@ function windowsStop(ctx) {
     if (!Array.isArray(roots) || !roots.every((pid) => Number.isSafeInteger(pid) && pid > 0)) throw new Error();
   } catch {
     return { status: 1, stderr: "Could not read Aerial task process IDs; service was not stopped." };
+  }
+  if (roots.length && loadConfig().cowork) {
+    // taskkill /F cannot run Node cleanup. Quiesce Cowork first so its profile
+    // lock outlives pending requests and WAM writes, but not a normal restart.
+    const closed = ctx.run(process.execPath, [fileURLToPath(new URL("./cowork-stop.js", import.meta.url))], {
+      timeout: 15_000,
+      env: { ...process.env, AERIAL_CONFIG_DIR: configDir() }
+    });
+    if (closed.status !== 0) return {
+      status: closed.status || 1,
+      stderr: "Cowork could not be closed safely; the service was not stopped. Check local authentication and the running service before retrying."
+    };
   }
   for (const pid of roots) {
     const stopped = ctx.run("taskkill.exe", ["/PID", String(pid), "/T", "/F"]);

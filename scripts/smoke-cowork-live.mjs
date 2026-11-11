@@ -10,7 +10,7 @@ import { EventEmitter } from "node:events";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { openCoworkSession } from "../src/cowork/index.js";
-import { launchCoworkClaude, SUPPORTED_CLAUDE_VERSION } from "../src/cowork/launcher.js";
+import { launchCoworkClaude, SUPPORTED_CLAUDE_VERSIONS } from "../src/cowork/launcher.js";
 import { createPrivateSessionDirectory, writePrivateJson } from "../src/cowork/private-files.js";
 
 const TIMEOUT_MS = 300_000;
@@ -111,9 +111,9 @@ export async function runLiveSmoke({ directory, executable, model, denyWrite }) 
     version: 1, kind: "real-claude-real-cowork", status: "unverified", verified: false,
     scenario: denyWrite ? "write-permission-denied" : "read-write-roundtrip",
     startedAt: new Date(started).toISOString(), completedAt: null, elapsedMs: null,
-    supportedClaudeVersion: SUPPORTED_CLAUDE_VERSION, requestedModel: model,
+    supportedClaudeVersions: SUPPORTED_CLAUDE_VERSIONS, claudeVersion: null, requestedModel: model,
     route: null, actualModelIdentity: "unreported", workspace, timeoutMs: TIMEOUT_MS,
-    syntheticInput: inputText, expectedOutput, output: null, checks: {},
+    syntheticInput: inputText, expectedOutput, output: null, checks: {}, gatewayEvents: [],
     operationRecovery: "Production records stay in the selected profile; this script never releases or resubmits unknown operations."
   };
   // An interrupted process leaves an explicitly unverified report, never a pass.
@@ -153,9 +153,12 @@ export async function runLiveSmoke({ directory, executable, model, denyWrite }) 
       openSession: async ({ model: selectedModel, signal }) => {
         // No dependency injection or profile rewriting: requireLive runs before
         // authentication, and all inference uses the real production transport.
-        session = await openCoworkSession({ model: selectedModel, directory, signal: AbortSignal.any([signal, controller.signal]) });
+        session = await openCoworkSession({ model: selectedModel, directory, signal: AbortSignal.any([signal, controller.signal]),
+          log: event => { if (report.gatewayEvents.length < 200) report.gatewayEvents.push(event); } });
         report.route = { publicId: session.route.publicId, upstreamId: session.route.upstreamId,
           displayName: session.route.displayName, provider: session.route.provider };
+        report.cloudToolIsolation = session.capabilities.cloudToolIsolation;
+        report.experimentalTrial = session.capabilities.experimentalTrial === true;
         return session;
       },
       runVersion: (file, args, options) => spawnSync(file, args, { ...options, cwd: workspace, env }),
@@ -167,7 +170,10 @@ export async function runLiveSmoke({ directory, executable, model, denyWrite }) 
         child.stderr.on("data", chunk => stderr.append(chunk));
         return child;
       },
-      warn: () => { report.localDisconnectWarning = true; }
+      warn: message => {
+        if (message.startsWith("Cowork disconnected locally.")) report.localDisconnectWarning = true;
+        else if (message.startsWith("Experimental Cowork trial:")) report.experimentalTrialWarning = true;
+      }
     });
     stage = "validating_result";
     if (stopCode) throw failure(stopCode);
@@ -217,6 +223,7 @@ export async function runLiveSmoke({ directory, executable, model, denyWrite }) 
     report.elapsedMs = Date.now() - started;
     report.stats = snapshotStats(session?.stats || launchResult?.stats);
     report.child = launchResult ? { exitCode: launchResult.exitCode, signal: launchResult.signal || null } : null;
+    report.claudeVersion = launchResult?.claudeVersion || null;
     report.remoteCancellation = stopCode ? "not-confirmed" : "not-requested";
     report.stdout = stdout.snapshot();
     report.stderr = stderr.snapshot();

@@ -25,21 +25,23 @@ Usage:
   aerial update [--check]
   aerial login [--provider <github|cowork>] [--force]
   aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>] [--configure-only] [--verbose]
-  aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>] [--configure-only] [--verbose]
+  aerial setup claude [--provider <github|cowork>] [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>] [--configure-only] [--verbose]
   aerial service install|start|stop|restart|uninstall
   aerial status [--json]
   aerial proxy status|enable|disable [--json]
 
 Experimental Cowork sessions (Windows, Node.js 24+):
-  aerial cowork configure --profile <json>
+  aerial cowork configure --profile <json> [--allow-unverified-cloud-tools]
   aerial login --provider cowork [--force]
   aerial cowork auth [--interactive] [--origin <https-url>]
   aerial cowork doctor [--json]
   aerial cowork models [--json]
   aerial cowork probe --model <id> [--effort <low|medium|high|xhigh|max>]
+  aerial cowork verify --model <id> --effort <low|medium|high|xhigh|max>
   aerial cowork operations [--json]
   aerial cowork release <operation-id>
-  aerial cowork run --model <id> [--claude <path>] -- [Claude arguments]
+  aerial cowork run --model <id> [--effort <low|medium|high|xhigh|max>] [--claude <path>] -- [Claude arguments]
+  aerial setup claude --provider cowork --model <exact-id> [--effort <low|medium|high|xhigh|max>] [--verbose]
 
 Diagnostics and rollback:
   aerial setup status [--json]
@@ -59,7 +61,8 @@ Debug:
 Use aerial --config-dir <directory> <command> to select an Aerial configuration.
 Login defaults to GitHub. Cowork requires a configured authentication profile and uses the Microsoft Windows sign-in window.
 Setup verifies the running proxy and sends a brief upstream request before changing client settings.
-Use --configure-only with --model to save unverified offline settings; --verbose shows paths and helpers.
+Setup defaults to GitHub. Cowork model/effort pairs require explicit route verification; Codex stays on GitHub.
+Use --configure-only with --model for GitHub offline settings; --verbose shows paths and helpers.
 Set AERIAL_DEBUG=1 for structured debug events on stderr, or AERIAL_LOG_FILE for file logging.
 Add --help to any command to view help without making changes.`);
 }

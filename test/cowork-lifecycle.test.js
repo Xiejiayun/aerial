@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { acquireProfileLock, configureCowork, openCoworkSession, publicModels, selectCoworkModel, listCoworkOperations, releaseCoworkOperation, CLAUDE_BETAS } from "../src/cowork/index.js";
+import { acquireProfileLock, configureCowork, inspectCowork, openCoworkSession, publicModels, selectCoworkModel, listCoworkOperations, releaseCoworkOperation, CLAUDE_BETAS } from "../src/cowork/index.js";
 import { createOperationStore } from "../src/cowork/operations.js";
 
 const profile = {
@@ -12,14 +12,15 @@ const profile = {
   clientId: "11111111-1111-4111-8111-111111111111", resourceId: "22222222-2222-4222-8222-222222222222",
   scope: "22222222-2222-4222-8222-222222222222/access_as_user", tenantId: "organizations",
   evidence: { source: "authorized-session", observedAt: "2026-11-11T00:00:00Z" },
-  capabilities: { connectorsDisabled: "verified", completion: "fr-plus-rl-ok", eventCorrelation: "verified", verifiedEfforts: ["high", "low"] }
+  capabilities: { connectorsDisabled: "verified", completion: "fr-plus-rl-ok", eventCorrelation: "verified", verifiedEfforts: ["high", "low"],
+    verifiedModelEfforts: { "opus-exact": ["high", "low"] } }
 };
 const identity = { tenantId: "33333333-3333-4333-8333-333333333333", objectId: "44444444-4444-4444-8444-444444444444" };
 const catalog = [
   { upstreamId: "opus-exact", displayName: "Claude Opus synthetic", provider: "Anthropic" },
   { upstreamId: "other-opus", displayName: "Claude Opus other", provider: "Anthropic" },
   { upstreamId: "fable", displayName: "Claude Fable", provider: "Anthropic" }
-];
+].map(model => ({ ...model, supportedEfforts: ["low", "medium", "high", "xhigh", "max"], defaultEffort: "medium" }));
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), "aerial-cowork-lifecycle-"));
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 
@@ -104,14 +105,14 @@ test("Cowork profile lock rejects competing and stale owners and only removes it
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), foreign);
 });
 
-test("Cowork selects only an exact uniquely available Opus ID or its public alias without fallback", () => {
+test("Cowork selects only an exact uniquely available Anthropic route or its public alias without fallback", () => {
   const models = publicModels(catalog);
   assert.strictEqual(selectCoworkModel(models, catalog[0].upstreamId), models[0]);
   assert.strictEqual(selectCoworkModel(models, models[0].publicId), models[0]);
   assert.match(models[0].publicId, /^cowork\/claude-opus-synthetic-[a-f0-9]{8}$/);
   assert.deepEqual(publicModels(catalog), models);
   for (const selected of [undefined, "opus", "missing"]) assert.throws(() => selectCoworkModel(models, selected), { code: selected ? "MODEL_UNAVAILABLE" : "MODEL_REQUIRED" });
-  assert.throws(() => selectCoworkModel(models, "fable"), { code: "MODEL_UNSUPPORTED" });
+  assert.strictEqual(selectCoworkModel(models, "fable"), models[2]);
   assert.throws(() => selectCoworkModel([...models, models[0]], models[0].publicId), { code: "MODEL_UNAVAILABLE" });
   assert.throws(() => selectCoworkModel([{ publicId: "cowork/opus", upstreamId: "x", displayName: "Opus", provider: "unrelated" }], "x"), { code: "MODEL_UNSUPPORTED" });
 });
@@ -126,8 +127,10 @@ test("Cowork opens raw upstream selections as public routes with verified effort
   assert.ok(session.apiKey.length >= 32);
   assert.strictEqual(fixture.gatewayOptions.execute, fixture.execute);
   assert.deepEqual(fixture.gatewayOptions.capabilities.allowedBetas, [...CLAUDE_BETAS]);
-  assert.equal(fixture.gatewayOptions.capabilities.clientEffort, "low");
+  assert.equal(fixture.gatewayOptions.capabilities.clientEffort, "high");
   assert.equal(fixture.gatewayOptions.capabilities.thinkingMode, "disabled");
+  assert.equal(fixture.gatewayOptions.capabilities.cloudToolIsolation, "verified");
+  assert.equal(fixture.gatewayOptions.capabilities.experimentalTrial, false);
   assert.equal(fixture.gatewayOptions.operationDirectory, path.join(directory, "operations", createHash("sha256").update(JSON.stringify(identity)).digest("hex")));
   assert.equal(fixture.locked, true);
   await session.close();
@@ -139,9 +142,22 @@ test("Cowork opens raw upstream selections as public routes with verified effort
   await second.close();
 });
 
+test("Cowork sessions apply an explicitly selected verified effort and reject unverified levels", async () => {
+  const fixture = injected();
+  const session = await openCoworkSession({ model: "opus-exact", effort: "high", directory: temp() }, fixture.dependencies);
+  assert.equal(session.capabilities.clientEffort, "high");
+  await session.close();
+  for (const effort of ["medium", "max", "ultra"]) {
+    const invalid = injected();
+    await assert.rejects(openCoworkSession({ model: "opus-exact", effort, directory: temp() }, invalid.dependencies), { code: "UNSUPPORTED_CAPABILITY" });
+    assert.equal(invalid.locked, false);
+    assert.equal(invalid.calls.includes("gateway"), false);
+  }
+});
+
 test("Cowork cleanup releases the profile after auth, catalog, model, effort, token, directory and listen failures", async () => {
   for (const stage of ["auth", "catalog", "model", "effort", "token", "directory", "gateway", "listen"]) {
-    const fixture = injected(stage === "effort" ? { profile: { ...profile, capabilities: { ...profile.capabilities, verifiedEfforts: ["max"] } } } : {});
+    const fixture = injected(stage === "effort" ? { profile: { ...profile, capabilities: { ...profile.capabilities, verifiedEfforts: [], verifiedModelEfforts: {} } } } : {});
     const failure = new Error(`synthetic ${stage} failure`);
     if (stage === "auth") fixture.dependencies.authFactory = () => { throw failure; };
     if (stage === "catalog") fixture.dependencies.transportFactory = () => ({ models: async () => { throw failure; } });
@@ -251,7 +267,84 @@ test("Cowork operations listing and explicit release keep unknown attempts isola
 
 test("Cowork configuration reports missing verified client effort as not inference-ready", () => {
   const directory = temp(), source = path.join(temp(), "import.json");
-  fs.writeFileSync(source, JSON.stringify({ ...profile, capabilities: { ...profile.capabilities, verifiedEfforts: ["max"] } }));
+  fs.writeFileSync(source, JSON.stringify({ ...profile, capabilities: { ...profile.capabilities, verifiedEfforts: [], verifiedModelEfforts: {} } }));
   assert.equal(configureCowork({ file: source, directory }).inferenceReady, false);
   assert.equal(fs.existsSync(path.join(directory, "profile.lock")), false);
+});
+
+test("Cowork configuration requires explicit trial selection and ordinary imports restore strict policy", () => {
+  const directory = temp(), source = path.join(temp(), "import.json");
+  const unverified = { ...profile, capabilities: { ...profile.capabilities, connectorsDisabled: "unverified" },
+    localTrial: { allowUnverifiedCloudTools: true } };
+  fs.writeFileSync(source, JSON.stringify(unverified));
+  const strict = configureCowork({ file: source, directory });
+  assert.equal(strict.inferenceReady, false);
+  assert.equal(strict.cloudToolIsolation, "unverified");
+  assert.equal(strict.experimentalTrial, false);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(strict.profileFile, "utf8")), "localTrial"), false);
+  assert.throws(() => configureCowork({ file: source, directory, allowUnverifiedCloudTools: "true" }), { code: "INVALID_PROFILE" });
+
+  const experimental = configureCowork({ file: source, directory, allowUnverifiedCloudTools: true });
+  assert.equal(experimental.inferenceReady, true);
+  assert.equal(experimental.cloudToolIsolation, "unverified");
+  assert.equal(experimental.experimentalTrial, true);
+  const saved = JSON.parse(fs.readFileSync(experimental.profileFile, "utf8"));
+  assert.deepEqual(saved.localTrial, { allowUnverifiedCloudTools: true });
+  assert.deepEqual(saved.capabilities, unverified.capabilities);
+  assert.deepEqual(saved.evidence, unverified.evidence);
+
+  const restored = configureCowork({ file: experimental.profileFile, directory });
+  assert.equal(restored.inferenceReady, false);
+  assert.equal(restored.experimentalTrial, false);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(restored.profileFile, "utf8")), "localTrial"), false);
+  assert.equal(fs.existsSync(path.join(directory, "profile.lock")), false);
+});
+
+test("Cowork experimental sessions expose unverified isolation and retain client-effort requirements", async () => {
+  const unverified = { ...profile, capabilities: { ...profile.capabilities, connectorsDisabled: "unverified" } };
+  const strict = injected({ profile: unverified });
+  await assert.rejects(openCoworkSession({ model: "opus-exact", directory: temp() }, strict.dependencies), { code: "PROTOCOL_UNVERIFIED" });
+  assert.equal(strict.calls.includes("auth"), false);
+  const trial = { ...unverified, localTrial: { allowUnverifiedCloudTools: true } };
+  const experimental = injected({ profile: trial });
+  const session = await openCoworkSession({ model: "opus-exact", directory: temp() }, experimental.dependencies);
+  try {
+    assert.equal(session.capabilities.cloudToolIsolation, "unverified");
+    assert.equal(session.capabilities.experimentalTrial, true);
+    assert.equal(session.capabilities.clientEffort, "high");
+    assert.equal(trial.capabilities.connectorsDisabled, "unverified");
+  } finally { await session.close(); }
+  for (const verifiedEfforts of [[]]) {
+    const unsupported = injected({ profile: { ...trial, capabilities: { ...trial.capabilities, verifiedEfforts, verifiedModelEfforts: {} } } });
+    await assert.rejects(openCoworkSession({ model: "opus-exact", directory: temp() }, unsupported.dependencies), { code: "UNSUPPORTED_CAPABILITY" });
+    assert.equal(unsupported.calls.includes("gateway"), false);
+    assert.equal(unsupported.locked, false);
+  }
+});
+
+test("Cowork doctor distinguishes strict, experimental, and unready profiles without promoting evidence", async () => {
+  const unverified = { ...profile, capabilities: { ...profile.capabilities, connectorsDisabled: "unverified" } };
+  const trial = { ...unverified, localTrial: { allowUnverifiedCloudTools: true } };
+  for (const [candidate, expectedStatus, expectedReady, experimentalTrial, cloudToolIsolation] of [
+    [profile, "ready", true, false, "verified"],
+    [unverified, "protocol_unverified", false, false, "unverified"],
+    [trial, "ready_experimental", true, true, "unverified"],
+    [{ ...trial, capabilities: { ...trial.capabilities, completion: "unverified" } }, "protocol_unverified", false, true, "unverified"],
+    [{ ...trial, capabilities: { ...trial.capabilities, verifiedEfforts: [], verifiedModelEfforts: {} } }, "protocol_unverified", false, true, "unverified"],
+    [{ ...profile, localTrial: { allowUnverifiedCloudTools: true } }, "ready", true, false, "verified"]
+  ]) {
+    const before = structuredClone(candidate), fixture = injected({ profile: candidate });
+    const report = await inspectCowork({ directory: temp() }, fixture.dependencies);
+    assert.equal(report.status, expectedStatus);
+    assert.equal(report.ok, expectedReady);
+    assert.equal(report.inferenceReady, expectedReady);
+    assert.equal(report.experimentalTrial, experimentalTrial);
+    assert.equal(report.cloudToolIsolation, cloudToolIsolation);
+    assert.equal(report.authentication, "verified");
+    assert.equal(report.catalog, "verified");
+    assert.deepEqual(candidate, before);
+    assert.equal(fixture.locked, false);
+    assert.deepEqual(fixture.calls.slice(-2), ["auth-close", "release"]);
+    assert.equal(fixture.calls.includes("gateway"), false);
+  }
 });

@@ -19,7 +19,7 @@ test("help on every mutating command exits without touching configuration", () =
     ["service", "stop"], ["service", "restart"], ["service", "uninstall"],
     ["key", "generate"], ["key", "print"], ["login", "--force"], ["login", "--provider", "cowork", "--force"],
     ["proxy", "enable"], ["proxy", "disable"], ["start"], ["update"], ["upgrade"],
-    ["cowork", "configure"], ["cowork", "auth"], ["cowork", "run"], ["cowork", "probe"], ["cowork", "models"], ["cowork", "doctor"], ["cowork", "release", "synthetic-id"]
+    ["cowork", "configure"], ["cowork", "auth"], ["cowork", "run"], ["cowork", "probe"], ["cowork", "verify"], ["cowork", "models"], ["cowork", "doctor"], ["cowork", "release", "synthetic-id"]
   ]) {
     const result = runCli([...command, "--help"], { home });
     assert.equal(result.status, 0, `${command.join(" ")}: ${result.stderr}`);
@@ -40,6 +40,14 @@ test("login accepts an explicit provider and rejects malformed provider options 
   ]) assert.throws(() => validateCliArgs(["login", ...args]));
 });
 
+test("Claude setup accepts an explicit provider without extending Codex provider support", () => {
+  for (const provider of ["github", "cowork"]) {
+    assert.deepEqual(validateCliArgs(["setup", "claude", "--provider", provider, "--model", "opus-5.5", "--effort", "medium"]), { help: false });
+  }
+  for (const args of [["--provider"], ["--provider", "cowork", "--provider", "github"]]) assert.throws(() => validateCliArgs(["setup", "claude", ...args]));
+  assert.throws(() => validateCliArgs(["setup", "codex", "--provider", "cowork"]));
+});
+
 test("Cowork validates its own options while preserving Claude arguments after the separator", () => {
   assert.deepEqual(validateCliArgs(["cowork", "run", "--model", "cowork/test", "--", "--print", "hello", "--help"]), { help: false });
   assert.equal(hasCliHelp(["--config-dir", "somewhere", "cowork", "run", "--model", "cowork/test", "--", "--help"]), false);
@@ -47,6 +55,9 @@ test("Cowork validates its own options while preserving Claude arguments after t
   assert.deepEqual(validateCliArgs(["cowork", "auth", "--interactive", "--origin", "https://example.test"]), { help: false });
   assert.deepEqual(validateCliArgs(["cowork", "probe", "--model", "test"]), { help: false });
   assert.deepEqual(validateCliArgs(["cowork", "probe", "--model", "test", "--effort", "medium"]), { help: false });
+  assert.deepEqual(validateCliArgs(["cowork", "verify", "--model", "test", "--effort", "max"]), { help: false });
+  assert.deepEqual(validateCliArgs(["cowork", "run", "--model", "test", "--effort", "high", "--", "--print", "hello"]), { help: false });
+  assert.deepEqual(validateCliArgs(["cowork", "configure", "--profile", "evidence.json", "--allow-unverified-cloud-tools"]), { help: false });
   for (const args of [
     ["cowork", "run", "--modle", "oops"], ["cowork", "run", "--model"],
     ["cowork", "run", "--model", "test", "--print", "hello"],
@@ -55,7 +66,12 @@ test("Cowork validates its own options while preserving Claude arguments after t
     ["cowork", "probe", "--model", "test", "--headers", "x-arbitrary: value"],
     ["cowork", "probe", "--model", "test", "--effort"],
     ["cowork", "probe", "--model", "test", "--effort", "medium", "--effort", "high"],
-    ["cowork", "run", "--model", "test", "--effort", "medium"]
+    ["cowork", "run", "--model", "test", "--effort"],
+    ["cowork", "run", "--model", "test", "--effort", "medium", "--effort", "high"],
+    ["cowork", "verify", "--model", "test", "--effort"],
+    ["cowork", "verify", "--model", "test", "--effort", "medium", "--prompt", "arbitrary text"],
+    ["cowork", "verify", "--model", "test", "--effort", "medium", "--headers", "secret"],
+    ["cowork", "verify", "--model", "test", "--effort", "medium", "--effort", "high"]
   ]) assert.throws(() => validateCliArgs(args));
   assert.throws(() => validateCliArgs(["cowork", "release"]));
   assert.deepEqual(validateCliArgs(["cowork", "operations", "--json"]), { help: false });

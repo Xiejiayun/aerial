@@ -52,6 +52,24 @@ test("Cowork validates client capabilities and malformed JSON without submitting
   assert.equal(gateway.stats.upstreamTurns, 0);
 });
 
+test("Cowork failure diagnostics identify client beta negotiation without logging request secrets", async t => {
+  const logged = [];
+  const { gateway, request } = await fixture(t, { log: event => logged.push(event) });
+  const secret = "private-prompt-and-credential-2026-11-11";
+  const payload = { ...body, messages: [{ role: "user", content: secret }], output_config: { effort: "low" }, thinking: { type: "adaptive" } };
+  assert.equal((await request(payload, { "anthropic-beta": "fallback-credit-2026-06-01" })).status, 400);
+  assert.deepEqual(logged[0], {
+    event: "cowork_error", operationId: undefined, code: "UNSUPPORTED_CAPABILITY", remoteState: undefined,
+    endpoint: "/v1/messages", unsupportedCapability: "anthropic-beta", unsupportedBeta: "fallback-credit-2026-06-01", requestedEffort: "low", requestedThinking: "adaptive"
+  });
+  assert.equal((await request({ ...payload, thinking: { type: secret } }, { "anthropic-beta": secret })).status, 400);
+  assert.equal(logged[1].unsupportedBeta, undefined);
+  assert.equal(logged[1].requestedThinking, undefined);
+  assert.doesNotMatch(JSON.stringify(logged), /private-prompt-and-credential/);
+  assert.equal(gateway.stats.errors, 2);
+  assert.equal(gateway.stats.upstreamTurns, 0);
+});
+
 test("Cowork streams UTF-8 text and complete validated tool JSON with honest usage", async t => {
   const { request } = await fixture(t, { execute: async context => {
     await submitted(context);

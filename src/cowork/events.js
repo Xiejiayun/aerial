@@ -154,9 +154,10 @@ export async function* readCoworkEvents(response, { signal, limits: overrides = 
   }
 }
 
-export async function readCoworkCompletion(response, { signal, conversationId, messageId, onEvent, limits } = {}) {
+export async function readCoworkCompletion(response, { signal, conversationId, messageId, requireRequestStart = false, onEvent, limits } = {}) {
   let final;
   let seenFinal = false;
+  let seenRequestStart = false;
   for await (const event of readCoworkEvents(response, { signal, limits })) {
     const data = event.data;
     await onEvent?.(eventProtocolEvidence(event, { conversationId, messageId }));
@@ -168,7 +169,13 @@ export async function readCoworkCompletion(response, { signal, conversationId, m
       || (typeof messageId === "string" && messageId.length > 0 && (event.event === "q" || event.event === "rl")
         && Object.hasOwn(data, "mid") && data.mid !== messageId)) throw coworkError("PROTOCOL_CHANGED", "Cowork returned an event for a different operation.", { submitted: true });
     if (event.event === "error" || event.event === "err") throw coworkError("UPSTREAM_REJECTED", "Cowork reported a task error.", { submitted: true });
+    if ((event.event === "q" || event.event === "rl" && ["started", "running", "queued"].includes(data.st))
+      && (data.requestMessageId === messageId || data.mid === messageId)) seenRequestStart = true;
     if (event.event === "fr") {
+      // Reusing a subscription scope may replay older assistant results. An fr
+      // assistant ID alone cannot tie it to this request; require its lifecycle
+      // to start with the current request ID before accepting a candidate.
+      if (requireRequestStart && !seenRequestStart) throw coworkError("PROTOCOL_CHANGED", "Cowork reused conversation returned a final result before the correlated request started.", { submitted: true });
       if (seenFinal || typeof data.content !== "string") throw coworkError("PROTOCOL_CHANGED", "Cowork returned an invalid or duplicate final result.", { submitted: true });
       seenFinal = true;
       final = { text: data.content };

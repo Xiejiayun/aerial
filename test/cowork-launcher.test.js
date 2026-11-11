@@ -4,13 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { buildCoworkClaudeSettings, buildCoworkClaudeEnvironment, launchCoworkClaude, validateClaudeArguments } from "../src/cowork/launcher.js";
+import { buildCoworkClaudeSettings, buildCoworkClaudeEnvironment, launchCoworkClaude, validateClaudeArguments, SUPPORTED_CLAUDE_VERSIONS } from "../src/cowork/launcher.js";
 
 const sessionShape = () => ({ baseUrl: "http://127.0.0.1:12345", apiKey: "synthetic-session-key", model: "cowork/claude-test", capabilities: { clientEffort: "low" } });
 const version = () => ({ status: 0, stdout: "2.1.281 (Claude Code)\n" });
 
 test("Cowork settings pin all auxiliary models and auth to the local session without native-model claims", () => {
-  const settings = buildCoworkClaudeSettings(sessionShape(), path.join(os.tmpdir(), "test helper.cjs"));
+  const settings = buildCoworkClaudeSettings(sessionShape());
   assert.equal(settings.model, "cowork/claude-test");
   assert.deepEqual(settings.modelOverrides, { "cowork/claude-test": "cowork/claude-test" });
   assert.equal(settings.alwaysThinkingEnabled, false);
@@ -19,13 +19,18 @@ test("Cowork settings pin all auxiliary models and auth to the local session wit
   assert.equal(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, settings.model);
   assert.equal(settings.env.CLAUDE_CODE_SUBAGENT_MODEL, settings.model);
   assert.equal(settings.env.CLAUDE_CODE_USE_BEDROCK, "0");
+  assert.equal(settings.env.CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK, "1");
+  assert.equal(settings.env.CLAUDE_CODE_DISABLE_THINKING, "1");
+  assert.equal(settings.env.DISABLE_AUTOUPDATER, "1");
   assert.equal(settings.env.CLAUDE_CODE_EFFORT_LEVEL, "low");
-  assert.doesNotMatch(settings.apiKeyHelper, /synthetic-session-key/);
-  const env = buildCoworkClaudeEnvironment(settings, { PATH: "preserved", ANTHROPIC_API_KEY: "old-key", ANTHROPIC_FOUNDRY_BASE_URL: "https://old.test", CLAUDE_CODE_USE_VERTEX: "1", CLAUDE_CODE_OAUTH_TOKEN: "old-auth" });
+  assert.equal(settings.apiKeyHelper, "");
+  const env = buildCoworkClaudeEnvironment(settings, { PATH: "preserved", ANTHROPIC_API_KEY: "old-key", ANTHROPIC_FOUNDRY_BASE_URL: "https://old.test", CLAUDE_CODE_USE_VERTEX: "1", CLAUDE_CODE_OAUTH_TOKEN: "old-auth", CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK: "0", CLAUDE_CODE_DISABLE_THINKING: "0" });
   assert.equal(env.PATH, "preserved");
   assert.equal(env.ANTHROPIC_FOUNDRY_BASE_URL, undefined);
-  assert.equal(env.ANTHROPIC_API_KEY, "synthetic-session-key");
+  assert.equal(env.ANTHROPIC_API_KEY, "");
   assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "");
+  assert.equal(env.CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK, "1");
+  assert.equal(env.CLAUDE_CODE_DISABLE_THINKING, "1");
 });
 
 test("Cowork rejects non-loopback sessions, managed providers and conflicting Claude options", () => {
@@ -35,17 +40,58 @@ test("Cowork rejects non-loopback sessions, managed providers and conflicting Cl
   assert.doesNotThrow(() => validateClaudeArguments(["--print", "hello", "--tools", "Read,Write", "--permission-mode", "acceptEdits"]));
 });
 
+test("Cowork keeps exact max effort in env without unsupported persistent effort fields", () => {
+  for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+    const settings = buildCoworkClaudeSettings({ ...sessionShape(), capabilities: { clientEffort: effort } });
+    assert.equal(settings.env.CLAUDE_CODE_EFFORT_LEVEL, effort);
+    assert.equal(settings.effortLevel, effort === "max" ? undefined : effort);
+    assert.equal(settings.modelSettings?.[settings.model]?.effortLevel, effort === "max" ? undefined : effort);
+    assert.equal(settings.env.CLAUDE_CODE_DISABLE_THINKING, "1");
+  }
+});
+
+test("Cowork launcher forwards explicit effort and preserves an omitted selection", async () => {
+  for (const effort of [undefined, "low", "medium", "high", "xhigh", "max"]) {
+    let received;
+    const result = await launchCoworkClaude({
+      model: "cowork/claude-test", effort, env: {}, runVersion: version,
+      openSession: async request => {
+        received = request;
+        return { ...sessionShape(), capabilities: { clientEffort: effort ?? "low" }, close: async () => {} };
+      },
+      makeSessionDirectory: () => fs.mkdtempSync(path.join(os.tmpdir(), "aerial-launcher-effort-")),
+      writeSettings: (file, value) => fs.writeFileSync(file, JSON.stringify(value)),
+      spawnImpl: () => { const child = new EventEmitter(); queueMicrotask(() => child.emit("close", 0, null)); return child; }
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(received.effort, effort);
+    assert.equal(Object.hasOwn(received, "effort"), effort !== undefined);
+  }
+});
+
+test("Cowork launcher refuses invalid or changed explicit effort instead of falling back", async () => {
+  let closed = 0;
+  await assert.rejects(launchCoworkClaude({ model: "cowork/claude-test", effort: "ultra", openSession: () => assert.fail("must not authenticate") }), /effort must be/);
+  await assert.rejects(launchCoworkClaude({
+    model: "cowork/claude-test", effort: "max", env: {}, runVersion: version,
+    openSession: async () => ({ ...sessionShape(), capabilities: { clientEffort: "xhigh" }, close: async () => { closed++; } }),
+    makeSessionDirectory: () => assert.fail("must not write settings")
+  }), /different effort/);
+  assert.equal(closed, 1);
+});
+
 test("Cowork launcher keeps global settings unchanged, uses child-only settings and removes its own secret files", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "aerial-launcher-test-"));
   const globalSettings = path.join(root, "user-settings.json");
   fs.writeFileSync(globalSettings, '{"permissions":{"deny":["Bash"]}}\n');
   const original = fs.readFileSync(globalSettings, "utf8");
   let directory, opened = 0, closed = 0, captured;
+  const warnings = [];
   const signals = new EventEmitter();
   const result = await launchCoworkClaude({
     model: "cowork/claude-test", executable: "claude.exe", args: ["--print", "hello"],
-    cwd: root, env: { TEST_SENTINEL: "preserved" }, signals, runVersion: version,
-    openSession: async ({ model }) => { opened++; assert.equal(model, "cowork/claude-test"); return { ...sessionShape(), close: async () => { closed++; } }; },
+    cwd: root, env: { TEST_SENTINEL: "preserved" }, signals, runVersion: version, warn: message => warnings.push(message),
+    openSession: async ({ model }) => { opened++; assert.equal(model, "cowork/claude-test"); return { ...sessionShape(), capabilities: { experimentalTrial: true, cloudToolIsolation: "unverified" }, close: async () => { closed++; } }; },
     makeSessionDirectory: () => directory = fs.mkdtempSync(path.join(root, "session-")),
     writeSettings: (file, value) => fs.writeFileSync(file, JSON.stringify(value)),
     spawnImpl: (executable, args, options) => {
@@ -63,6 +109,7 @@ test("Cowork launcher keeps global settings unchanged, uses child-only settings 
   assert.equal(result.exitCode, 0);
   assert.equal(opened, 1);
   assert.equal(closed, 1);
+  assert.match(warnings.join("\n"), /Experimental Cowork trial: cloud-tool isolation is unverified/);
   assert.equal(fs.existsSync(directory), false);
   assert.equal(fs.readFileSync(globalSettings, "utf8"), original);
   assert.equal(captured.options.env.TEST_SENTINEL, "preserved");
@@ -93,6 +140,24 @@ test("unverified Claude versions fail before opening an authenticated session", 
     runVersion: () => ({ status: 0, stdout: "9.0.0 (Claude Code)" }),
     openSession: async () => { assert.fail("must not open session"); }
   }), /verified with Claude Code/);
+});
+
+test("each validated Claude version can launch and reports the actual executable version", async () => {
+  assert.deepEqual(SUPPORTED_CLAUDE_VERSIONS, ["2.1.281", "2.1.322"]);
+  for (const claudeVersion of SUPPORTED_CLAUDE_VERSIONS) {
+    const result = await launchCoworkClaude({
+      model: "cowork/claude-test", env: {},
+      runVersion: () => ({ status: 0, stdout: `${claudeVersion} (Claude Code)\n` }),
+      openSession: async () => ({ ...sessionShape(), close: async () => {} }),
+      makeSessionDirectory: () => fs.mkdtempSync(path.join(os.tmpdir(), "aerial-launcher-version-")),
+      writeSettings: (file, value) => fs.writeFileSync(file, JSON.stringify(value)),
+      spawnImpl: () => {
+        const child = new EventEmitter(); queueMicrotask(() => child.emit("close", 0, null)); return child;
+      }
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.claudeVersion, claudeVersion);
+  }
 });
 
 test("interrupting Claude closes the local session exactly once and reports remote uncertainty", async () => {

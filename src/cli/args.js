@@ -12,14 +12,15 @@ const commands = {
   doctor: spec("doctor [--json]", { flags: ["--json"] }),
   probe: spec("probe [--live] [--json]", { flags: ["--live", "--json"] }),
   cowork: {
-    configure: spec("cowork configure --profile <json>", { values: ["--profile"] }),
+    configure: spec("cowork configure --profile <json> [--allow-unverified-cloud-tools]", { values: ["--profile"], flags: ["--allow-unverified-cloud-tools"] }),
     auth: spec("cowork auth [--interactive] [--origin <https-url>]", { flags: ["--interactive"], values: ["--origin"] }),
     doctor: spec("cowork doctor [--json]", { flags: ["--json"] }),
     models: spec("cowork models [--json]", { flags: ["--json"] }),
     probe: spec("cowork probe --model <id> [--effort <low|medium|high|xhigh|max>]", { values: ["--model", "--effort"] }),
+    verify: spec("cowork verify --model <id> --effort <low|medium|high|xhigh|max>", { values: ["--model", "--effort"] }),
     operations: spec("cowork operations [--json]", { flags: ["--json"] }),
     release: spec("cowork release <operation-id>", { positional: 1 }),
-    run: spec("cowork run --model <id> [--claude <path>] -- [Claude arguments]", { values: ["--model", "--claude"], passthrough: true })
+    run: spec("cowork run --model <id> [--effort <low|medium|high|xhigh|max>] [--claude <path>] -- [Claude arguments]", { values: ["--model", "--effort", "--claude"], passthrough: true })
   },
   key: {
     generate: spec("key generate"),
@@ -27,7 +28,7 @@ const commands = {
   },
   setup: {
     codex: spec("setup codex [--model <id>] [--effort <level>] [--configure-only] [--verbose]", { values: ["--model", "--effort"], flags: ["--configure-only", "--verbose"] }),
-    claude: spec("setup claude [--model <id>] [--effort <level>] [--configure-only] [--verbose]", { values: ["--model", "--effort"], flags: ["--configure-only", "--verbose"] }),
+    claude: spec("setup claude [--provider <github|cowork>] [--model <id>] [--effort <level>] [--configure-only] [--verbose]", { values: ["--provider", "--model", "--effort"], flags: ["--configure-only", "--verbose"] }),
     all: spec("setup all"), // Keep the actionable migration error in the handler.
     status: spec("setup status [--json]", { flags: ["--json"] }),
     restore: spec("setup restore <codex|claude|all> --latest", { flags: ["--latest"], positional: 1 })

@@ -1,7 +1,7 @@
 // Real Claude Code -> real gateway -> real Cowork transport -> local synthetic
 // HTTP/SSE service. Authentication and protocol evidence are synthetic fixtures;
 // every transport fetch is explicitly redirected to loopback. No Azure/M365 call.
-// Usage: node scripts/smoke-cowork-claude.mjs <absolute native claude executable> [--deny-write] [--default-tools]
+// Usage: node scripts/smoke-cowork-claude.mjs <absolute native claude executable> [--deny-write] [--default-tools] [--opus-5-5]
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
@@ -17,6 +17,9 @@ import { createPrivateSessionDirectory, writePrivateJson } from "../src/cowork/p
 const executable = process.argv[2];
 const denyWrite = process.argv.slice(3).includes("--deny-write");
 const defaultTools = process.argv.slice(3).includes("--default-tools");
+const opus55 = process.argv.slice(3).includes("--opus-5-5");
+const publicModel = opus55 ? "cowork/claude-opus-5-5-fixture" : "cowork/claude-opus-test";
+const clientEffort = opus55 ? "medium" : "low";
 if (!executable || !path.isAbsolute(executable)) throw new Error("Pass the absolute path of the native Claude Code executable.");
 const root = createPrivateSessionDirectory();
 const workspace = path.join(root, "workspace");
@@ -38,14 +41,14 @@ const originalSettings = fs.readFileSync(userSettings, "utf8");
 const projectSettings = path.join(workspace, ".claude", "settings.json");
 writePrivateJson(projectSettings, {
   model: "synthetic-other-model",
-  modelOverrides: { "cowork/claude-opus-test": "synthetic-other-route" },
+  modelOverrides: { [publicModel]: "synthetic-other-route" },
   env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8", ANTHROPIC_MODEL: "synthetic-other-model", ANTHROPIC_DEFAULT_SONNET_MODEL: "synthetic-other-route", CLAUDE_CODE_SUBAGENT_MODEL: "synthetic-other-route" }
 });
 const originalProjectSettings = fs.readFileSync(projectSettings, "utf8");
 const key = randomBytes(32).toString("base64url");
-const route = { publicId: "cowork/claude-opus-test", upstreamId: "synthetic-opus-route", displayName: "Synthetic Cowork route" };
+const route = { publicId: publicModel, upstreamId: "synthetic-opus-route", displayName: "Synthetic Cowork route" };
 const capabilities = {
-  thinkingMode: "disabled", clientEffort: "low", supportedEfforts: ["low"],
+  thinkingMode: "disabled", clientEffort, supportedEfforts: [clientEffort],
   allowedBetas: ["claude-code-20250219", "interleaved-thinking-2025-05-14", "mid-conversation-system-2026-04-07", "effort-2025-11-24"]
 };
 const observed = [], events = [];
@@ -59,11 +62,11 @@ const syntheticProfile = {
   clientId: "11111111-1111-4111-8111-111111111111", resourceId: "22222222-2222-4222-8222-222222222222",
   scope: "22222222-2222-4222-8222-222222222222/access_as_user",
   evidence: { source: "authorized-session", observedAt: "2026-11-11T00:00:00Z", fixture: "synthetic-offline-only" },
-  capabilities: { connectorsDisabled: "verified", completion: "fr-plus-rl-ok", eventCorrelation: "verified", verifiedEfforts: ["low"] }
+  capabilities: { connectorsDisabled: "verified", completion: "fr-plus-rl-ok", eventCorrelation: "verified", verifiedEfforts: [clientEffort] }
 };
 const subscriptions = new Map(), submittedMessageIds = new Set(), syntheticErrors = [];
 const syntheticHttp = { modelGets: 0, subscriptions: 0, posts: 0, completions: 0 };
-const expectedContainer = `model=${route.upstreamId};reasoningEffort=low`;
+const expectedContainer = `model=${route.upstreamId};reasoningEffort=${clientEffort}`;
 
 function syntheticCompletion(prompt) {
     const encoded = /<LOCAL_CLIENT_REQUEST>\s*([\s\S]*?)\s*<\/LOCAL_CLIENT_REQUEST>/.exec(prompt)?.[1];
@@ -202,7 +205,7 @@ const result = await launchCoworkClaude({
   }
 });
 clearTimeout(timeout);
-console.log(JSON.stringify({ kind: "real-cli-real-gateway-real-transport-synthetic-cowork", denyWrite, defaultTools, declaredTools: observed[0]?.tools?.map(tool => tool.name), root, result, turns, syntheticHttp, syntheticErrors: syntheticErrors.map(error => error.message), stdout, stderr, events }, null, 2));
+console.log(JSON.stringify({ kind: "real-cli-real-gateway-real-transport-synthetic-cowork", denyWrite, defaultTools, opus55, publicModel, clientEffort, declaredTools: observed[0]?.tools?.map(tool => tool.name), root, result, turns, syntheticHttp, syntheticErrors: syntheticErrors.map(error => error.message), stdout, stderr, events }, null, 2));
 assert.equal(syntheticErrors.length, 0, syntheticErrors.map(error => error.stack).join("\n"));
 assert.equal(result.exitCode, 0, stderr);
 assert.equal(turns, 3, stdout);
