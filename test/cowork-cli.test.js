@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertCoworkRuntime, runCoworkCli } from "../src/cli/commands/cowork.js";
+import { probeCowork } from "../src/cowork/index.js";
 
 const runtime = { platform: "win32", nodeVersion: "24.0.0" };
 
@@ -78,6 +79,32 @@ test("Cowork probe sends only an explicit model to the fixed synthetic probe and
   assert.match(warnings[0], /does not establish Claude Code tool compatibility/);
   assert.deepEqual(JSON.parse(output[0]), { ok: true, model: "cowork/opus" });
   await assert.rejects(runCoworkCli("probe", [], { runtime, core: {} }), /requires --model/);
+});
+
+test("Cowork probe forwards only the explicit model and an allowed diagnostic effort", async () => {
+  const calls = [];
+  for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+    const output = [];
+    assert.equal(await runCoworkCli("probe", ["--model", "cowork/opus", "--effort", effort], {
+      runtime, core: { probeCowork: async options => { calls.push(options); return { ok: true, requestedEffort: options.effort, protocolPromoted: false }; } },
+      warn: () => {}, print: line => output.push(line)
+    }), 0);
+    assert.deepEqual(calls.at(-1), { model: "cowork/opus", effort });
+    assert.deepEqual(JSON.parse(output[0]), { ok: true, requestedEffort: effort, protocolPromoted: false });
+  }
+});
+
+test("Cowork rejects invalid probe effort before accessing core or authentication", async () => {
+  const core = new Proxy({}, { get: () => { throw new Error("must not touch core"); } });
+  for (const effort of ["", "auto", "ultra", "Medium", " medium", "medium;model=other", "medium\r\nx-secret: value"]) {
+    await assert.rejects(runCoworkCli("probe", ["--model", "cowork/opus", "--effort", effort], { runtime, core }), { code: "UNSUPPORTED_CAPABILITY" });
+  }
+  await assert.rejects(runCoworkCli("probe", ["--model", "cowork/opus", "--effort"], { runtime, core }), /--effort requires a value/);
+  // An unusable directory would fail immediately if validation reached profile
+  // locking; this must reject before any profile access or WAM acquisition.
+  for (const effort of [null, "", "auto", true, ["medium"], { effort: "medium" }]) {
+    await assert.rejects(probeCowork({ model: "cowork/opus", effort, directory: "\0" }), { code: "UNSUPPORTED_CAPABILITY" });
+  }
 });
 
 test("Cowork recovery commands list metadata and explain that release neither cancels nor infers", async () => {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { configDir } from "../shared/paths.js";
 import { authenticate, createAuthSession } from "./auth.js";
-import { createCoworkTransport, COWORK_INVESTIGATION_PROMPT } from "./transport.js";
+import { createCoworkTransport, COWORK_INVESTIGATION_PROMPT, validateInvestigationEffort } from "./transport.js";
 import { createCoworkGateway } from "./gateway.js";
 import { createOperationStore } from "./operations.js";
 import { coworkError, requireAuthorizedProfile, requireCoworkRuntime, validateProfile } from "./profile.js";
@@ -173,7 +173,8 @@ function identityDirectory(directory, identity) {
   return path.join(directory, "operations", identityKey);
 }
 
-export async function probeCowork({ model, directory = coworkDirectory(), signal } = {}) {
+export async function probeCowork({ model, effort, directory = coworkDirectory(), signal } = {}) {
+  validateInvestigationEffort(effort);
   requireCoworkRuntime();
   const release = acquireProfileLock(directory);
   let auth, store, record;
@@ -188,9 +189,10 @@ export async function probeCowork({ model, directory = coworkDirectory(), signal
     store = createOperationStore({ directory: operationDirectory, route });
     // Each explicit probe command is a new, intentional synthetic operation.
     // It is not a retry of an interrupted client request.
-    ({ record } = store.claim({ body: { model: route.publicId, messages: [{ role: "user", content: COWORK_INVESTIGATION_PROMPT }] }, idempotencyKey: randomUUID() }));
+    ({ record } = store.claim({ body: { model: route.publicId, messages: [{ role: "user", content: COWORK_INVESTIGATION_PROMPT }],
+      ...(effort !== undefined ? { output_config: { effort } } : {}) }, idempotencyKey: randomUUID() }));
     const result = await createCoworkTransport({ profile, auth, route }).investigateText({
-      signal, operationId: record.id,
+      effort, signal, operationId: record.id,
       onPhase: (phase, ids) => store.phase(record, phase, ids),
       onEvent: observation => { if (observations.length < 200) observations.push(observation); }
     });

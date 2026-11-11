@@ -3,8 +3,11 @@
 Date: 2026-11-11
 Base: origin/main at 9c492d1
 Branch: user/jiaxie/cowork-claude-local
-Status: local implementation and synthetic E2E complete; live M365 compatibility
-is blocked pending authorized-session protocol evidence. See
+Status: local implementation and synthetic E2E complete; WAM authentication and
+the real model-catalog request passed, including visibility of `opus-5.5`.
+Independent silent authentication/catalog checks also passed. A fixed-text live
+probe passed through the `opus-5.5` route. Connector isolation, event/effort
+capabilities and real Claude tool-loop compatibility remain unverified. See
 [validation results](cowork-validation.md).
 
 ## Outcome and scope
@@ -36,8 +39,9 @@ Claude Messages -> request/schema validation -> prompt envelope
 ```
 
 - `src/cowork/index.js`: public lifecycle and diagnostics, profile/model selection.
-- `auth.js`, `wam-helper.js`: official WAM authentication with private IPC,
-  explicit interactive authentication, silent refresh, fixed tenant/object ID.
+- `auth.js`, `wam-helper.js`, `auth-window.js`: official WAM authentication with
+  private IPC, an owned visible interaction window, explicit interactive
+  authentication, silent refresh and fixed tenant/object ID.
 - `profile.js`, `transport.js`, `events.js`: versioned protocol, models, bounded
   event decoding, subscription/submission and completion evidence.
 - `protocol.js`: supported fields, ordered dialogue, JSON Schema and tool choice,
@@ -54,10 +58,15 @@ The reference implementation is investigation material, not proof for this
 account. Do not copy its fixed region or Fable route as an Opus configuration.
 Record only non-secret parameters and sanitized event structures.
 
-1. Observe origin, application and resource parameters from normal authorized
-   Cowork access. Never extract browser tokens or change clients to evade denial.
-2. Obtain a fresh WAM token for those parameters; verify resource acceptance,
-   tenant/object identity and the available model catalog.
+1. Establish the Cowork service origin and resource from the user's normal
+   authorized web session. Record the observed parameters without browser tokens.
+2. Verify a candidate native client through normal WAM authentication and a
+   read-only request to that resource's model catalog. Check the token's client,
+   audience, scope and tenant/object identity, then require actual resource
+   acceptance. The native client's GUID need not equal the web application's
+   GUID: these are different OAuth clients. A reference client ID remains a
+   candidate until this check succeeds. Never rotate clients or authentication
+   methods to evade an authorization or conditional-access denial.
 3. Explicitly select a catalog route; no fallback to another model or account.
 4. Verify accepted-task, event association and authoritative completion signals.
 5. Confirm the cloud connector/default-tool disabling configuration is effective.
@@ -67,6 +76,31 @@ Record only non-secret parameters and sanitized event structures.
 An unverified profile may perform authentication/catalog diagnostics, but cannot
 start the general programming gateway. Failed gates remain explicit blockers;
 offline tests cannot promote a profile to live-verified.
+
+The independent source-checkout diagnostic is
+`scripts/probe-cowork-auth.mjs`. It tests one explicit candidate through WAM and
+`GET /v1/models`, without inference or browser credential extraction. Only after
+the resource accepts the token and returns a valid catalog can it save
+allowlisted profile/account metadata and authentication evidence in a new
+private directory. Bearer tokens stay in memory. A successful authentication
+probe does not verify connector isolation, event correlation, completion,
+reasoning effort or Claude tool compatibility, and leaves inference gated.
+
+The authentication/catalog gate passed at `2026-11-11T07:44:37Z`. After fixing
+the WAM interaction window, the user completed the third sign-in attempt; the
+probe validated client/resource/scope/identity and the real catalog included
+`opus-5.5`. Sanitized evidence and account selectors were saved to the private
+`%LOCALAPPDATA%\aerial\cowork-auth-probe-20261111` directory, without bearer
+tokens. A separate CLI doctor invocation then passed silent authentication and
+catalog access. Its `protocol_unverified` readiness result reflects the remaining
+inference gate, not a failed sign-in or model-directory test. The fixed-text live
+probe subsequently passed with silent WAM in a new process: HTTP 202 accepted,
+`expectedTextMatched: true`, and observed `fr` plus `rl:ok` completion for the
+selected `opus-5.5` upstream route. This does not confirm the internal serving
+model's identity or verify a Claude tool loop. Sanitized `cs` server/package and
+`tk` tool-directory metadata remain investigation leads. Connector controls,
+event association/completion semantics and effort are not yet verified, so the
+general programming profile gate remains enforced.
 
 ## Protocol and failure behavior
 
@@ -99,6 +133,48 @@ provider variables. Do not modify global settings or admin policy.
 Do not present the adapter as full native Opus capability. Thinking must be
 explicitly supported by verified Cowork behavior or absent from actual client
 requests. A compatibility environment switch alone is not evidence.
+
+## Login UX and browser-flow limits
+
+The implemented entry point is `aerial login --provider cowork`, with
+`aerial cowork auth` retained and plain `aerial login` kept on GitHub.
+`--provider github` is also explicit; unknown providers fail before authentication.
+Cowork reuses its configured profile and Microsoft Windows sign-in window.
+The existing GitHub flow displays a verification URL and user code; it does not
+currently open a browser automatically.
+
+The login command explains that a Microsoft sign-in window is opening, lets the
+user choose a work account and complete MFA, then checks the model catalog.
+Further UX can report identity verification,
+available Opus routes and inference readiness separately. Let the user select
+an exact Opus version and show the session launch command. No token copying is
+part of this flow, and sign-in/catalog checks do not submit an inference task.
+
+An external browser login is a separate authentication option requiring its own
+evidence. The installed Azure SDK supports authorization-code plus PKCE with a
+local callback, and a device-code flow that displays a URL and user code. The
+browser flow requires a compatible Mobile/Desktop application registration and
+registered redirect URI; device code requires an allowed public-client flow.
+Both also depend on Cowork resource authorization and tenant policy. The
+user-requested standard device-code diagnostic received a challenge for the
+same public client, identified on the sign-in page as `M365ChatClient`, but the
+account grant failed with conditional access error `530033`. The page showed
+`Unregistered` because the grant lacked sufficient device proof. Read-only
+Windows diagnostics showed `AzureAdJoined: YES`, `DeviceAuthStatus: SUCCESS`,
+`WamDefaultSet: YES` and `AzureAdPrt: YES`, and WAM subsequently authenticated
+successfully. Thus device-code browser login is not supported under the tested
+policy by the current implementation; working WAM sign-in is not evidence of a
+working webpage login. No localhost-redirect flow has been verified. Do not
+automatically fall back after a denial or substitute another client ID.
+
+Authentication caching also differs. WAM keeps its token cache in the operating
+system, so the current short-lived helper can exit after returning a token over
+private IPC. A normal browser/device-code helper would otherwise lose its
+in-memory MSAL cache on exit; an `AuthenticationRecord` alone cannot restore the
+refresh credentials. That option therefore needs a verified encrypted cache
+provider or a separately managed authentication process, with cancellation,
+identity isolation and cleanup tests. It must not be implemented merely by
+disabling the broker flag or extracting tokens from a signed-in browser.
 
 ## Implementation sequence
 
@@ -138,5 +214,12 @@ or release unknown operations automatically when ownership cannot be proven.
 Implemented the session gateway, WAM integration, explicit profile configuration,
 fixed-text investigation probe, launcher and recovery commands. Full local
 results and remaining P0 gaps are recorded in [cowork-validation.md](cowork-validation.md).
+The full-suite checkpoint passed 645 tests with 12 platform-dependent skips
+(657 total); the latest focused authentication/owner-window/CLI run passed all
+44 tests. Native owner-window visibility and explicit/EOF close were verified
+on Windows. Syntax checks passed for 84 JavaScript files and package verification
+passed with 78 files. These checks and real authentication/catalog acceptance
+are complemented by one successful fixed-text live round trip. Real Claude
+Read/Write E2E and the remaining protocol capabilities have not been verified.
 The live profile gate remains enforced. No release or main-targeting PR has been
 created before a successful real trial and user acceptance.

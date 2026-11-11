@@ -23,7 +23,7 @@ function printHelp(rawArgs = []) {
 Usage:
   aerial --version
   aerial update [--check]
-  aerial login [--force]
+  aerial login [--provider <github|cowork>] [--force]
   aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>] [--configure-only] [--verbose]
   aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>] [--configure-only] [--verbose]
   aerial service install|start|stop|restart|uninstall
@@ -32,10 +32,11 @@ Usage:
 
 Experimental Cowork sessions (Windows, Node.js 24+):
   aerial cowork configure --profile <json>
+  aerial login --provider cowork [--force]
   aerial cowork auth [--interactive] [--origin <https-url>]
   aerial cowork doctor [--json]
   aerial cowork models [--json]
-  aerial cowork probe --model <id>
+  aerial cowork probe --model <id> [--effort <low|medium|high|xhigh|max>]
   aerial cowork operations [--json]
   aerial cowork release <operation-id>
   aerial cowork run --model <id> [--claude <path>] -- [Claude arguments]
@@ -56,6 +57,7 @@ Debug:
   aerial key generate|print
 
 Use aerial --config-dir <directory> <command> to select an Aerial configuration.
+Login defaults to GitHub. Cowork requires a configured authentication profile and uses the Microsoft Windows sign-in window.
 Setup verifies the running proxy and sends a brief upstream request before changing client settings.
 Use --configure-only with --model to save unverified offline settings; --verbose shows paths and helpers.
 Set AERIAL_DEBUG=1 for structured debug events on stderr, or AERIAL_LOG_FILE for file logging.
@@ -96,7 +98,7 @@ async function main() {
   }
 
   if (command === "login") {
-    await runLoginCli(args.slice(1));
+    process.exitCode = await runLoginCli(args.slice(1));
     return;
   }
 

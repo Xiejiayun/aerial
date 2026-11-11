@@ -127,6 +127,111 @@ test("WAM helper communicates through private IPC and is reaped before returning
   assert.deepEqual(spawnOptions.stdio, ["ignore", "ignore", "ignore", "ipc"]);
 });
 
+function controlledWamHelper(t) {
+  const child = new EventEmitter();
+  const requests = [];
+  const kills = [];
+  child.pid = 123;
+  child.send = (request, callback) => { requests.push(request); callback?.(); };
+  child.kill = (signal) => { kills.push(signal); };
+  t.after(() => child.emit("close", 0));
+  return { child, requests, kills, dependencies: { spawnChild: () => child, platform: "win32", nodeVersion: "24.1.0" } };
+}
+
+test("WAM progress reports only stage strings and does not complete authentication", async (t) => {
+  const helper = controlledWamHelper(t);
+  const received = [];
+  let settled = false;
+  const pending = runWamHelper({ interactive: true, onProgress: (...args) => { received.push(args); } }, helper.dependencies);
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  const stages = ["loading-sdk", "creating-credential", "authenticating", "acquiring-token"];
+  for (const stage of stages) {
+    helper.child.emit("message", { type: "progress", stage, bearer: "private-token", authenticationRecord: record,
+      detail: "private-diagnostics", code: "AUTH_DENIED" });
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(received, stages.map((stage) => [stage]));
+  assert.equal(settled, false);
+  assert.deepEqual(helper.kills, []);
+  const token = { type: "token", bearer: "private-token", authenticationRecord: record };
+  helper.child.emit("message", token);
+  helper.child.emit("close", 0);
+  assert.deepEqual(await pending, token);
+  assert.equal(helper.kills.length, 1);
+});
+
+test("WAM progress ignores unknown and malformed stages without failing authentication", async (t) => {
+  const helper = controlledWamHelper(t);
+  const received = [];
+  let settled = false;
+  const pending = runWamHelper({ interactive: false, onProgress: (stage) => { received.push(stage); } }, helper.dependencies);
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  for (const stage of [undefined, null, 1, {}, ["loading-sdk"], "unknown-stage", "loading-sdk private-token"]) {
+    helper.child.emit("message", { type: "progress", stage, code: "AUTH_DENIED", detail: "private-diagnostics" });
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(received, []);
+  assert.equal(settled, false);
+  assert.deepEqual(helper.kills, []);
+  helper.child.emit("message", { type: "token", bearer: "private-token" });
+  helper.child.emit("close", 0);
+  assert.equal((await pending).bearer, "private-token");
+});
+
+test("WAM progress callback and AbortSignal never enter the child IPC request", async (t) => {
+  const helper = controlledWamHelper(t);
+  const controller = new AbortController();
+  const onProgress = () => {};
+  const request = { profile, tenantId: identity.tenantId, authenticationRecord: record, interactive: false };
+  const pending = runWamHelper({ ...request, signal: controller.signal, onProgress }, helper.dependencies);
+  assert.deepEqual(helper.requests, [request]);
+  assert.equal(Object.hasOwn(helper.requests[0], "onProgress"), false);
+  assert.equal(Object.hasOwn(helper.requests[0], "signal"), false);
+  helper.child.emit("message", { type: "token", bearer: "private-token" });
+  helper.child.emit("close", 0);
+  await pending;
+  controller.abort();
+  assert.equal(helper.kills.length, 1);
+});
+
+test("WAM progress is ignored during shutdown and after helper completion", async (t) => {
+  const helper = controlledWamHelper(t);
+  const received = [];
+  const pending = runWamHelper({ interactive: false, onProgress: (stage) => { received.push(stage); } }, helper.dependencies);
+  helper.child.emit("message", { type: "progress", stage: "loading-sdk" });
+  helper.child.emit("message", { type: "token", bearer: "private-token" });
+  helper.child.emit("message", { type: "progress", stage: "authenticating" });
+  assert.deepEqual(received, ["loading-sdk"]);
+  helper.child.emit("close", 0);
+  assert.equal((await pending).bearer, "private-token");
+  helper.child.emit("message", { type: "progress", stage: "acquiring-token" });
+  assert.deepEqual(received, ["loading-sdk"]);
+  assert.equal(helper.kills.length, 1);
+});
+
+test("a throwing WAM progress callback reaps the helper before returning a redacted error", async (t) => {
+  const helper = controlledWamHelper(t);
+  let callbacks = 0;
+  let settled = false;
+  const pending = runWamHelper({ interactive: true, onProgress: () => { callbacks++; throw new Error("private-token private-diagnostics"); } }, helper.dependencies);
+  const rejected = assert.rejects(pending, (error) => error.code === "AUTH_HELPER_FAILED"
+    && error.message === "Unable to report Cowork authentication progress."
+    && !JSON.stringify(error).includes("private-"));
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  helper.child.emit("message", { type: "progress", stage: "authenticating" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(callbacks, 1);
+  assert.equal(helper.kills.length, 1);
+  assert.equal(settled, false);
+  helper.child.emit("message", { type: "progress", stage: "acquiring-token" });
+  helper.child.emit("message", { type: "token", bearer: "private-token" });
+  helper.child.emit("close", 1);
+  await rejected;
+  helper.child.emit("message", { type: "progress", stage: "loading-sdk" });
+  assert.equal(callbacks, 1);
+  assert.equal(helper.kills.length, 1);
+});
+
 test("WAM helper timeout kills the owned process without exposing diagnostics", async () => {
   let killed = false;
   const spawnChild = () => {

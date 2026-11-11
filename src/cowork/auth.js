@@ -4,6 +4,8 @@ import { waitForPromise } from "../shared/abort.js";
 import { coworkError, requireAuthorizedProfile, requireCoworkRuntime, validateProfile } from "./profile.js";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const WAM_STAGES = new Set(["loading-sdk", "opening-window", "creating-credential", "authenticating", "acquiring-token"]);
+const WAM_ERRORS = new Set(["AUTH_CANCELED", "AUTH_REQUIRED", "AUTH_DEPENDENCIES_MISSING", "AUTH_HELPER_FAILED"]);
 const sameId = (left, right) => String(left).toLowerCase() === String(right).toLowerCase();
 const sameIdentity = (left, right) => left && right && sameId(left.tenantId, right.tenantId) && sameId(left.objectId, right.objectId);
 
@@ -65,7 +67,7 @@ async function persistAccount(profile, account) {
 
 export function runWamHelper(options, { spawnChild = fork, timeoutMs = options.interactive ? 300_000 : 60_000, platform = process.platform, nodeVersion = process.versions.node } = {}) {
   requireCoworkRuntime({ platform, nodeVersion });
-  const { signal, ...request } = options;
+  const { signal, onProgress, ...request } = options;
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     let child;
@@ -105,10 +107,18 @@ export function runWamHelper(options, { spawnChild = fork, timeoutMs = options.i
       complete();
     });
     child.once("error", () => finish(coworkError("AUTH_HELPER_FAILED", "Unable to start or communicate with the Cowork WAM helper.")));
-    child.once("message", (result) => {
+    child.on("message", (result) => {
+      if (closing || settled) return;
+      if (result?.type === "progress") {
+        if (WAM_STAGES.has(result.stage)) {
+          try { onProgress?.(result.stage); }
+          catch { finish(coworkError("AUTH_HELPER_FAILED", "Unable to report Cowork authentication progress.")); }
+        }
+        return;
+      }
       if (result?.type === "token" && typeof result.bearer === "string") finish(undefined, result);
       else {
-        const code = result?.code === "AUTH_REQUIRED" ? "AUTH_REQUIRED" : result?.code === "AUTH_DEPENDENCIES_MISSING" ? "AUTH_DEPENDENCIES_MISSING" : "AUTH_DENIED";
+        const code = WAM_ERRORS.has(result?.code) ? result.code : "AUTH_DENIED";
         const detail = /^AADSTS\d+$/.test(result?.detail || "") ? ` (${result.detail})` : "";
         finish(coworkError(code, code === "AUTH_DEPENDENCIES_MISSING" ? "Cowork WAM dependencies are unavailable. Reinstall Aerial with optional dependencies enabled." : `Cowork WAM authentication failed${detail}. Run explicit Cowork authentication if interaction is required.`, { statusCode: 401 }));
       }

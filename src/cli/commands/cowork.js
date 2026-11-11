@@ -1,5 +1,6 @@
 import { requiredArgValue } from "../helpers.js";
 import { launchCoworkClaude, validateClaudeArguments } from "../../cowork/launcher.js";
+import { validateInvestigationEffort } from "../../cowork/transport.js";
 
 export function assertCoworkRuntime({ platform = process.platform, nodeVersion = process.versions.node } = {}) {
   if (platform !== "win32") throw new Error("Cowork authentication currently requires Windows. Existing Aerial GitHub Copilot commands remain available on this platform.");
@@ -22,6 +23,8 @@ export async function runCoworkCli(command, args, {
     if (!model?.trim()) throw new Error(`aerial cowork ${command} requires --model <id>. Run aerial cowork models and explicitly select an available route.`);
     if (command === "run") validateClaudeArguments(claudeArgs);
   }
+  const effort = command === "probe" ? requiredArgValue(options, "--effort") : undefined;
+  if (command === "probe") validateInvestigationEffort(effort);
   const origin = command === "auth" ? requiredArgValue(options, "--origin") : undefined;
   if (origin) {
     const url = new URL(origin);
@@ -34,6 +37,7 @@ export async function runCoworkCli(command, args, {
     return 0;
   }
   if (command === "auth") {
+    print("Opening the Microsoft Windows sign-in window. Complete account selection and MFA there; close the Aerial sign-in window to cancel.");
     await api.authenticateCowork({ interactive: true, ...(origin ? { origin } : {}) });
     print("Cowork identity saved. Run aerial cowork models to inspect the available routes.");
     return 0;
@@ -72,7 +76,7 @@ export async function runCoworkCli(command, args, {
   }
   if (command === "probe") {
     warn("Sending one fixed synthetic Cowork text probe. This consumes Cowork allowance and does not establish Claude Code tool compatibility.");
-    const report = await api.probeCowork({ model });
+    const report = await api.probeCowork({ model, ...(effort !== undefined ? { effort } : {}) });
     print(JSON.stringify(report, null, 2));
     return report.ok === false ? 1 : 0;
   }

@@ -6,7 +6,7 @@ const commands = {
   update: spec("update [--check]", { flags: ["--check"] }),
   upgrade: spec("update [--check]", { flags: ["--check"] }),
   status: spec("status [--json]", { flags: ["--json"] }),
-  login: spec("login [--force]", { flags: ["--force"] }),
+  login: spec("login [--provider <github|cowork>] [--force]", { flags: ["--force"], values: ["--provider"] }),
   start: spec("start [--host <loopback>] [--port <port>]", { values: ["--host", "--port"] }),
   teardown: spec("teardown"),
   doctor: spec("doctor [--json]", { flags: ["--json"] }),
@@ -16,7 +16,7 @@ const commands = {
     auth: spec("cowork auth [--interactive] [--origin <https-url>]", { flags: ["--interactive"], values: ["--origin"] }),
     doctor: spec("cowork doctor [--json]", { flags: ["--json"] }),
     models: spec("cowork models [--json]", { flags: ["--json"] }),
-    probe: spec("cowork probe --model <id>", { values: ["--model"] }),
+    probe: spec("cowork probe --model <id> [--effort <low|medium|high|xhigh|max>]", { values: ["--model", "--effort"] }),
     operations: spec("cowork operations [--json]", { flags: ["--json"] }),
     release: spec("cowork release <operation-id>", { positional: 1 }),
     run: spec("cowork run --model <id> [--claude <path>] -- [Claude arguments]", { values: ["--model", "--claude"], passthrough: true })

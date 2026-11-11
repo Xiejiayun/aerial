@@ -465,22 +465,27 @@ From a source checkout, use `node src/cli/index.js` in place of `aerial`:
 
 ```powershell
 aerial cowork configure --profile C:\path\to\observed-cowork-profile.json
-aerial cowork auth
+aerial login --provider cowork
 aerial cowork models
 aerial cowork doctor
-aerial cowork probe --model <exact-opus-catalog-id>
+aerial cowork probe --model <exact-opus-catalog-id> [--effort medium]
 aerial cowork run --model <exact-opus-catalog-id>
 ```
 
-`auth` is the only command that permits interactive WAM authentication. Complete
+`aerial login --provider cowork` and `aerial cowork auth` both use interactive
+Windows WAM authentication; `--force` on the login entry means explicit sign-in
+again. Plain `aerial login` (or `--provider github`) keeps the GitHub device flow.
+Cowork still requires an observed and verified authentication profile. Complete
 Microsoft's account/MFA prompts yourself. Other commands use silent renewal and
 fail with `AUTH_REQUIRED` when interaction is needed. The Microsoft identity
 packages are optional npm dependencies; install with optional dependencies
 enabled to use Cowork. Other Aerial commands do not load these packages.
 
-The protocol profile contains only non-secret parameters observed in a normal
-authorized Cowork session. Do not copy tokens, cookies, or complete request
-headers into it. There is deliberately no built-in region, model, or borrowed
+The protocol profile contains only non-secret parameters verified through normal
+authorized Cowork access. A native WAM client need not match the web application's
+client: successful WAM authorization plus resource acceptance can establish its
+client/scope evidence. Do not copy tokens, cookies, or complete request headers
+into a profile. There is deliberately no built-in region, model, or borrowed
 identity. A starting profile has this shape; replace the placeholders using
 observed evidence:
 
@@ -502,10 +507,37 @@ observed evidence:
 }
 ```
 
+When the origin/resource are known but the native client/scope are still
+candidates, the source checkout includes a separate read-only diagnostic:
+
+```powershell
+node scripts/probe-cowork-auth.mjs --origin 'https://<observed-runtime-host>' --client-id '<candidate-client-uuid>' --resource-id '<observed-resource-uuid>' --scope '<observed-resource-uuid>/access_as_user' --output-dir 'C:\path\to\new-probe-directory'
+```
+
+The output directory must be new with an existing parent. This script performs
+one explicit WAM sign-in and one `GET /v1/models`, with no inference, redirects,
+automatic retries, or alternative clients. It validates token routing/identity
+and bounded catalog JSON. Only on success does it save an ACL-protected profile,
+account selectors and non-secret diagnostic evidence. All inference capability
+flags remain unverified. Set `AERIAL_COWORK_CONFIG_DIR` to that directory for
+subsequent diagnostics; no existing profile is overwritten. Without
+`--output-dir`, no Aerial account/profile files are written.
+
+The current Cowork implementation uses the Microsoft Windows sign-in window.
+In this trial, standard Microsoft device-code authorization issued a code but
+the account grant was denied by device policy (`530033`). WAM subsequently
+succeeded with the registered Windows device. External-browser OAuth is not
+implemented; its availability depends on registered flows and tenant policy,
+not just Azure SDK support.
+
 Authentication and model listing can work before inference capabilities are
 verified. `probe` submits one fixed synthetic text task and consumes Cowork
-allowance. It reports sanitized protocol observations, never automatically
-promotes evidence, and does not prove that cloud tools are disabled. `run`
+allowance. Optionally add `--effort medium` to request that advertised effort;
+the accepted diagnostic values are `low`, `medium`, `high`, `xhigh` and `max`.
+Omitting the flag preserves the upstream default. The report's optional
+`requestedEffort` records the request, not proof that the upstream applied it.
+The probe reports sanitized protocol observations, never adds entries to
+`verifiedEfforts` automatically, and does not prove that cloud tools are disabled. `run`
 requires independently verified cloud-tool isolation, event association, the
 `fr-plus-rl-ok` completion rule, and a compatible effort value. Do not change
 these flags merely to make startup pass. Keep the validation report alongside
