@@ -3,7 +3,7 @@
 [![CI](https://github.com/Xiejiayun/aerial/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Xiejiayun/aerial/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@jiayunxie/aerial.svg)](https://www.npmjs.com/package/@jiayunxie/aerial)
 
-Aerial lets Codex CLI and Claude Code use your own GitHub Copilot subscription through a local proxy on your machine.
+Aerial lets Codex CLI, Claude Code, and image API clients use your own GitHub Copilot subscription through a local proxy on your machine.
 
 It runs locally on `127.0.0.1:18181`. Your GitHub token and Aerial key stay on your machine. It is built for personal local use, not for public hosting or account sharing.
 
@@ -119,6 +119,16 @@ To inspect the full model matrix:
 ```bash
 aerial probe
 ```
+
+## Generate And Edit Images
+
+Aerial exposes authenticated `POST /v1/images/generations` and `POST /v1/images/edits` on the same local service. Use `aerial probe` to find models advertising `image_generation` or `image_edit`, then send the selected model ID and image options through an Images API client with base URL `http://127.0.0.1:18181/v1` and the key returned by `aerial key print`.
+
+Generation JSON, edit uploads (including multipart files and masks), and upstream JSON/SSE responses pass through unchanged. Sizes such as `3840x2160` work when the selected upstream model supports them. Each request uses your Copilot allowance; `aerial probe --live` checks conversation routes only and never generates images.
+
+Image model access depends on your account and the live Copilot catalog. No separate OpenAI key is required. Image-only models cannot be selected as the Codex or Claude Code conversation model; automatic image tools need a separate client integration.
+
+See [image API examples](docs/usage.md#81-generate-and-edit-images) for generation, editing, downloads, limits, and error handling. Restart an existing Aerial service after upgrading to load the new routes.
 
 ## Upstream Proxy
 

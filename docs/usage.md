@@ -82,7 +82,7 @@ SOCKS5 endpoints are first-class candidates. When Aerial selects `socks5://127.0
 
 For explicit overrides, `AERIAL_UPSTREAM_PROXY` accepts bare `http://`, `https://`, `socks://`, `socks5://`, and `socks5h://` endpoints. Aerial intentionally ignores proxy URLs with path, query, or hash components, because upstream proxy dispatchers expect a host-level proxy endpoint.
 
-`aerial proxy status` prints the active mode, the direct or proxied egress IP/region, and the current Copilot route counts from `aerial probe` (`responses`, `responsesWebSocket`, `messages`, and `chat`). In disabled mode the endpoint is `direct`; in enabled mode the endpoint is the selected local proxy plus its discovery source. Use `--json` for the stable `aerial.proxy-status.v1` shape. If a proxy URL contains userinfo, status and enable diagnostics redact it before printing.
+`aerial proxy status` prints the active mode, the direct or proxied egress IP/region, and the current Copilot route counts from `aerial probe` (`responses`, `responsesWebSocket`, `messages`, `chat`, `imageGenerations`, and `imageEdits`). In disabled mode the endpoint is `direct`; in enabled mode the endpoint is the selected local proxy plus its discovery source. Use `--json` for the stable `aerial.proxy-status.v1` shape. If a proxy URL contains userinfo, status and enable diagnostics redact it before printing.
 
 `aerial proxy disable` switches back to direct upstream traffic and clears the saved proxy endpoint. Running Aerial processes read this config for each upstream request, so no service restart is required for proxy enable/disable.
 
@@ -182,6 +182,7 @@ aerial probe
 | `GET /v1/models` (no GitHub login) | not required | 401 + `error.aerial.status = "login_required"` |
 | `GET /v1/models` (GitHub login rejected by Copilot) | not required | 401 + `error.aerial.status = "upstream_auth_failed"`, or 403 + `"upstream_access_denied"`; both include `upstream_status` |
 | `POST /v1/responses`, `/v1/messages`, `/v1/chat/completions` | required | 401 if key missing/invalid; otherwise proxied to Copilot |
+| `POST /v1/images/generations`, `/v1/images/edits` | required | Images API passthrough, including generation JSON, edit JSON/multipart, and upstream JSON/SSE responses |
 | `POST /v1/messages/count_tokens` | required | Local input estimate, including system prompts, tools, messages, and tool results; malformed JSON returns 400 |
 
 Token counts are estimates (`x-aerial-token-count: estimate`), not an upstream
@@ -204,7 +205,7 @@ Each model returned by `/v1/models` includes an `aerial` field that tells you wh
 }
 ```
 
-Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. `responses_websocket` means Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses calls when `AERIAL_RESPONSES_WEBSOCKET=on` is set; with the opt-in off (default), Aerial always uses HTTP upstream Responses. Models marked with `embeddings_not_implemented` or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
+Use `responses` models for Codex, `messages` models for Claude Code, and `chat` models only for generic Chat Completions clients. Use `image_generation` and `image_edit` models with the Images endpoints below, not as conversation models. `responses_websocket` means Aerial can optionally use Copilot's upstream `ws:/responses` transport for streaming Responses calls when `AERIAL_RESPONSES_WEBSOCKET=on` is set; with the opt-in off (default), Aerial always uses HTTP upstream Responses. Models marked with `embeddings_not_implemented` or `no_supported_endpoint_advertised` need additional Aerial work before they are first-class choices.
 
 ## 7.5 Manage Setup
 
@@ -380,7 +381,7 @@ If the log directory cannot be created, the writer is disabled for the lifetime 
 aerial probe
 ```
 
-This prints the current model matrix returned by Copilot plus Aerial's route annotations. It is the fastest way to see which models currently expose `responses`, `messages`, or `chat` routes.
+This prints the current model matrix returned by Copilot plus Aerial's route annotations. It is the fastest way to see which models currently expose `responses`, `messages`, `chat`, `image_generation`, or `image_edit` routes. Image models count toward `summary.imageGenerations` and `summary.imageEdits` in JSON reports and the corresponding route counts in `aerial proxy status`.
 
 For a low-cost end-to-end check:
 
@@ -388,9 +389,99 @@ For a low-cost end-to-end check:
 aerial probe --live
 ```
 
-`--live` sends one small request through the first available model for each supported route. Use `--json` when you want machine-readable output for CI or debugging.
+`--live` sends one small request through the first available model for each conversation route (`responses`, `messages`, and `chat`). Image routes are catalog-only, including with `--live`; `notChecked` includes `image-inference`. No probe generates or edits images automatically. Use `--json` when you want machine-readable output for CI or debugging.
 
 For streaming `/v1/responses` requests, Aerial defaults to HTTP upstream Responses. Set `AERIAL_RESPONSES_WEBSOCKET=on` to opt into Copilot's upstream `ws:/responses` transport for streaming Responses calls; Aerial then converts upstream WebSocket events back to SSE for the local client. Direct client WebSocket upgrades to Aerial are still not exposed and return `501 Not Implemented`; clients should keep using HTTP `POST /v1/responses`.
+
+## 8.1 Generate And Edit Images
+
+Image clients use the same local service, GitHub login, upstream proxy settings, and Aerial API key as conversation clients. Start Aerial with `aerial service install` or `aerial start`, then run `aerial probe` to discover available image model IDs. Existing services need `aerial service install` and `aerial service restart` after upgrading. You do not need to configure Codex/Claude or provide an OpenAI API key to use these endpoints.
+
+| Local endpoint | Advertised Copilot endpoint | Aerial model route |
+| --- | --- | --- |
+| `POST /v1/images/generations` | `/v1/images/generations` | `image_generation` |
+| `POST /v1/images/edits` | `/v1/images/edits` | `image_edit` |
+
+For OpenAI-compatible Images clients, use base URL `http://127.0.0.1:18181/v1`, the key from `aerial key print`, and a model advertising the required route. Model IDs and capabilities come from the live catalog; Aerial does not invent an image model, remap an OpenAI alias, upscale images, or promise account access.
+
+### Generate a PNG using Node.js
+
+Set the local key in the shell that will run your script:
+
+```powershell
+# PowerShell
+$env:AERIAL_API_KEY = aerial key print
+```
+
+```bash
+# bash/zsh
+export AERIAL_API_KEY="$(aerial key print)"
+```
+
+Save this as `generate-image.mjs` and run `node generate-image.mjs`. It discovers an available generation model and requests a PNG. Choose a size and quality supported by that model; `3840x2160` has been verified with Copilot's `gpt-image-2.5-flare`, but other models may reject it. Requests consume Copilot allowance.
+
+```js
+import { writeFile } from "node:fs/promises";
+
+const base = "http://127.0.0.1:18181/v1";
+const key = process.env.AERIAL_API_KEY?.trim();
+if (!key) throw new Error("Set AERIAL_API_KEY from aerial key print first.");
+const headers = { authorization: `Bearer ${key}` };
+
+async function readJson(response) {
+  const body = await response.json();
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${body.error?.message || JSON.stringify(body)}`);
+  return body;
+}
+
+const catalog = await readJson(await fetch(`${base}/models`, {
+  headers, signal: AbortSignal.timeout(30000)
+}));
+const model = catalog.data.find(m => m.aerial?.routes?.includes("image_generation"));
+if (!model) throw new Error("No image generation model is available. Run aerial probe.");
+
+const result = await readJson(await fetch(`${base}/images/generations`, {
+  method: "POST",
+  headers: { ...headers, "content-type": "application/json" },
+  signal: AbortSignal.timeout(300000),
+  body: JSON.stringify({
+    model: model.id,
+    prompt: "Display all 26 uppercase English letters A to Z in order, as colorful sculptural letters on an ivory background.",
+    size: "3840x2160", quality: "high", output_format: "png", n: 1
+  })
+}));
+if (!result.data?.[0]?.b64_json) throw new Error("The upstream did not return a base64 image.");
+await writeFile("alphabet.png", Buffer.from(result.data[0].b64_json, "base64"), { flag: "wx" });
+console.log("Saved alphabet.png");
+```
+
+### Edit an image using multipart
+
+The following continues the example above. Select an edit-capable model separately, and let `fetch` set the multipart `Content-Type` and boundary. Do not set `content-type: application/json` for a `FormData` body.
+
+```js
+import { readFile } from "node:fs/promises";
+
+const editModel = catalog.data.find(m => m.aerial?.routes?.includes("image_edit"));
+if (!editModel) throw new Error("No image edit model is available.");
+const form = new FormData();
+form.set("model", editModel.id);
+form.set("prompt", "Keep all letters and their layout; change the background to pale blue.");
+form.set("output_format", "png");
+form.set("n", "1");
+form.set("image", new Blob([await readFile("alphabet.png")], { type: "image/png" }), "alphabet.png");
+const edited = await readJson(await fetch(`${base}/images/edits`, {
+  method: "POST", headers, body: form, signal: AbortSignal.timeout(300000)
+}));
+if (!edited.data?.[0]?.b64_json) throw new Error("The upstream did not return a base64 image.");
+await writeFile("alphabet-edited.png", Buffer.from(edited.data[0].b64_json, "base64"), { flag: "wx" });
+```
+
+Multiple image files and masks, JSON edits, model-specific options, and upstream streaming events are forwarded unchanged when the selected upstream supports them. Aerial buffers each request to support a single authenticated retry; the total upload limit is 32 MiB, including multipart overhead or JSON/base64 expansion. Image responses stream through without chat cache telemetry, parsing, storage, or a second response copy. Upstream usage fields remain intact.
+
+Upstream validation errors, access errors, rate limits, and server failures keep their original HTTP status/body and supported retry/rate-limit/request-ID headers. Aerial refreshes the Copilot token and retries once on `401`; it does not automatically retry `429`, `5xx`, timeouts, or failed streams. Client disconnection cancels outstanding upstream work, but does not guarantee that upstream usage is refunded. Allow enough client time for generation and inspect errors before submitting another request.
+
+These routes remain authenticated and loopback-only, with no open CORS. Keep the local Aerial key in your local application's backend. This release adds image APIs; a website, gallery, task queue, MCP server, and native Codex image-tool integration are separate work. Copilot inference routes remain an observed compatibility target that may change upstream.
 
 ## 9. Use Prompt Cache
 

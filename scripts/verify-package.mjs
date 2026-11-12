@@ -29,6 +29,7 @@ const REQUIRED_FILES = [
   "package.json",
   "src/cli/index.js",
   "src/cli/helpers.js",
+  "src/proxy/images.js",
   "src/service/windows-launcher.js"
 ];
 

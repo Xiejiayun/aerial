@@ -14,7 +14,9 @@ async function proxyRouteSummary() {
       responses: report.summary.responses,
       responsesWebSocket: report.summary.websocketResponses,
       messages: report.summary.messages,
-      chat: report.summary.chat
+      chat: report.summary.chat,
+      imageGenerations: report.summary.imageGenerations,
+      imageEdits: report.summary.imageEdits
     };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -70,7 +72,7 @@ function printProxyStatus(status) {
   console.log(`egress: ${formatEgress(status.egress)}`);
   if (status.routes) {
     if (status.routes.ok) {
-      console.log(`copilot routes: responses=${status.routes.responses}, responsesWebSocket=${status.routes.responsesWebSocket}, messages=${status.routes.messages}, chat=${status.routes.chat}`);
+      console.log(`copilot routes: responses=${status.routes.responses}, responsesWebSocket=${status.routes.responsesWebSocket}, messages=${status.routes.messages}, chat=${status.routes.chat}, imageGenerations=${status.routes.imageGenerations}, imageEdits=${status.routes.imageEdits}`);
     } else {
       console.log(`copilot routes: unavailable (${status.routes.error})`);
     }

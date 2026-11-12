@@ -4,7 +4,7 @@
 
 **Aerial** is a proposed lightweight local proxy that lets one user connect their own GitHub Copilot subscription to local coding CLIs.
 
-The MVP is intentionally smaller than Raven. It focuses on a local-only reverse proxy, GitHub login, Copilot token refresh, Codex CLI over OpenAI Responses, Claude Code over Anthropic Messages, and one-command setup/rollback. It does not include a dashboard, analytics database, custom upstream providers, account sharing, public deployment, quota bypass behavior, or image APIs.
+The original MVP is intentionally smaller than Raven. It focuses on a local-only reverse proxy, GitHub login, Copilot token refresh, Codex CLI over OpenAI Responses, Claude Code over Anthropic Messages, and one-command setup/rollback. It does not include a dashboard, analytics database, custom upstream providers, account sharing, public deployment, or quota bypass behavior. Image generation/editing extends this design in [the Images API plan](superpowers/specs/2026-11-12-image-service-design.md).
 
 Default bind address: `127.0.0.1:18181`.
 
@@ -67,7 +67,7 @@ Aerial is for **personal local use**:
 - Store credentials only on the user's machine.
 - Use the user's own GitHub Copilot subscription.
 - Avoid public deployment guidance, account pooling, resale, shared hosted API modes, quota bypass, or anti-abuse evasion.
-- Do not implement image generation, image edit, or vision-specialized API routes in the MVP.
+- Support image generation and editing through the local authenticated Images API; native client image tools and vision-specialized APIs remain separate work.
 
 This boundary should stay explicit in the README and setup flow.
 
@@ -87,7 +87,7 @@ This boundary should stay explicit in the README and setup flow.
 - No custom third-party provider routing in the MVP.
 - No SOCKS5 relay in the first release.
 - No web search tool replacement.
-- No image generation or image editing API.
+- No image gallery, image job queue, or native Codex image-tool integration.
 - No public server mode.
 - No multi-account pool.
 - No model marketplace or quota management layer.

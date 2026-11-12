@@ -101,7 +101,10 @@ test("proxyModels annotates Aerial route support", async () => {
       ? { token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" }
       : { data: [
           { id: "gpt", supported_endpoints: ["/responses", "ws:/responses"], capabilities: { type: "chat" } },
-          { id: "embed", capabilities: { type: "embeddings" } }
+          { id: "embed", capabilities: { type: "embeddings" } },
+          { id: "image-test", supported_endpoints: ["/v1/images/generations", "/v1/images/edits"], capabilities: { type: "image" } },
+          { id: "image-without-endpoints", capabilities: { type: "image" } },
+          { id: "image-edit-only", supported_endpoints: ["/v1/images/edits"] }
         ] })
   });
 
@@ -112,6 +115,9 @@ test("proxyModels annotates Aerial route support", async () => {
   assert.deepEqual(payload.data[0].aerial.notes, []);
   assert.equal(payload.data[1].aerial.supported, false);
   assert.deepEqual(payload.data[1].aerial.notes, ["embeddings_not_implemented"]);
+  assert.deepEqual(payload.data[2].aerial, { supported: true, routes: ["image_generation", "image_edit"], notes: [] });
+  assert.equal(payload.data[3].aerial.supported, false, "image type alone must not invent routes");
+  assert.deepEqual(payload.data[4].aerial.routes, ["image_edit"]);
 });
 
 test("proxyModels does not mark ws-only models as HTTP responses-capable", async () => {

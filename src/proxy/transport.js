@@ -25,14 +25,14 @@ export async function requestWithJsonBody(request, transform) {
   });
 }
 
-export async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride, onResponsePayload } = {}) {
+export async function proxyFetch(path, request, { extraHeaders = {}, bodyOverride, onResponsePayload, observeCache = true } = {}) {
   const signal = request.signal;
   const token = await getCopilotToken({ signal });
   const body = bodyOverride ?? (request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer());
   const accept = request.headers.get("accept") || "application/json";
   const contentType = request.headers.get("content-type") || "application/json";
-  const requestCache = cacheRequestFields(parseJsonBody(body, contentType));
-  if (hasExplicitCacheRequest(requestCache)) logEvent("cache_request", { route: path, ...requestCache });
+  const requestCache = observeCache ? cacheRequestFields(parseJsonBody(body, contentType)) : undefined;
+  if (requestCache && hasExplicitCacheRequest(requestCache)) logEvent("cache_request", { route: path, ...requestCache });
   let headers = upstreamHeaders(token, { accept, "content-type": contentType, ...extraHeaders });
   signal.throwIfAborted();
   let upstream = await upstreamFetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers, body, signal });
@@ -43,7 +43,9 @@ export async function proxyFetch(path, request, { extraHeaders = {}, bodyOverrid
     headers = upstreamHeaders(refreshed, { accept, "content-type": contentType, ...extraHeaders });
     upstream = await upstreamFetch(`${COPILOT_API_ORIGIN}${path}`, { method: request.method, headers, body, signal });
   }
-  if (path === "/models") {
+  // Image bodies can contain large base64 payloads. Keep them out of JSON
+  // cache telemetry so responses stream without a second copy or parser.
+  if (path === "/models" || !observeCache) {
     return new Response(upstream.body, { status: upstream.status, headers: copyResponseHeaders(upstream) });
   }
   return wrapResponseWithCacheObserver(upstream, path, requestCache, {
