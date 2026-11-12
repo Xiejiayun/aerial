@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-11-12
+
+### Added
+
+- Add authenticated `POST /v1/images/generations` and `POST /v1/images/edits` to the local Aerial service, reusing Copilot token refresh, upstream HTTP(S)/SOCKS5 proxy settings, cancellation, backpressure, and the 32 MiB request limit.
+- Preserve generation/edit JSON, multipart image files and masks, image options, and upstream JSON/SSE responses without conversation transformations or image-response cache telemetry copies.
+- Discover image models through `image_generation` and `image_edit` route annotations. Show image route counts in `aerial probe` and `aerial proxy status`; probes remain catalog-only for images, including `--live`.
+- Document generation, native 4K requests when supported upstream, multipart editing, downloads, account requirements, retry behavior, and client integration boundaries.
+
+### Upgrade
+
+- Restart existing background installations with `aerial service install` and `aerial service restart` to load the image routes. Image-only models are used through the Images API, rather than as Codex or Claude Code conversation models.
+
 ## [0.3.8] - 2026-10-26
 
 ### Fixed

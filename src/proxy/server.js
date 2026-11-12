@@ -2,6 +2,7 @@ import http from "node:http";
 import { DEFAULT_HOST, DEFAULT_PORT } from "../shared/constants.js";
 import { loadConfig, validateLocalAuth } from "../shared/config.js";
 import { proxyChatCompletions, proxyMessages, proxyModels, proxyResponses, localCountTokens } from "./index.js";
+import { proxyImageEdits, proxyImageGenerations } from "./images.js";
 import { readGitHubToken } from "../shared/auth.js";
 import { logEvent } from "../shared/log.js";
 
@@ -158,6 +159,8 @@ async function handle(fetchRequest, runtime = {}) {
   if (fetchRequest.method === "POST" && url.pathname === "/v1/messages") return proxyMessages(fetchRequest);
   if (fetchRequest.method === "POST" && url.pathname === "/v1/messages/count_tokens") return localCountTokens(fetchRequest);
   if (fetchRequest.method === "POST" && url.pathname === "/v1/chat/completions") return proxyChatCompletions(fetchRequest);
+  if (fetchRequest.method === "POST" && url.pathname === "/v1/images/generations") return proxyImageGenerations(fetchRequest);
+  if (fetchRequest.method === "POST" && url.pathname === "/v1/images/edits") return proxyImageEdits(fetchRequest);
   return json(404, { error: { type: "not_found", message: `No route for ${fetchRequest.method} ${url.pathname}` } });
 }
 

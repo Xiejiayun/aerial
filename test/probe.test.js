@@ -31,7 +31,8 @@ test("runProbe returns annotated model matrix without live route checks", async 
     : { data: [
         { id: "gpt", supported_endpoints: ["/responses", "/chat/completions", "ws:/responses"], capabilities: { type: "chat", supports: { reasoning_effort: ["none", "low", "max"] } } },
         { id: "claude", supported_endpoints: ["/v1/messages"], capabilities: { type: "chat" } },
-        { id: "embed", capabilities: { type: "embeddings" } }
+        { id: "embed", capabilities: { type: "embeddings" } },
+        { id: "image-test", supported_endpoints: ["/v1/images/generations", "/v1/images/edits"], capabilities: { type: "image" } }
       ] });
 
   const report = await runProbe();
@@ -41,9 +42,14 @@ test("runProbe returns annotated model matrix without live route checks", async 
   assert.equal(report.summary.chat, 1);
   assert.equal(report.summary.websocketResponses, 1);
   assert.equal(report.summary.embeddings, 1);
+  assert.equal(report.summary.imageGenerations, 1);
+  assert.equal(report.summary.imageEdits, 1);
+  assert.equal(report.summary.unsupported, 1);
+  assert.ok(report.notChecked.includes("image-inference"));
   assert.equal(report.routes.length, 0);
   assert.deepEqual(report.models[0].efforts, ["none", "low", "max"]);
   assert.match(formatProbeReport(report), /gpt: routes=responses,responses_websocket,chat efforts=none,low,max/);
+  assert.match(formatProbeReport(report), /image-test: routes=image_generation,image_edit/);
 });
 
 test("runProbe live checks first model for each route", async () => {
@@ -53,7 +59,8 @@ test("runProbe live checks first model for each route", async () => {
     if (String(url).includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
     if (String(url).endsWith("/models")) return Response.json({ data: [
       { id: "gpt", supported_endpoints: ["/responses", "/chat/completions"], capabilities: { type: "chat" } },
-      { id: "claude", supported_endpoints: ["/v1/messages"], capabilities: { type: "chat" } }
+      { id: "claude", supported_endpoints: ["/v1/messages"], capabilities: { type: "chat" } },
+      { id: "image-test", supported_endpoints: ["/v1/images/generations", "/v1/images/edits"] }
     ] });
     const body = parseForwardedJson(init);
     return Response.json({ ok: true, model: body.model, usage: { input_tokens: 1, output_tokens: 1, input_tokens_details: { cached_tokens: 0 } } });
@@ -63,6 +70,21 @@ test("runProbe live checks first model for each route", async () => {
   assert.equal(report.ok, true);
   assert.deepEqual(report.routes.map((route) => route.route), ["responses", "messages", "chat"]);
   assert.equal(report.routes.every((route) => route.ok), true);
+  assert.equal(calls.some(url => url.includes("/images/")), false, "--live must not spend image allowance");
+});
+
+test("an image-only catalog does not trigger image inference during a live probe", async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes("copilot_internal")) return Response.json({ token: "header.eyJleHAiOjk5OTk5OTk5OTl9.sig" });
+    assert.ok(String(url).endsWith("/models"), "image inference must be explicit");
+    return Response.json({ data: [{ id: "image-only", supported_endpoints: ["/v1/images/generations"] }] });
+  };
+  const report = await runProbe({ live: true });
+  assert.equal(report.models[0].supported, true);
+  assert.equal(report.summary.imageGenerations, 1);
+  assert.equal(report.ok, false, "catalog access is not a successful live inference check");
+  assert.deepEqual(report.routes, []);
+  assert.match(report.error.message, /Image routes are catalog-only/);
 });
 
 function failingRoutes(url) {

@@ -34,13 +34,15 @@ async function probeRoute(name, model, handler, payload, headers = {}) {
 }
 
 function summarizeModels(models) {
-  const summary = { responses: 0, messages: 0, chat: 0, websocketResponses: 0, embeddings: 0, unsupported: 0 };
+  const summary = { responses: 0, messages: 0, chat: 0, websocketResponses: 0, imageGenerations: 0, imageEdits: 0, embeddings: 0, unsupported: 0 };
   for (const model of models) {
     const routes = modelRoutes(model);
     if (routes.includes("responses")) summary.responses += 1;
     if (routes.includes("messages")) summary.messages += 1;
     if (routes.includes("chat")) summary.chat += 1;
     if (routes.includes("responses_websocket")) summary.websocketResponses += 1;
+    if (routes.includes("image_generation")) summary.imageGenerations += 1;
+    if (routes.includes("image_edit")) summary.imageEdits += 1;
     if (model.aerial?.notes?.includes("embeddings_not_implemented")) summary.embeddings += 1;
     if (!model.aerial?.supported) summary.unsupported += 1;
   }
@@ -48,7 +50,7 @@ function summarizeModels(models) {
 }
 
 export async function runProbe({ live = false } = {}) {
-  const context = { generatedAt: new Date().toISOString(), live, scope: "proxy-handlers", notChecked: ["running-service", "client-configuration"] };
+  const context = { generatedAt: new Date().toISOString(), live, scope: "proxy-handlers", notChecked: ["running-service", "client-configuration", "image-inference"] };
   let modelsResponse;
   try {
     modelsResponse = await proxyModels(new Request("http://aerial.local/v1/models", { method: "GET" }));
@@ -107,7 +109,7 @@ export async function runProbe({ live = false } = {}) {
 
   report.ok = report.routes.length > 0 && report.routes.every(route => route.ok);
   report.skippedRoutes = ["responses", "messages", "chat"].filter(route => !report.routes.some(check => check.route === route));
-  if (!report.routes.length) report.error = { message: "No inference routes are available to test. Check your Copilot subscription, network and model catalog." };
+  if (!report.routes.length) report.error = { message: "No inference routes are available for this live probe. Image routes are catalog-only. Check your Copilot subscription, network and model catalog." };
   return report;
 }
 
@@ -117,7 +119,8 @@ export function formatProbeReport(report) {
     `Aerial probe (${report.live ? "live" : "models"}): ${report.ok ? "ok" : "FAILED"} at ${report.generatedAt}`,
     "Scope: in-process proxy handlers and upstream API. Check local service/client readiness with aerial status.",
     `Models: ${report.models.length}`,
-    `Routes: responses=${report.summary.responses}, responsesWebSocket=${report.summary.websocketResponses}, messages=${report.summary.messages}, chat=${report.summary.chat}`,
+    `Routes: responses=${report.summary.responses}, responsesWebSocket=${report.summary.websocketResponses}, messages=${report.summary.messages}, chat=${report.summary.chat}, imageGenerations=${report.summary.imageGenerations}, imageEdits=${report.summary.imageEdits}`,
+    "Image routes are catalog-only; even --live does not generate or edit images.",
     `Unsupported: embeddings=${report.summary.embeddings}, noRoute=${report.summary.unsupported}`
   ];
 

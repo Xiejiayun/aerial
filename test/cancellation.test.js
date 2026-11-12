@@ -55,8 +55,11 @@ for (const [route, payload, retry = false] of [
   ["/v1/responses", { model: "gpt-test", input: "hello" }],
   ["/v1/messages", { model: "claude-test", messages: [{ role: "user", content: "hello" }] }],
   ["/v1/chat/completions", { model: "gpt-test", messages: [{ role: "user", content: "hello" }] }],
+  ["/v1/images/generations", { model: "image-test", prompt: "hello" }],
+  ["/v1/images/edits", { model: "image-test", prompt: "hello", images: [] }],
   ["/v1/models", undefined],
-  ["/v1/responses", { model: "gpt-test", input: "hello" }, true]
+  ["/v1/responses", { model: "gpt-test", input: "hello" }, true],
+  ["/v1/images/generations", { model: "image-test", prompt: "hello" }, true]
 ]) {
   test(`disconnect before ${route} response headers closes the real upstream socket${retry ? " on the 401 retry" : ""}`, async t => {
     const received = deferred();

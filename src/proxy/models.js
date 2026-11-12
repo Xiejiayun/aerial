@@ -9,6 +9,8 @@ export function aerialSupportForModel(model) {
   if (endpoints.includes("ws:/responses")) routes.push("responses_websocket");
   if (endpoints.includes("/v1/messages")) routes.push("messages");
   if (endpoints.includes("/chat/completions")) routes.push("chat");
+  if (endpoints.includes("/v1/images/generations")) routes.push("image_generation");
+  if (endpoints.includes("/v1/images/edits")) routes.push("image_edit");
   if (model.capabilities?.type === "embeddings") notes.push("embeddings_not_implemented");
   if (routes.length === 0 && notes.length === 0) notes.push("no_supported_endpoint_advertised");
   return {
