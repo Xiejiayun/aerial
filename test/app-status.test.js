@@ -43,6 +43,24 @@ test("foreground healthy: ok=true and service install goes to hints not nextStep
   assert.ok(s.hints.some((h) => /service install/.test(h) && /foreground/.test(h)), `service install must be in hints; got ${JSON.stringify(s.hints)}`);
 });
 
+test("image-only readiness is opt-in and does not hide gateway failures", () => {
+  const setup = makeSetup({ codexState: "missing" });
+  const service = makeService({ loaded: true, healthAerial: true });
+  const legacy = computeAppStatus(setup, service);
+  assert.equal(legacy.ok, false);
+  assert.equal(legacy.gatewayReady, true);
+  assert.equal(legacy.clientReady, false);
+  const api = computeAppStatus(setup, service, { gateway: true });
+  assert.equal(api.ok, true);
+  assert.deepEqual(api.nextSteps, []);
+  for (const [state, health] of [[makeSetup({ githubSource: "missing" }), service], [makeSetup({ apiKeyExists: false }), service], [setup, makeService()]]) {
+    const report = computeAppStatus(state, health, { gateway: true });
+    assert.equal(report.ok, false);
+    assert.ok(report.nextSteps.length);
+    assert.ok(!report.nextSteps.some(step => step.includes("aerial setup")));
+  }
+});
+
 test("no foreground, no service: ok=false and service install IS in nextSteps", () => {
   const s = computeAppStatus(makeSetup(), makeService({ loaded: false, healthAerial: false }));
   assert.equal(s.ok, false);
