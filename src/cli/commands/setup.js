@@ -15,7 +15,7 @@ import { requiredArgValue, claudeApiKeyHelper, codexAuthCommand } from "../helpe
 import { printRestoreResults, printSetupCompletionSummary } from "../output.js";
 import { localBaseUrl } from "../../shared/urls.js";
 import { verifySetupReadiness } from "../setup-readiness.js";
-import { CLIENTS } from "../../setup/clients.js";
+import { CLIENTS, validateClientContent } from "../../setup/clients.js";
 import { assertClaudeEnvironment } from "../../setup/claude-conflicts.js";
 
 async function selectSetupOptions(target, route, args) {
@@ -94,8 +94,7 @@ export async function runSetupCli(subcommand, rest) {
     if (!isCodex) assertClaudeEnvironment(loadConfig());
     const client = CLIENTS[subcommand];
     if (fs.existsSync(client.file())) {
-      try { client.validateBackup(fs.readFileSync(client.file())); }
-      catch (error) { throw new Error(error.message.replace("Restore aborted: backup", "Setup aborted: client configuration")); }
+      validateClientContent(client, fs.readFileSync(client.file()), "Setup aborted: client configuration");
     }
     const options = await selectSetupOptions(cli, route, rest);
     let readiness = { verified: false };

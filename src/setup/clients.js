@@ -4,7 +4,7 @@ import { parse as parseToml } from "smol-toml";
 import { ensureApiKey, loadConfig, saveConfig } from "../shared/config.js";
 import { logEvent } from "../shared/log.js";
 import { assertValidCodexEffort, assertValidEffort, normalizeCodexEffort } from "../shared/effort.js";
-import { backupIfExists, backupPathsFor } from "./restore.js";
+import { backupIfExists, backupPathsFor } from "./backups.js";
 import { setTomlRootString, setTomlValue, upsertTomlSection, removeTomlSection } from "./toml.js";
 import { writeClientTakeover } from "./takeover.js";
 import { codexConfigFile, claudeSettingsFile } from "../shared/paths.js";
@@ -207,19 +207,11 @@ export function claudeStatus({ env = process.env } = {}) {
       ? "clear the reported shell environment overrides, then run aerial setup claude" : "run aerial setup claude" } : {}) };
 }
 
-function validateTomlBackup(content) {
+export function validateClientContent(client, content, subject) {
   try {
-    parseToml(content.toString("utf8"));
-  } catch (err) {
-    throw new Error(`Restore aborted: backup is not valid TOML (${err.message}). Live file left unchanged.`);
-  }
-}
-
-function validateJsonBackup(content) {
-  try {
-    JSON.parse(content.toString("utf8"));
-  } catch (err) {
-    throw new Error(`Restore aborted: backup is not valid JSON (${err.message}). Live file left unchanged.`);
+    client.parse(content.toString("utf8"));
+  } catch (error) {
+    throw new Error(`${subject} is not valid ${client.format} (${error.message}). Live file left unchanged.`);
   }
 }
 
@@ -228,12 +220,14 @@ export const CLIENTS = Object.freeze({
     target: "codex",
     file: codexConfigFile,
     status: codexStatus,
-    validateBackup: validateTomlBackup
+    format: "TOML",
+    parse: parseToml
   }),
   claude: Object.freeze({
     target: "claude",
     file: claudeSettingsFile,
     status: claudeStatus,
-    validateBackup: validateJsonBackup
+    format: "JSON",
+    parse: JSON.parse
   })
 });

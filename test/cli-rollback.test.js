@@ -14,6 +14,21 @@ function runCli(args, home, extraEnv = {}) {
   return runCliProcess(args, { env });
 }
 
+for (const [target, filename, format] of [["codex", "config.toml", "TOML"], ["claude", "settings.json", "JSON"]]) {
+  test(`setup reports malformed live ${format} before modifying client files`, () => {
+    const home = mkHome("invalid-client");
+    const dir = path.join(home, "." + target);
+    fs.mkdirSync(dir);
+    const file = path.join(dir, filename);
+    fs.writeFileSync(file, "[broken");
+    const result = runCli(["setup", target, "--model", "demo", "--configure-only"], home);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp("Setup aborted: client configuration is not valid " + format));
+    assert.equal(fs.readFileSync(file, "utf8"), "[broken");
+    assert.deepEqual(fs.readdirSync(dir), [filename]);
+  });
+}
+
 test("aerial setup status --json exits 0 and emits parseable schema", () => {
   const home = mkHome("status-json");
   const r = runCli(["setup", "status", "--json"], home);
