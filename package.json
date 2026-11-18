@@ -1,7 +1,7 @@
 {
   "name": "@jiayunxie/aerial",
   "version": "0.3.9",
-  "description": "Local GitHub Copilot proxy for coding CLIs and image APIs with HTTP(S)/SOCKS5 upstream proxy support.",
+  "description": "Local GitHub Copilot gateway for coding CLIs and image APIs.",
   "type": "module",
   "private": false,
   "homepage": "https://github.com/Xiejiayun/aerial#readme",
@@ -18,11 +18,7 @@
     "claude-code",
     "image-generation",
     "gpt-image",
-    "local-proxy",
-    "upstream-proxy",
-    "socks5",
-    "shadowsocks",
-    "restricted-network"
+    "local-proxy"
   ],
   "files": [
     "src",
@@ -49,7 +45,6 @@
   },
   "dependencies": {
     "smol-toml": "^1.9.0",
-    "socks": "^2.8.10",
     "toml-eslint-parser": "^0.10.1",
     "undici": "^7.30.1"
   }

@@ -5,7 +5,6 @@ import { runConfigCli } from "./commands/config.js";
 import { runTeardownCli } from "./commands/teardown.js";
 import { runKeyCli } from "./commands/key.js";
 import { runLoginCli } from "./commands/login.js";
-import { runProxyCli } from "./commands/proxy.js";
 import { runServiceCli } from "./commands/service.js";
 import { runSetupCli } from "./commands/setup.js";
 import { runStartCli } from "./commands/start.js";
@@ -28,7 +27,6 @@ Usage:
   aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>] [--configure-only] [--verbose]
   aerial service install|start|stop|restart|uninstall
   aerial status [--json]
-  aerial proxy status|enable|disable [--json]
 
 Diagnostics and rollback:
   aerial setup status [--json]
@@ -71,11 +69,6 @@ async function main() {
   if (command === "status") {
     const status = await appStatus({ json: args.includes("--json") });
     process.exitCode = status.ok ? 0 : 1;
-    return;
-  }
-
-  if (command === "proxy") {
-    await runProxyCli(subcommand, rest);
     return;
   }
 
@@ -138,8 +131,7 @@ async function main() {
 
 main()
   .then(() => {
-    // One-shot commands may leave keep-alive sockets (undici pools), a SOCKS5
-    // bridge, or stdin open, which keeps the event loop alive and hangs the CLI
+    // One-shot commands may leave keep-alive sockets or stdin open, which keeps the event loop alive and hangs the CLI
     // after the work is done. `start` is the only long-running command, so for
     // everything else exit explicitly once main() resolves.
     if (!longRunning) process.exit(process.exitCode ?? 0);

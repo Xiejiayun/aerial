@@ -3,7 +3,6 @@ import { CONFIG_VERSION, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_VERSIONS } from "./
 import { apiKeyPath, configPath, readJsonIfExists, writeJsonPrivate, writePrivateFile } from "./paths.js";
 import { hashApiKey, randomApiKey, verifyApiKey } from "./crypto.js";
 import { DEFAULT_EFFORT, normalizeEffort } from "./effort.js";
-import { PROXY_MODE_AUTO, normalizeProxyEndpoint, normalizeProxyMode } from "../upstream/proxy-config.js";
 
 export function defaultConfig() {
   return {
@@ -16,9 +15,6 @@ export function defaultConfig() {
     logLevel: "info",
     promptCacheRetention: "in_memory",
     promptCacheKey: "auto",
-    upstreamProxyMode: "disabled",
-    upstreamProxyEndpoint: undefined,
-    upstreamProxySource: undefined,
     versions: DEFAULT_VERSIONS
   };
 }
@@ -37,31 +33,29 @@ export function readConfigFileStatus() {
   }
 }
 
+export function assertDirectConnection(stored = readConfigFileStatus().value) {
+  if (process.env.AERIAL_UPSTREAM_PROXY?.trim() || stored?.upstreamProxyMode === "auto") {
+    throw new Error(`Built-in upstream proxy support was removed. Before using a direct connection, unset AERIAL_UPSTREAM_PROXY and remove upstreamProxyMode, upstreamProxyEndpoint and upstreamProxySource from ${configPath()}. No upstream request was sent.`);
+  }
+}
+
 export function loadConfig() {
   const status = readConfigFileStatus();
-  const loaded = status.ok ? objectConfig(status.value) : {};
+  const stored = status.ok ? objectConfig(status.value) : {};
+  assertDirectConnection(stored);
+  const { upstreamProxyMode, upstreamProxyEndpoint, upstreamProxySource, ...loaded } = stored;
   const envRetention = process.env.AERIAL_PROMPT_CACHE_RETENTION;
   const envCacheKey = process.env.AERIAL_PROMPT_CACHE_KEY;
   const defaults = defaultConfig();
   const promptCacheRetention = envRetention === undefined ? (loaded.promptCacheRetention ?? defaults.promptCacheRetention) : envRetention;
   const promptCacheKey = envCacheKey === undefined ? (loaded.promptCacheKey ?? defaults.promptCacheKey) : envCacheKey;
   const defaultEffort = normalizeEffort(loaded.defaultEffort) || DEFAULT_EFFORT;
-  const loadedProxyMode = normalizeProxyMode(loaded.upstreamProxyMode);
-  const loadedProxyEndpoint = normalizeProxyEndpoint(loaded.upstreamProxyEndpoint);
-  const upstreamProxyEndpoint = loadedProxyMode === PROXY_MODE_AUTO ? loadedProxyEndpoint : undefined;
-  const upstreamProxyMode = upstreamProxyEndpoint ? PROXY_MODE_AUTO : "disabled";
-  const upstreamProxySource = upstreamProxyEndpoint && typeof loaded.upstreamProxySource === "string"
-    ? loaded.upstreamProxySource
-    : undefined;
   return {
     ...defaults,
     ...loaded,
     defaultEffort,
     promptCacheRetention,
     promptCacheKey,
-    upstreamProxyMode,
-    upstreamProxyEndpoint,
-    upstreamProxySource,
     versions: { ...DEFAULT_VERSIONS, ...(loaded.versions || {}) }
   };
 }

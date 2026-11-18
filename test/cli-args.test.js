@@ -18,7 +18,7 @@ test("help on every mutating command exits without touching configuration", () =
     ["teardown"], ["service", "install"], ["service", "start"],
     ["service", "stop"], ["service", "restart"], ["service", "uninstall"],
     ["key", "generate"], ["key", "print"], ["login", "--force"],
-    ["proxy", "enable"], ["proxy", "disable"], ["start"], ["update"], ["upgrade"]
+    ["start"], ["update"], ["upgrade"]
   ]) {
     const result = runCli([...command, "--help"], { home });
     assert.equal(result.status, 0, `${command.join(" ")}: ${result.stderr}`);
@@ -39,7 +39,7 @@ test("invalid options, extra arguments and missing values fail before dispatch",
   ]) assert.throws(() => validateCliArgs(args), Error, args.join(" "));
   assert.deepEqual(validateCliArgs(["service", "uninstall", "-h"]), { help: true });
   assert.deepEqual(validateCliArgs(["setup", "restore", "all", "--latest"]), { help: false });
-  assert.deepEqual(validateCliArgs(["proxy", "--json"]), { help: false });
+  assert.throws(() => validateCliArgs(["proxy", "--json"]), /Unknown command/);
   assert.deepEqual(validateCliArgs(["update", "--check"]), { help: false });
   assert.deepEqual(validateCliArgs(["upgrade"]), { help: false });
 });

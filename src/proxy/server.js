@@ -45,7 +45,7 @@ function upstreamAccessFailure(status) {
   const denied = status === 403;
   return json(status, { error: {
     type: denied ? "permission_error" : "authentication_error",
-    message: denied ? "Copilot access denied. Check your subscription and organization/model permissions. Run aerial proxy status to check the network route."
+    message: denied ? "Copilot access denied. Check your subscription and organization/model permissions."
       : "GitHub login was rejected by Copilot. Run aerial login --force.",
     aerial: { status: denied ? "upstream_access_denied" : "upstream_auth_failed", upstream_status: status }
   } });
