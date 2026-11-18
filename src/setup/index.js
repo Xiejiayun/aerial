@@ -2,10 +2,11 @@ import fs from "node:fs";
 import { loadConfig } from "../shared/config.js";
 import { apiKeyPath, githubTokenPath } from "../shared/paths.js";
 import { gitHubTokenSource } from "../shared/auth.js";
-import { CLIENTS, setupCodex, setupClaude, codexStatus, claudeStatus } from "./clients.js";
+import { CLIENTS } from "./clients.js";
 
 export { setupCodex, setupClaude, codexStatus, claudeStatus } from "./clients.js";
-export { findLatestBackup, restoreClient, restoreAllClients, detachAllClients } from "./restore.js";
+export { findLatestBackup } from "./backups.js";
+export { restoreClient, restoreAllClients, detachAllClients } from "./restore.js";
 
 export function setupStatus() {
   const config = loadConfig();

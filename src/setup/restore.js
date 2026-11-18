@@ -1,48 +1,10 @@
 import fs from "node:fs";
-import path from "node:path";
+import { backupPathsFor, findLatestBackup } from "./backups.js";
 import { logEvent } from "../shared/log.js";
 import { atomicWriteFile } from "../shared/utils.js";
 import { writePrivateFile } from "../shared/paths.js";
-import { CLIENTS } from "./clients.js";
+import { CLIENTS, validateClientContent } from "./clients.js";
 import { detachClientTakeover } from "./takeover.js";
-
-const BACKUP_PREFIX = ".aerial-backup-";
-const ISO_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
-
-export function backupIfExists(file) {
-  if (!fs.existsSync(file)) return undefined;
-  let stamp = Date.now();
-  let backup;
-  do { backup = `${file}.aerial-backup-${new Date(stamp++).toISOString().replace(/[:.]/g, "-")}`; } while (fs.existsSync(backup));
-  writePrivateFile(backup, fs.readFileSync(file));
-  return backup;
-}
-
-function listBackups(file) {
-  const dir = path.dirname(file);
-  const base = path.basename(file);
-  if (!fs.existsSync(dir)) return [];
-  const prefix = `${base}${BACKUP_PREFIX}`;
-  const entries = fs.readdirSync(dir);
-  const matches = [];
-  for (const entry of entries) {
-    if (!entry.startsWith(prefix)) continue;
-    const stamp = entry.slice(prefix.length);
-    if (!ISO_STAMP_RE.test(stamp)) continue;
-    matches.push({ name: entry, path: path.join(dir, entry), stamp });
-  }
-  matches.sort((a, b) => (a.stamp < b.stamp ? -1 : a.stamp > b.stamp ? 1 : 0));
-  return matches;
-}
-
-export function findLatestBackup(file) {
-  const all = listBackups(file);
-  return all.length ? all[all.length - 1] : undefined;
-}
-
-export function backupPathsFor(file) {
-  return listBackups(file).map((entry) => entry.path);
-}
 
 const PRE_RESTORE_PREFIX = ".aerial-pre-restore-";
 
@@ -63,10 +25,6 @@ function resolveWritePath(file) {
   } catch {
     return file;
   }
-}
-
-function validateBackupContent(target, content) {
-  clientDescriptor(target).validateBackup(content);
 }
 
 function resolveRestoreMode(writePath, backupPath, targetExisted) {
@@ -94,7 +52,7 @@ export function restoreClient(target, { now = () => new Date() } = {}) {
   } catch (err) {
     throw new Error(`Restore failed: cannot read backup ${latest.path}: ${err.message}`);
   }
-  validateBackupContent(target, backupContent);
+  validateClientContent(clientDescriptor(target), backupContent, "Restore aborted: backup");
   const targetExisted = fs.existsSync(writePath);
   const mode = resolveRestoreMode(writePath, latest.path, targetExisted);
   let snapshot;
