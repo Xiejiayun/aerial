@@ -1,7 +1,6 @@
 import { WebSocket } from "undici";
 import { COPILOT_API_ORIGIN } from "../shared/constants.js";
-import { upstreamDispatcher } from "../upstream/fetch.js";
-import { waitForPromise } from "../shared/abort.js";
+import { assertDirectConnection } from "../shared/config.js";
 
 const TERMINAL_RESPONSE_TYPES = new Set([
   "response.completed",
@@ -49,10 +48,9 @@ function isTerminalMessage(message) {
 
 async function openWebSocket(url, headers, signal) {
   signal?.throwIfAborted();
-  const dispatcher = await waitForPromise(upstreamDispatcher(), signal);
-  signal?.throwIfAborted();
+  assertDirectConnection();
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, dispatcher ? { headers, dispatcher } : { headers });
+    const ws = new WebSocket(url, { headers });
     const cleanup = () => {
       ws.removeEventListener("open", onOpen);
       ws.removeEventListener("error", onError);

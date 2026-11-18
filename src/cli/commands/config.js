@@ -2,7 +2,6 @@ import { defaultConfig, loadConfig, saveConfig } from "../../shared/config.js";
 import { configPath } from "../../shared/paths.js";
 import { assertValidEffort } from "../../shared/effort.js";
 import { parseConfigHost, parseConfigPort } from "../helpers.js";
-import { redactProxyEndpoint, redactProxySource } from "../../upstream/proxy-config.js";
 
 export function runConfigCli(subcommand, rest) {
   if (subcommand === "reset") {
@@ -36,9 +35,5 @@ export function runConfigCli(subcommand, rest) {
     saveConfig(config);
     return;
   }
-  console.log(JSON.stringify({
-    ...config,
-    upstreamProxyEndpoint: redactProxyEndpoint(config.upstreamProxyEndpoint),
-    upstreamProxySource: redactProxySource(config.upstreamProxySource)
-  }, null, 2));
+  console.log(JSON.stringify(config, null, 2));
 }

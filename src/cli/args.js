@@ -25,9 +25,6 @@ const commands = {
   service: Object.fromEntries(["install", "start", "stop", "restart", "uninstall", "status"].map(action => [
     action, spec(`service ${action}${action === "status" ? " [--json]" : ""}`, { flags: action === "status" ? ["--json"] : [] })
   ])),
-  proxy: Object.fromEntries(["", "status", "enable", "disable"].map(action => [
-    action, spec(`proxy ${action || "status"} [--json]`, { flags: ["--json"] })
-  ])),
   config: {
     "": spec("config"),
     reset: spec("config reset"),

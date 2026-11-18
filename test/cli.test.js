@@ -123,16 +123,16 @@ test("config reset repairs an invalid config.json", () => {
   assert.equal(config.port, 18181);
 });
 
-test("config output redacts proxy credentials without changing stored configuration", () => {
+test("legacy proxy settings stop configuration use without exposing credentials or modifying the file", () => {
   const { configDir, env } = configEnv("cli-config-redaction");
   const endpoint = "http://review-user:review-password@127.0.0.1:8080";
   const file = path.join(configDir, "config.json");
   const original = JSON.stringify({ upstreamProxyMode: "auto", upstreamProxyEndpoint: endpoint, upstreamProxySource: `manual (${endpoint})` });
   fs.writeFileSync(file, original);
   const result = runCli(["config"], { env });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 1);
   assert.doesNotMatch(result.stdout + result.stderr, /review-user|review-password/);
-  assert.equal(JSON.parse(result.stdout).upstreamProxyEndpoint, "http://redacted@127.0.0.1:8080");
+  assert.match(result.stderr, /Before using a direct connection/);
   assert.equal(fs.readFileSync(file, "utf8"), original);
 });
 
@@ -227,7 +227,7 @@ test("aerial --help lists separate Codex and Claude effort vocabularies", () => 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /setup codex.*--effort <minimal\|low\|medium\|high\|xhigh\|max\|ultra>/);
   assert.match(result.stdout, /setup claude.*--effort <low\|medium\|high\|xhigh\|max\|ultracode>/);
-  assert.match(result.stdout, /proxy status\|enable\|disable/);
+  assert.doesNotMatch(result.stdout, /aerial proxy status/);
   assert.match(result.stdout, /aerial update \[--check\]/);
 });
 

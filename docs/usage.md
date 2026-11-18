@@ -31,7 +31,7 @@ aerial upgrade
 
 `--check` prints the installed version and the configured npm registry's latest stable version without installing anything. A successful check exits zero whether or not an update is available. `aerial update` installs the newer release, verifies the installed version, and skips installation when already current or ahead of that registry's latest release. Failed registry checks or installs exit non-zero.
 
-Updating requires an npm global installation managed by the active npm. Source checkouts, linked packages, local dependencies, and temporary `npx` copies can check for updates, but must be upgraded through their original installation method. The command uses npm's user configuration and proxy settings; Aerial's Copilot upstream proxy setting does not configure npm. npm's engine check prevents installing a release incompatible with your Node.js version.
+Updating requires an npm global installation managed by the active npm. Source checkouts, linked packages, local dependencies, and temporary `npx` copies can check for updates, but must be upgraded through their original installation method. The command uses npm's user configuration and proxy settings. npm's engine check prevents installing a release incompatible with your Node.js version.
 
 Version checks prefer fresh registry metadata. Registry mirrors can still lag behind the official npm site, so the result describes the latest version served by your configured registry.
 
@@ -66,25 +66,9 @@ aerial login
 
 Open the printed URL, enter the user code, and authorize the GitHub OAuth device flow. Aerial saves the GitHub access token locally and exchanges it for short-lived Copilot JWTs when proxy requests arrive.
 
-## 3.5 Upstream Proxy Mode
+## Upgrading from outbound proxy mode
 
-```bash
-aerial proxy status
-aerial proxy enable
-aerial proxy disable
-```
-
-Aerial's local server always listens on `127.0.0.1:18181`, but its own GitHub and Copilot upstream traffic can optionally go through a local HTTP(S) or SOCKS5 proxy. This helps in restricted regions where direct Copilot egress may return a smaller model catalog or omit Claude-compatible `/v1/messages` routes.
-
-`aerial proxy enable` auto-discovers candidates from `AERIAL_UPSTREAM_PROXY`, standard proxy environment variables, macOS `scutil --proxy`, PAC files, common local SOCKS5 ports such as `1086` and `1080`, and common local HTTP proxy ports such as `1087` and `7890`. It validates that a candidate can reach GitHub and return GitHub's `/rate_limit` JSON before saving `upstreamProxyMode=auto` and the selected endpoint in Aerial's config. If no candidate works, it exits non-zero and leaves the previous config unchanged. PAC files are read with a 1 MiB limit.
-
-SOCKS5 endpoints are first-class candidates. When Aerial selects `socks5://127.0.0.1:1086` from a Shadowsocks PAC file, the config stores that original endpoint; at runtime Aerial starts a loopback-only HTTP CONNECT bridge internally so GitHub/Copilot `fetch` and WebSocket traffic can use the same proxy dispatcher path as HTTP(S) proxies. Users do not need to discover or configure a separate HTTP bridge port.
-
-For explicit overrides, `AERIAL_UPSTREAM_PROXY` accepts bare `http://`, `https://`, `socks://`, `socks5://`, and `socks5h://` endpoints. Aerial intentionally ignores proxy URLs with path, query, or hash components, because upstream proxy dispatchers expect a host-level proxy endpoint.
-
-`aerial proxy status` prints the active mode, the direct or proxied egress IP/region, and the current Copilot route counts from `aerial probe` (`responses`, `responsesWebSocket`, `messages`, `chat`, `imageGenerations`, and `imageEdits`). In disabled mode the endpoint is `direct`; in enabled mode the endpoint is the selected local proxy plus its discovery source. Use `--json` for the stable `aerial.proxy-status.v1` shape. If a proxy URL contains userinfo, status and enable diagnostics redact it before printing.
-
-`aerial proxy disable` switches back to direct upstream traffic and clears the saved proxy endpoint. Running Aerial processes read this config for each upstream request, so no service restart is required for proxy enable/disable.
+Aerial no longer discovers or manages outbound proxies. If you enabled one in an earlier version, GitHub/Copilot requests are blocked rather than silently switching routes. To accept direct access, unset `AERIAL_UPSTREAM_PROXY` and remove `upstreamProxyMode`, `upstreamProxyEndpoint`, and `upstreamProxySource` from the Aerial `config.json` named in the error. Keep your other settings. Restart the service after upgrading. If direct access is not suitable, stay on the previous release.
 
 ## 4. Start Server
 
@@ -150,14 +134,11 @@ Explicit efforts remain client-controlled and are only adjusted to advertised up
 
 ```bash
 aerial status
-aerial proxy status
 aerial doctor
 aerial probe
 ```
 
 `aerial status` is the top-level daily check. It combines setup state, local auth files, service state, and health into one short report. Use `--json` for a machine-readable `aerial.status.v1` document.
-
-`aerial proxy status` is the network-path check. Use it when Claude models disappear, when `/v1/messages` is `0`, or when you want to confirm whether direct or proxied egress is being used.
 
 `aerial status --json` top-level fields: `schema`, `ok`, `setup`, `service`, `nextSteps`, `hints`. `nextSteps` lists actions you must take to reach `ok: true` (login / setup / service install / recover local key). `hints` lists non-blocking advisories that you should still pay attention to, such as `AERIAL_GITHUB_TOKEN` being set for the current shell only (the background service may not see it after reboot). Example:
 
@@ -381,7 +362,7 @@ If the log directory cannot be created, the writer is disabled for the lifetime 
 aerial probe
 ```
 
-This prints the current model matrix returned by Copilot plus Aerial's route annotations. It is the fastest way to see which models currently expose `responses`, `messages`, `chat`, `image_generation`, or `image_edit` routes. Image models count toward `summary.imageGenerations` and `summary.imageEdits` in JSON reports and the corresponding route counts in `aerial proxy status`.
+This prints the current model matrix returned by Copilot plus Aerial's route annotations. It is the fastest way to see which models currently expose `responses`, `messages`, `chat`, `image_generation`, or `image_edit` routes. Image models count toward `summary.imageGenerations` and `summary.imageEdits` in JSON reports.
 
 For a low-cost end-to-end check:
 
@@ -395,7 +376,7 @@ For streaming `/v1/responses` requests, Aerial defaults to HTTP upstream Respons
 
 ## 8.1 Generate And Edit Images
 
-Image clients use the same local service, GitHub login, upstream proxy settings, and Aerial API key as conversation clients. Start Aerial with `aerial service install` or `aerial start`, then run `aerial probe` to discover available image model IDs. Existing services need `aerial service install` and `aerial service restart` after upgrading. You do not need to configure Codex/Claude or provide an OpenAI API key to use these endpoints.
+Image clients use the same local service, GitHub login and Aerial API key as conversation clients. Start Aerial with `aerial service install` or `aerial start`, then run `aerial probe` to discover available image model IDs. Existing services need `aerial service install` and `aerial service restart` after upgrading. You do not need to configure Codex/Claude or provide an OpenAI API key to use these endpoints.
 
 | Local endpoint | Advertised Copilot endpoint | Aerial model route |
 | --- | --- | --- |
