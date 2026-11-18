@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.1]
+
+### Breaking change: outbound proxies
+
+- Aerial no longer discovers PAC or system proxies, routes upstream traffic through HTTP/SOCKS proxies, or provides the `aerial proxy` command. The local gateway for Codex, Claude Code and the Images API remains available.
+- If you depend on an outbound proxy, stay on `0.3.9` until you have verified direct access to GitHub and Copilot. With an active legacy proxy setting, Aerial blocks upstream requests rather than silently switching your traffic to a direct connection.
+- To migrate, back up your Aerial configuration, unset `AERIAL_UPSTREAM_PROXY` and remove only `upstreamProxyMode`, `upstreamProxyEndpoint` and `upstreamProxySource` from the `config.json` named in the error. Keep your credentials and other settings. For an existing managed service, run `aerial service install` and then `aerial service restart` after upgrading.
+- To roll back, run `npm install -g @jiayunxie/aerial@0.3.9`, restore your previous proxy settings, and repeat the service refresh if applicable.
+
+### CLI
+
+- Use `aerial status --gateway` or `aerial doctor --gateway` to check the local gateway without configuring a coding client. In JSON, `gatewayReady` and `clientReady` distinguish the two checks. Without `--gateway`, the existing exit-code behavior is unchanged.
+- Help, version and key lookup now load only the code they need, reducing CLI startup time.
+
 ## [0.3.9] - 2026-11-12
 
 ### Added
