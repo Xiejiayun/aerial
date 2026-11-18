@@ -127,7 +127,17 @@ post-publish smoke passes.
 2. On clean, synchronized `main`, run
    `npm run release:preflight -- --expected-version <version>`. This local
    `new-release` mode refuses an existing npm version or tag even when its
-   `gitHead` matches.
+   `gitHead` matches. If your machine cannot reach the official registry, run
+   the same read-only gate on GitHub (no tag, npm publish or OIDC permission):
+
+   ```bash
+   gh workflow run release-check.yml --ref main -f expected_version=<version>
+   ```
+
+   Wait for **Release preflight (read-only)** to succeed and verify that the
+   commit printed by the gate is still the tip of `main`. A green check is
+   evidence for that commit, not approval to publish. Do not dispatch
+   `release.yml` for a dry run: it can create a tag and publish.
 3. Create an annotated tag and push it:
    `git tag -a v<version> -m "Aerial v<version>" && git push origin v<version>`.
 4. The pushed `v*` tag triggers `release.yml`. Three jobs run in this order:

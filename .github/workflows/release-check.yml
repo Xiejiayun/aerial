@@ -1,0 +1,38 @@
+name: Release preflight (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Stable version to check on main (does not publish)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = refs/heads/main
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Verify the selected commit, release tags and official registry
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          NPM_CONFIG_PREFER_ONLINE: 'true'
+        run: |
+          git fetch --tags origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          npm run release:preflight -- --expected-version "$EXPECTED_VERSION"
