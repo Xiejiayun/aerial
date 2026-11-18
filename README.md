@@ -158,4 +158,4 @@ Advanced service lifecycle commands are documented in `docs/usage.md`.
 - Linux service management is not built in yet; run `aerial start` or use your own init system.
 - Copilot inference routes are an observed compatibility target and may change upstream.
 
-More details: `docs/usage.md`.
+See [usage](docs/usage.md) for CLI and API examples. For repository work, start with the [contributor map](https://github.com/Xiejiayun/aerial/blob/main/AGENTS.md).

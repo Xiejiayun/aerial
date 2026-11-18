@@ -11,7 +11,7 @@ is the authoritative source for who-does-what during a release.
 - Covered: the two release paths — stable (tag-triggered) and manual dispatch
   (escape hatch).
 - Not covered: Aerial feature development workflow or internal architecture.
-  See `docs/development-design.md` for those.
+  See the [contributor map](../AGENTS.md) for the current implementation and development checks.
 
 ## §2 Prerequisites (one-time setup)
 

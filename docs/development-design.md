@@ -1,5 +1,7 @@
 # Aerial: Local Copilot Proxy for Coding CLIs
 
+> Historical design proposal. For the implemented architecture and contributor commands, see the [contributor map](../AGENTS.md); for shipped behavior, see [usage](usage.md). Alternatives and future phases below are not current requirements.
+
 ## Summary
 
 **Aerial** is a proposed lightweight local proxy that lets one user connect their own GitHub Copilot subscription to local coding CLIs.
