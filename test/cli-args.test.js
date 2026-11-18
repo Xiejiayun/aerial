@@ -3,7 +3,19 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { validateCliArgs } from "../src/cli/args.js";
-import { mkHome, runCli } from "./helpers.js";
+import { spawnSync } from "node:child_process";
+import { cliPath, mkHome, runCli } from "./helpers.js";
+
+test("lightweight commands run without loading transport or TOML packages", () => {
+  const home = mkHome("lightweight");
+  const loader = 'export function resolve(name, context, next) { if (["undici", "smol-toml", "toml-eslint-parser"].includes(name)) throw Error("heavy import: " + name); return next(name, context); }';
+  const preload = 'import { register } from "node:module"; register(' + JSON.stringify('data:text/javascript,' + encodeURIComponent(loader)) + ');';
+  for (const command of [["--help"], ["--version"], ["key", "print"]]) {
+    const result = spawnSync(process.execPath, ["--import", "data:text/javascript," + encodeURIComponent(preload), cliPath, "--config-dir", home, ...command], { encoding: "utf8", env: { ...process.env, AERIAL_API_KEY: "", AERIAL_UPSTREAM_PROXY: "" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.trim());
+  }
+});
 
 test("help on every mutating command exits without touching configuration", () => {
   const home = mkHome("help-no-side-effects");

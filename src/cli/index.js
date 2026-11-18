@@ -1,22 +1,14 @@
 #!/usr/bin/env node
 import { printVersion } from "./helpers.js";
-import { appStatus } from "./commands/status.js";
-import { runConfigCli } from "./commands/config.js";
-import { runTeardownCli } from "./commands/teardown.js";
-import { runKeyCli } from "./commands/key.js";
-import { runLoginCli } from "./commands/login.js";
-import { runServiceCli } from "./commands/service.js";
-import { runSetupCli } from "./commands/setup.js";
-import { runStartCli } from "./commands/start.js";
-import { runUpdateCli } from "./commands/update.js";
-import { doctor, renderDoctorText } from "./doctor.js";
-import { formatProbeReport, runProbe } from "./probe.js";
 import { parseGlobalArgs, validateCliArgs } from "./args.js";
 import { setStderrLogging } from "../shared/log.js";
 
-function printHelp(rawArgs = []) {
+async function printHelp(rawArgs = []) {
   const command = rawArgs[0] === "--config-dir" ? rawArgs[2] : rawArgs[0];
-  if (command === "update" || command === "upgrade") return runUpdateCli(["--help"]);
+  if (command === "update" || command === "upgrade") {
+    const { runUpdateCli } = await import("./commands/update.js");
+    return runUpdateCli(["--help"]);
+  }
   console.log(`Aerial local Copilot proxy
 
 Usage:
@@ -62,49 +54,55 @@ async function main() {
   setStderrLogging(command === "start" || process.env.AERIAL_DEBUG === "1");
 
   if (command === "update" || command === "upgrade") {
+    const { runUpdateCli } = await import("./commands/update.js");
     runUpdateCli(args.slice(1));
     return;
   }
 
   if (command === "status") {
+    const { appStatus } = await import("./commands/status.js");
     const status = await appStatus({ json: args.includes("--json"), gateway: args.includes("--gateway") });
     process.exitCode = status.ok ? 0 : 1;
     return;
   }
 
   if (command === "login") {
+    const { runLoginCli } = await import("./commands/login.js");
     await runLoginCli(args.slice(1));
     return;
   }
 
   if (command === "key") {
-    if (runKeyCli(subcommand)) return;
+    const { runKeyCli } = await import("./commands/key.js");
+    return runKeyCli(subcommand);
   }
 
   if (command === "start") {
+    const { runStartCli } = await import("./commands/start.js");
     runStartCli(args);
     longRunning = true;
     return;
   }
 
   if (command === "setup") {
-    if (["codex", "claude", "all", "status", "restore"].includes(subcommand)) {
-      await runSetupCli(subcommand, rest);
-      return;
-    }
+    const { runSetupCli } = await import("./commands/setup.js");
+    return runSetupCli(subcommand, rest);
   }
 
   if (command === "teardown") {
+    const { runTeardownCli } = await import("./commands/teardown.js");
     runTeardownCli();
     return;
   }
 
   if (command === "service") {
+    const { runServiceCli } = await import("./commands/service.js");
     await runServiceCli(subcommand, rest);
     return;
   }
 
   if (command === "doctor") {
+    const { doctor, renderDoctorText } = await import("./doctor.js");
     const report = await doctor({ gateway: args.includes("--gateway") });
     if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
     else console.log(renderDoctorText(report));
@@ -113,6 +111,7 @@ async function main() {
   }
 
   if (command === "probe") {
+    const { formatProbeReport, runProbe } = await import("./probe.js");
     const report = await runProbe({ live: args.includes("--live") });
     if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
     else console.log(formatProbeReport(report));
@@ -121,11 +120,12 @@ async function main() {
   }
 
   if (command === "config") {
+    const { runConfigCli } = await import("./commands/config.js");
     runConfigCli(subcommand, rest);
     return;
   }
 
-  printHelp();
+  await printHelp();
   process.exitCode = 1;
 }
 
