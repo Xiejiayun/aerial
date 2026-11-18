@@ -40,6 +40,7 @@ test("invalid options, extra arguments and missing values fail before dispatch",
   assert.deepEqual(validateCliArgs(["service", "uninstall", "-h"]), { help: true });
   assert.deepEqual(validateCliArgs(["setup", "restore", "all", "--latest"]), { help: false });
   assert.throws(() => validateCliArgs(["proxy", "--json"]), /Unknown command/);
+  for (const command of ["status", "doctor"]) assert.deepEqual(validateCliArgs([command, "--gateway", "--json"]), { help: false });
   assert.deepEqual(validateCliArgs(["update", "--check"]), { help: false });
   assert.deepEqual(validateCliArgs(["upgrade"]), { help: false });
 });

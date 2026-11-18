@@ -34,7 +34,7 @@ function buildConfigChecks(configFile) {
   return [{ id: "config.file", ok: true, severity: "info", message: "Aerial config file is valid JSON." }];
 }
 
-function buildAuthChecks(setup) {
+function buildAuthChecks(setup, gateway) {
   const checks = [];
   const apiKey = setup.auth.api_key;
   if (!apiKey.exists) {
@@ -42,8 +42,8 @@ function buildAuthChecks(setup) {
       id: "auth.api_key",
       ok: false,
       severity: "fail",
-      message: "Aerial local API key is missing. Run setup for the client you use.",
-      ...clientRepairs(setup)
+      message: "Aerial local API key is missing.",
+      ...(gateway ? { repair: { command: "aerial", args: ["key", "generate"] } } : clientRepairs(setup))
     });
   } else {
     checks.push({ id: "auth.api_key", ok: true, severity: "info", message: "Aerial local API key is present." });
@@ -88,7 +88,7 @@ function buildClientChecks(setup) {
       id: "clients.aerial_client",
       ok: false,
       severity: "fail",
-      message: "No client is wired to Aerial. Run setup for the client you use.",
+      message: "No coding client is configured. Image/API clients do not need setup; use aerial doctor --gateway.",
       ...clientRepairs(setup)
     });
   } else {
@@ -167,15 +167,15 @@ function summarize(ok, checks) {
   return `${fails} check(s) failed; ${warns} warning(s).`;
 }
 
-export async function doctor({ run, healthFetch, setup, service } = {}) {
+export async function doctor({ run, healthFetch, setup, service, gateway = false } = {}) {
   const configFile = readConfigFileStatus();
   const setupOut = setup ?? setupStatus();
   const serviceOut = service ?? await serviceStatus({ ...(run ? { run } : {}), ...(healthFetch ? { healthFetch } : {}) });
-  const app = computeAppStatus(setupOut, serviceOut);
+  const app = computeAppStatus(setupOut, serviceOut, { gateway });
   const checks = [
     ...buildConfigChecks(configFile),
-    ...buildAuthChecks(setupOut),
-    ...buildClientChecks(setupOut),
+    ...buildAuthChecks(setupOut, gateway),
+    ...(gateway ? [] : buildClientChecks(setupOut)),
     ...buildServiceChecks(serviceOut)
   ];
   const ok = app.ok && checks.every((c) => c.severity !== "fail");
@@ -184,14 +184,7 @@ export async function doctor({ run, healthFetch, setup, service } = {}) {
     ok,
     summary: summarize(ok, checks),
     checks,
-    status: {
-      schema: app.schema,
-      ok: app.ok,
-      setup: app.setup,
-      service: app.service,
-      nextSteps: app.nextSteps,
-      hints: app.hints
-    }
+    status: app
   };
 }
 
@@ -204,6 +197,7 @@ export function renderRepairCommand(repair) {
 export function renderDoctorText(report) {
   const lines = [];
   lines.push(`aerial doctor: ${report.summary}`);
+  lines.push(`Local gateway: ${report.status.gatewayReady ? "ready" : "not ready"}; coding client: ${report.status.clientReady ? "ready" : "not ready"} (optional for API use).`);
   const groups = [
     ["fail", "Failures"],
     ["warn", "Warnings"],

@@ -49,23 +49,26 @@ export function parseConfigHost(value) {
   throw new Error("host must be a loopback address: 127.0.0.1, localhost, or ::1");
 }
 
-export function computeAppStatus(setup, service) {
+export function computeAppStatus(setup, service, { gateway = false } = {}) {
   const githubTokenPresent = setup.auth.github_token.source !== "missing";
   const apiKeyPresent = setup.auth.api_key.exists;
   const hasAerialClient = setup.clients.codex.state === "aerial" || setup.clients.claude.state === "aerial";
   const serviceHealthy = service.health?.aerial === true && service.service?.reason !== "status_query_failed";
   const conflicts = Object.values(setup.clients).filter(client => client.state.startsWith("aerial") && client.conflicts?.length);
-  const ok = apiKeyPresent && githubTokenPresent && hasAerialClient && serviceHealthy && !conflicts.length;
+  const gatewayReady = apiKeyPresent && githubTokenPresent && serviceHealthy;
+  const clientReady = hasAerialClient && !conflicts.length;
+  const ok = gatewayReady && (gateway || clientReady);
   const { nextSteps, hints } = serviceGuidance(service);
   const setupCommands = preferredClientTargets(setup).map(target => `aerial setup ${target}`).join(" or ");
   if (!githubTokenPresent) nextSteps.push("run: aerial login");
-  if (!hasAerialClient) nextSteps.push(`run: ${setupCommands}`);
-  if (hasAerialClient && !apiKeyPresent) nextSteps.push(`run: ${setupCommands} to recreate the local Aerial key`);
-  for (const client of conflicts) nextSteps.push(`${client.target}: ${client.migration} (${client.conflicts.map(item => `${item.source}.${item.key}`).join(", ")})`);
+  if (!gateway && !hasAerialClient) nextSteps.push(`run: ${setupCommands}`);
+  if (gateway && !apiKeyPresent) nextSteps.push("run: aerial key generate");
+  if (!gateway && hasAerialClient && !apiKeyPresent) nextSteps.push(`run: ${setupCommands} to recreate the local Aerial key`);
+  for (const client of gateway ? [] : conflicts) nextSteps.push(`${client.target}: ${client.migration} (${client.conflicts.map(item => `${item.source}.${item.key}`).join(", ")})`);
   if (setup.auth.github_token.source === "env") {
     hints.push("AERIAL_GITHUB_TOKEN is set for this process only; run aerial login without that env var to persist a service-readable login.");
   }
-  return { schema: "aerial.status.v1", ok, setup, service, nextSteps, hints };
+  return { schema: "aerial.status.v1", ok, scope: gateway ? "gateway" : "coding-client", gatewayReady, clientReady, setup, service, nextSteps, hints };
 }
 
 export function preferredClientTargets(setup) {

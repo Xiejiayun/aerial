@@ -100,6 +100,17 @@ test("no aerial client: fail with setup repair", async () => {
   assert.equal(report.ok, false);
 });
 
+test("gateway doctor omits coding-client checks but still diagnoses a missing key", async () => {
+  const service = makeService({ installed: true, loaded: true, healthAerial: true });
+  const report = await doctor({ setup: makeSetup({ codexState: "missing" }), service, gateway: true });
+  assert.equal(report.ok, true);
+  assert.equal(report.status.clientReady, false);
+  assert.ok(!report.checks.some(check => check.id.startsWith("clients.")));
+  const missing = await doctor({ setup: makeSetup({ apiKeyExists: false }), service, gateway: true });
+  assert.equal(missing.ok, false);
+  assert.deepEqual(missing.checks.find(check => check.id === "auth.api_key").repair.args, ["key", "generate"]);
+});
+
 test("wrapper stale: warn with service install repair, ok stays true", async () => {
   const report = await doctor({
     setup: makeSetup(),

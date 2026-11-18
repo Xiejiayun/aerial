@@ -26,14 +26,14 @@ Usage:
   aerial setup codex [--model <id>] [--effort <minimal|low|medium|high|xhigh|max|ultra>] [--configure-only] [--verbose]
   aerial setup claude [--model <id>] [--effort <low|medium|high|xhigh|max|ultracode>] [--configure-only] [--verbose]
   aerial service install|start|stop|restart|uninstall
-  aerial status [--json]
+  aerial status [--gateway] [--json]
 
 Diagnostics and rollback:
   aerial setup status [--json]
   aerial setup restore <codex|claude|all> --latest
   aerial service status [--json]
   aerial teardown
-  aerial doctor [--json]
+  aerial doctor [--gateway] [--json]
   aerial probe [--live] [--json]
 
 Debug:
@@ -67,7 +67,7 @@ async function main() {
   }
 
   if (command === "status") {
-    const status = await appStatus({ json: args.includes("--json") });
+    const status = await appStatus({ json: args.includes("--json"), gateway: args.includes("--gateway") });
     process.exitCode = status.ok ? 0 : 1;
     return;
   }
@@ -105,7 +105,7 @@ async function main() {
   }
 
   if (command === "doctor") {
-    const report = await doctor();
+    const report = await doctor({ gateway: args.includes("--gateway") });
     if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
     else console.log(renderDoctorText(report));
     process.exitCode = report.ok ? 0 : 1;

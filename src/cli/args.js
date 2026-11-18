@@ -5,11 +5,11 @@ const commands = {
   "--version": spec("--version"),
   update: spec("update [--check]", { flags: ["--check"] }),
   upgrade: spec("update [--check]", { flags: ["--check"] }),
-  status: spec("status [--json]", { flags: ["--json"] }),
+  status: spec("status [--gateway] [--json]", { flags: ["--gateway", "--json"] }),
   login: spec("login [--force]", { flags: ["--force"] }),
   start: spec("start [--host <loopback>] [--port <port>]", { values: ["--host", "--port"] }),
   teardown: spec("teardown"),
-  doctor: spec("doctor [--json]", { flags: ["--json"] }),
+  doctor: spec("doctor [--gateway] [--json]", { flags: ["--gateway", "--json"] }),
   probe: spec("probe [--live] [--json]", { flags: ["--live", "--json"] }),
   key: {
     generate: spec("key generate"),

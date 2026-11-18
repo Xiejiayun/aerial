@@ -13,7 +13,7 @@ Requirements:
 
 - Node.js 20.18.1+
 - A GitHub account with an active Copilot subscription
-- Codex CLI and/or Claude Code installed
+- For coding clients only: install Codex CLI and/or Claude Code. An Images API client needs neither.
 
 ```bash
 npm install -g @jiayunxie/aerial
@@ -113,6 +113,8 @@ aerial probe
 ```
 
 ## Generate And Edit Images
+
+Use `aerial status --gateway` or `aerial doctor --gateway` to check the gateway without configuring a coding client.
 
 Aerial exposes authenticated `POST /v1/images/generations` and `POST /v1/images/edits` on the same local service. Use `aerial probe` to find models advertising `image_generation` or `image_edit`, then send the selected model ID and image options through an Images API client with base URL `http://127.0.0.1:18181/v1` and the key returned by `aerial key print`.
 

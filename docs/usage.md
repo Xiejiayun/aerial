@@ -140,7 +140,9 @@ aerial probe
 
 `aerial status` is the top-level daily check. It combines setup state, local auth files, service state, and health into one short report. Use `--json` for a machine-readable `aerial.status.v1` document.
 
-`aerial status --json` top-level fields: `schema`, `ok`, `setup`, `service`, `nextSteps`, `hints`. `nextSteps` lists actions you must take to reach `ok: true` (login / setup / service install / recover local key). `hints` lists non-blocking advisories that you should still pay attention to, such as `AERIAL_GITHUB_TOKEN` being set for the current shell only (the background service may not see it after reboot). Example:
+For image/API use, `aerial status --gateway` and `aerial doctor --gateway` check local credentials and service health without requiring a configured coding client. Both accept `--json`; `gatewayReady` describes local readiness, not entitlement to a particular upstream model. With no `--gateway` flag, the existing `ok` and exit-code semantics still require a configured coding client.
+
+`aerial status --json` top-level fields: `schema`, `ok`, `scope`, `gatewayReady`, `clientReady`, `setup`, `service`, `nextSteps`, `hints`. `nextSteps` lists actions you must take to reach `ok: true` (login / setup / service install / recover local key). `hints` lists non-blocking advisories that you should still pay attention to, such as `AERIAL_GITHUB_TOKEN` being set for the current shell only (the background service may not see it after reboot). Example:
 
 ```json
 {
