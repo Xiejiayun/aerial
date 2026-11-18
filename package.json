@@ -1,6 +1,6 @@
 {
   "name": "@jiayunxie/aerial",
-  "version": "0.3.9",
+  "version": "0.4.1",
   "description": "Local GitHub Copilot gateway for coding CLIs and image APIs.",
   "type": "module",
   "private": false,
